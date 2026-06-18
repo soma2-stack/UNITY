@@ -86,8 +86,30 @@ public class Door : MonoBehaviour
 
         if (Input.GetKeyDown(interactKey))
         {
-            Open();
+            TryOpen();
         }
+    }
+
+    /// <summary>
+    /// Input-path open: charges points if a cost is set, then opens the door.
+    /// Opens for free when cost is non-positive or no economy is present.
+    /// </summary>
+    private void TryOpen()
+    {
+        if (cost > 0 && PlayerPoints.Instance != null)
+        {
+            if (!PlayerPoints.Instance.TrySpend(cost))
+            {
+                if (Time.time >= nextPromptTime)
+                {
+                    Debug.Log($"Need {cost} points to open this door");
+                    nextPromptTime = Time.time + 1.5f;
+                }
+                return;
+            }
+        }
+
+        Open();
     }
 
     /// <summary>
