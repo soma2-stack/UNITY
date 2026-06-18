@@ -24,7 +24,7 @@ public static class SchoolDoorPlacer
 
     // Two transoms (room side + hallway side) often mark the SAME opening, so we
     // skip a doorway if a door already exists within this distance (world units).
-    private const float DuplicateDoorDistance = 1.0f;
+    private const float DuplicateDoorDistance = 0.5f;
 
     // Doorways that should stay OPEN (no door). Matched if the transom's name
     // CONTAINS any of these (case-insensitive). These use the existing room /
@@ -167,27 +167,34 @@ public static class SchoolDoorPlacer
         Vector3 worldScale = transom.lossyScale;
         float width = Mathf.Abs(worldScale.x);
         float thickness = Mathf.Max(0.12f, Mathf.Abs(worldScale.z));
-        float doorTopY = transom.position.y - Mathf.Abs(worldScale.y) * 0.5f;
+        // Run the door all the way up to the TOP of the header so there is never a
+        // gap of light between the door and the header above it.
+        float doorTopY = transom.position.y + Mathf.Abs(worldScale.y) * 0.5f;
 
-        // Find the floor directly below this doorway to know how tall the door must be.
+        // Find the floor for THIS doorway. Primary: the floor that belongs to the
+        // transom's own room (walk up the hierarchy). Fallback: nearest floor below.
         float floorTopY;
-        bool foundFloor = TryGetFloorTopBelow(transom.position, doorTopY, floorRenderers, out floorTopY);
-
-        float height;
-        if (foundFloor && doorTopY - floorTopY > 0.05f)
+        bool foundFloor = TryGetRoomFloorTop(transom, out floorTopY);
+        if (!foundFloor)
         {
-            height = doorTopY - floorTopY;
-        }
-        else
-        {
-            // Fallback: assume a normal door opening proportional to the header height.
-            height = Mathf.Max(1f, Mathf.Abs(worldScale.y) * 3f);
-            floorTopY = doorTopY - height;
-            foundFloor = false;
+            foundFloor = TryGetFloorTopBelow(transom.position, doorTopY, floorRenderers, out floorTopY);
         }
 
-        // Small overlap into the header and floor so there is no visible seam / gap.
-        height += 0.04f;
+        // No reliable floor -> skip rather than spawn a floating door.
+        if (!foundFloor)
+        {
+            return false;
+        }
+
+        float height = doorTopY - floorTopY;
+
+        // Sanity guard: ignore openings that are not normal door-height (e.g. a high
+        // window header with no real gap, or a bad floor match) so we never float.
+        if (height < 0.3f || height > 8f)
+        {
+            return false;
+        }
+
         float centerY = floorTopY + height * 0.5f;
 
         GameObject door = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -209,6 +216,30 @@ public static class SchoolDoorPlacer
         doorComponent.openMoveOffset = new Vector3(0f, -(height + 0.1f), 0f);
 
         return foundFloor;
+    }
+
+    private static bool TryGetRoomFloorTop(Transform transom, out float floorTopY)
+    {
+        // Walk up from the doorway until we reach the room that owns it, then use
+        // that room's own floor. This ties each door to the correct floor level
+        // (deterministic, and correct for multi-storey areas).
+        Transform current = transom.parent;
+        while (current != null)
+        {
+            foreach (MeshRenderer renderer in current.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                if (renderer.gameObject.name.ToLowerInvariant().Contains("floor"))
+                {
+                    floorTopY = renderer.bounds.max.y;
+                    return true;
+                }
+            }
+
+            current = current.parent;
+        }
+
+        floorTopY = 0f;
+        return false;
     }
 
     private static bool TryGetFloorTopBelow(Vector3 worldPos, float belowY, List<Renderer> floorRenderers, out float floorTopY)
