@@ -1,28 +1,20 @@
 using UnityEngine;
 
 /// <summary>
-/// Tiny on-screen points readout using legacy IMGUI (OnGUI).
-/// No Canvas or prefab setup required. Reads from <see cref="PlayerPoints.Instance"/>.
+/// Superseded by <see cref="GameHud"/>, which now draws the consolidated on-screen
+/// HUD (points, weapon, round, zombie counter, crosshair) via a single OnGUI.
+///
+/// This component is intentionally left as a harmless no-op so existing scene
+/// references / GameObjects do not break. It no longer draws anything.
+/// Prefer adding <see cref="GameHud"/> instead.
 /// </summary>
 public class PointsHud : MonoBehaviour
 {
-    [Header("Layout")]
-    [Tooltip("Screen-space rectangle (top-left origin) for the points label.")]
+    [Header("Layout (unused — see GameHud)")]
+    [Tooltip("Legacy field kept for inspector compatibility. No longer used.")]
     public Rect labelRect = new Rect(10f, 10f, 200f, 30f);
-    [Tooltip("Font size for the points label.")]
+    [Tooltip("Legacy field kept for inspector compatibility. No longer used.")]
     public int fontSize = 22;
 
-    private void OnGUI()
-    {
-        if (PlayerPoints.Instance == null)
-        {
-            return;
-        }
-
-        GUIStyle style = new GUIStyle(GUI.skin.label);
-        style.fontSize = fontSize;
-        style.fontStyle = FontStyle.Bold;
-
-        GUI.Label(labelRect, $"Points: {PlayerPoints.Instance.Points}", style);
-    }
+    // No OnGUI: GameHud now owns all HUD drawing to avoid duplicate UI.
 }

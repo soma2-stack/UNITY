@@ -123,13 +123,6 @@ public class RoundManager : MonoBehaviour
         OnRoundChanged?.Invoke(CurrentRound);
     }
 
-    private void OnGUI()
-    {
-        if (!showHud)
-        {
-            return;
-        }
-
-        GUI.Label(new Rect(Screen.width - 110, 10, 100, 24), "Round: " + Mathf.Max(0, CurrentRound));
-    }
+    // The round number is now drawn centrally by GameHud (via CurrentRound / OnRoundChanged),
+    // so RoundManager no longer draws its own OnGUI label.
 }

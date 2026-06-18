@@ -21,9 +21,6 @@ public class WeaponController : MonoBehaviour
     [Tooltip("Optional layers the rays can hit. Leave as Everything to hit all.")]
     public LayerMask hitMask = ~0;
 
-    [Header("Crosshair")]
-    public float crosshairSize = 4f;
-
     // --- Runtime state ---
     private Transform cam;          // Resolved aim transform
     private float nextFireTime;     // Time.time when the next shot is allowed
@@ -31,6 +28,23 @@ public class WeaponController : MonoBehaviour
 
     private Weapon Current =>
         (weapons != null && currentIndex >= 0 && currentIndex < weapons.Count) ? weapons[currentIndex] : null;
+
+    // --- Public read-only HUD getters (consumed by GameHud) ---
+
+    /// <summary>Name of the currently equipped weapon, or "" if none.</summary>
+    public string CurrentWeaponName => Current != null ? Current.weaponName : "";
+
+    /// <summary>Rounds currently in the equipped weapon's magazine (0 if none).</summary>
+    public int CurrentMagazineAmmo => Current != null ? Mathf.Max(0, Current.ammoInMag) : 0;
+
+    /// <summary>Rounds held in reserve for the equipped weapon (0 if none).</summary>
+    public int CurrentReserveAmmo => Current != null ? Mathf.Max(0, Current.ammoInReserve) : 0;
+
+    /// <summary>True while the equipped weapon is reloading.</summary>
+    public bool IsReloading => isReloading;
+
+    /// <summary>True when a weapon is equipped (used by the HUD to decide whether to draw ammo).</summary>
+    public bool HasWeapon => Current != null;
 
     void Start()
     {
@@ -247,30 +261,6 @@ public class WeaponController : MonoBehaviour
         }
     }
 
-    // Minimal immediate-mode HUD: a center crosshair plus a bottom-right ammo readout.
-    void OnGUI()
-    {
-        // Crosshair (a small box at screen center).
-        float cs = Mathf.Max(1f, crosshairSize);
-        float cx = (Screen.width - cs) * 0.5f;
-        float cy = (Screen.height - cs) * 0.5f;
-        GUI.Box(new Rect(cx, cy, cs, cs), GUIContent.none);
-
-        // Ammo readout.
-        Weapon w = Current;
-        if (w == null)
-        {
-            return;
-        }
-
-        string ammo = isReloading
-            ? w.weaponName + "  Reloading..."
-            : w.weaponName + "  " + Mathf.Max(0, w.ammoInMag) + " / " + Mathf.Max(0, w.ammoInReserve);
-
-        GUIStyle style = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleRight, fontSize = 18 };
-        const float boxW = 260f;
-        const float boxH = 28f;
-        Rect rect = new Rect(Screen.width - boxW - 12f, Screen.height - boxH - 12f, boxW, boxH);
-        GUI.Label(rect, ammo, style);
-    }
+    // HUD drawing is handled centrally by GameHud (which reads the public getters above),
+    // so WeaponController no longer draws its own ammo readout or crosshair.
 }
