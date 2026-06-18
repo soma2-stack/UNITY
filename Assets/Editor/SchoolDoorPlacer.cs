@@ -22,6 +22,22 @@ public static class SchoolDoorPlacer
     private const string DoorsRootName = "Generated_Doors";
     private const string GeneratedFixRootName = "Generated_Geometry_Fixes";
 
+    // Two transoms (room side + hallway side) often mark the SAME opening, so we
+    // skip a doorway if a door already exists within this distance (world units).
+    private const float DuplicateDoorDistance = 1.0f;
+
+    // Doorways that should stay OPEN (no door). Matched if the transom's name
+    // CONTAINS any of these (case-insensitive). These use the existing room /
+    // doorway names already in the scene - edit this list as you find more.
+    private static readonly string[] ExcludedDoorways =
+    {
+        "teleporter_room",        // teleporter room - no door
+        "nurses_office_backroom", // nurses backroom - no door for now (placeholder)
+        "the_vault",              // assumed "fallout shelter" - no door  [VERIFY THIS]
+        "gym_w_seg",              // gym doorway next to the stairs - stays open into the gym
+        // "library_staircase",   // library stairs secret: left buyable so it can be the unlock
+    };
+
     [MenuItem("Tools/School Of The Dead/Place Buyable Doors")]
     public static void PlaceBuyableDoors()
     {
@@ -47,7 +63,10 @@ public static class SchoolDoorPlacer
         }
 
         int doorsCreated = 0;
-        int skipped = 0;
+        int skippedNoFloor = 0;
+        int skippedExcluded = 0;
+        int skippedDuplicate = 0;
+        List<Vector3> placedPositions = new List<Vector3>();
 
         foreach (GameObject root in scene.GetRootGameObjects())
         {
@@ -71,13 +90,28 @@ public static class SchoolDoorPlacer
                     continue;
                 }
 
+                // Doorways the designer wants left open (teleporter, gym-by-stairs, etc.).
+                if (IsExcluded(t.gameObject.name))
+                {
+                    skippedExcluded++;
+                    continue;
+                }
+
+                // The same opening can have a transom on both sides - only one door.
+                if (IsDuplicatePosition(t.position, placedPositions))
+                {
+                    skippedDuplicate++;
+                    continue;
+                }
+
                 if (TryCreateDoor(t, doorsRoot.transform, doorMaterial, floorRenderers))
                 {
+                    placedPositions.Add(t.position);
                     doorsCreated++;
                 }
                 else
                 {
-                    skipped++;
+                    skippedNoFloor++;
                 }
             }
         }
@@ -87,7 +121,8 @@ public static class SchoolDoorPlacer
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
 
-        Debug.Log($"Placed {doorsCreated} buyable doors in {ScenePath} (skipped {skipped} doorways with no usable floor).");
+        Debug.Log($"Placed {doorsCreated} buyable doors in {ScenePath}. " +
+                  $"Skipped: {skippedExcluded} excluded (left open), {skippedDuplicate} duplicate openings, {skippedNoFloor} with no usable floor.");
     }
 
     private static bool IsDoorwayTransom(string objectName)
@@ -97,6 +132,33 @@ public static class SchoolDoorPlacer
         // the geometry-fix tool also contain "transom" - ignore those so we only
         // get one door per real opening.
         return name.Contains("transom") && !name.Contains("antizfightcover");
+    }
+
+    private static bool IsExcluded(string objectName)
+    {
+        string name = objectName.ToLowerInvariant();
+        foreach (string excluded in ExcludedDoorways)
+        {
+            if (name.Contains(excluded))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsDuplicatePosition(Vector3 position, List<Vector3> placedPositions)
+    {
+        foreach (Vector3 placed in placedPositions)
+        {
+            if (Vector3.Distance(position, placed) < DuplicateDoorDistance)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryCreateDoor(Transform transom, Transform parent, Material material, List<Renderer> floorRenderers)
