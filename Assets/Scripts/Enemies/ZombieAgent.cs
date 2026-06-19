@@ -37,12 +37,26 @@ public class ZombieAgent : MonoBehaviour
     [Tooltip("How often (seconds) to recompute the path to the player. Throttled for performance.")]
     public float repathInterval = 0.2f;
 
+    [Header("Animation")]
+    [Tooltip("Animator float parameter set to the zombie's current move speed (drives idle<->move).")]
+    public string speedParam = "Speed";
+    [Tooltip("Animator trigger fired when the zombie attacks.")]
+    public string attackParam = "Attack";
+    [Tooltip("Animator trigger fired when the zombie dies (plays the death animation).")]
+    public string dieParam = "Die";
+    [Tooltip("Seconds to keep the body after death so the death animation can play before it is removed.")]
+    public float deathDestroyDelay = 3f;
+
     /// <summary>Raised when this zombie dies. Passes itself so listeners can untrack it.</summary>
     public event System.Action<ZombieAgent> OnDeath;
 
     private NavMeshAgent agent;
     private Transform player;
     private PlayerHealth playerHealth;
+    private Animator animator;
+    private bool hasSpeedParam;
+    private bool hasAttackParam;
+    private bool hasDieParam;
     private float nextRepathTime;
     private float nextAttackTime;
     private bool isDead;
@@ -50,6 +64,8 @@ public class ZombieAgent : MonoBehaviour
     private void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
+        animator = GetComponentInChildren<Animator>();
+        CacheAnimatorParams();
     }
 
     private void Start()
@@ -86,7 +102,28 @@ public class ZombieAgent : MonoBehaviour
             }
         }
 
+        // Drive the locomotion blend (idle <-> move) from the agent's actual speed.
+        if (animator != null && hasSpeedParam)
+        {
+            animator.SetFloat(speedParam, agent != null ? agent.velocity.magnitude : 0f);
+        }
+
         TryAttack();
+    }
+
+    private void CacheAnimatorParams()
+    {
+        if (animator == null || animator.runtimeAnimatorController == null)
+        {
+            return;
+        }
+
+        foreach (AnimatorControllerParameter p in animator.parameters)
+        {
+            if (p.name == speedParam) hasSpeedParam = true;
+            else if (p.name == attackParam) hasAttackParam = true;
+            else if (p.name == dieParam) hasDieParam = true;
+        }
     }
 
     private void TryAttack()
@@ -108,6 +145,10 @@ public class ZombieAgent : MonoBehaviour
         }
 
         nextAttackTime = Time.time + attackInterval;
+        if (animator != null && hasAttackParam)
+        {
+            animator.SetTrigger(attackParam);
+        }
         playerHealth.TakeDamage(attackDamage);
     }
 
@@ -147,19 +188,32 @@ public class ZombieAgent : MonoBehaviour
 
         isDead = true;
 
-        // Award points (PlayerPoints is created by another system; null-safe).
+        // Award points + notify the spawner/round system immediately (this kill counts now).
         PlayerPoints.Instance?.Add(killReward);
-
-        // Let the spawner / round system know one zombie is gone.
         OnDeath?.Invoke(this);
 
-        // Stop the agent so it does not keep moving while being torn down.
-        if (agent != null && agent.isOnNavMesh)
+        // Play the death animation.
+        if (animator != null && hasDieParam)
         {
-            agent.isStopped = true;
+            animator.SetTrigger(dieParam);
         }
 
-        Destroy(gameObject);
+        // Stop chasing/attacking and stop blocking the player, but keep the body for a
+        // moment so the death animation can play before the object is removed.
+        if (agent != null)
+        {
+            if (agent.isOnNavMesh)
+            {
+                agent.isStopped = true;
+            }
+            agent.enabled = false;
+        }
+        foreach (Collider c in GetComponentsInChildren<Collider>())
+        {
+            c.enabled = false;
+        }
+
+        Destroy(gameObject, Mathf.Max(0f, deathDestroyDelay));
     }
 
     private void ApplyAgentSpeed()
