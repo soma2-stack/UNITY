@@ -1,0 +1,335 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+/// <summary>
+/// Tracks which perks the local player owns and applies their gameplay effects
+/// (Call of Duty Zombies style). Singleton, accessed via <see cref="Instance"/>.
+///
+/// Like <c>GameHud</c>, this self-bootstraps in the "SchoolOfTheDead" gameplay
+/// scene so perks work with zero manual scene setup. It is removed when leaving
+/// gameplay so it never lingers over the main menu.
+///
+/// Effects are applied by finding the player's components at runtime
+/// (FindAnyObjectByType) and setting multipliers / flags on them:
+///   - Juggernog   -> PlayerHealth.SetMaxHealth (raise max + heal to full)
+///   - SpeedCola   -> WeaponController.reloadSpeedMultiplier (faster reloads)
+///   - DoubleTap   -> WeaponController.fireRateMultiplier (faster firing)
+///   - StaminUp    -> PlayerMovement.speedMultiplier (faster movement)
+///   - QuickRevive -> read by PlayerHealth for a solo self-revive (no stat here)
+///   - MuleKick    -> bumps <see cref="ExtraWeaponSlots"/> (a flag others can read)
+///
+/// All lookups are null-safe: granting a perk whose player component is missing
+/// still records ownership so the effect applies once the component appears
+/// (re-applied on every grant and on scene load).
+/// </summary>
+public class PerkManager : MonoBehaviour
+{
+    public static PerkManager Instance { get; private set; }
+
+    [Header("Juggernog")]
+    [Tooltip("Maximum health the player is raised to when Juggernog is bought.")]
+    public int juggernogMaxHealth = 250;
+
+    [Header("Speed Cola")]
+    [Tooltip("Reload-speed multiplier applied to the WeaponController (higher = faster).")]
+    public float speedColaReloadMultiplier = 2f;
+
+    [Header("Double Tap")]
+    [Tooltip("Fire-rate multiplier applied to the WeaponController (higher = faster).")]
+    public float doubleTapFireRateMultiplier = 1.5f;
+
+    [Header("Stamin-Up")]
+    [Tooltip("Movement-speed multiplier applied to PlayerMovement (higher = faster).")]
+    public float staminUpSpeedMultiplier = 1.35f;
+
+    /// <summary>Raised whenever the owned-perk set changes.</summary>
+    public event Action OnPerksChanged;
+
+    private readonly HashSet<PerkType> ownedPerks = new HashSet<PerkType>();
+
+    /// <summary>
+    /// Number of EXTRA weapon slots granted by Mule Kick (0 normally, 1 with the
+    /// perk). A weapon-pickup system can read this to allow one more weapon.
+    /// </summary>
+    public int ExtraWeaponSlots { get; private set; }
+
+    // Cached player components (resolved lazily, re-resolved if they go missing).
+    private PlayerHealth playerHealth;
+    private WeaponController weaponController;
+    private PlayerMovement playerMovement;
+
+    // Gameplay scene the perk system should be active in.
+    private const string GameplayScene = "SchoolOfTheDead";
+    private static PerkManager _runtimeInstance;
+
+    /// <summary>
+    /// Auto-spawn the perk manager when the gameplay scene loads (mirrors GameHud)
+    /// so perk machines have something to grant into without manual setup.
+    /// </summary>
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+    private static void Bootstrap()
+    {
+        SceneManager.sceneLoaded -= OnAnySceneLoaded;
+        SceneManager.sceneLoaded += OnAnySceneLoaded;
+        SpawnIfGameplayScene(SceneManager.GetActiveScene());
+    }
+
+    private static void OnAnySceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        SpawnIfGameplayScene(scene);
+    }
+
+    private static void SpawnIfGameplayScene(Scene scene)
+    {
+        if (scene.name != GameplayScene)
+        {
+            if (_runtimeInstance != null)
+            {
+                Destroy(_runtimeInstance.gameObject);
+                _runtimeInstance = null;
+            }
+            return;
+        }
+
+        // Don't add a second manager if the scene already has one.
+        if (_runtimeInstance != null || FindFirstObjectByType<PerkManager>() != null)
+        {
+            return;
+        }
+
+        var go = new GameObject("PerkManager (Runtime)");
+        _runtimeInstance = go.AddComponent<PerkManager>();
+    }
+
+    private void Awake()
+    {
+        // Enforce a single instance.
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
+        Instance = this;
+        if (_runtimeInstance == null)
+        {
+            _runtimeInstance = this;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
+        }
+        if (_runtimeInstance == this)
+        {
+            _runtimeInstance = null;
+        }
+    }
+
+    /// <summary>True if the local player owns the given perk.</summary>
+    public bool HasPerk(PerkType perk)
+    {
+        return ownedPerks.Contains(perk);
+    }
+
+    /// <summary>
+    /// Grant a perk and apply its effect. Returns false if it was already owned
+    /// (so callers can avoid charging the player twice).
+    /// </summary>
+    public bool TryGrant(PerkType perk)
+    {
+        if (ownedPerks.Contains(perk))
+        {
+            return false;
+        }
+
+        ownedPerks.Add(perk);
+        ApplyEffect(perk);
+        Debug.Log("[PerkManager] Granted perk: " + perk);
+        OnPerksChanged?.Invoke();
+        return true;
+    }
+
+    private void ResolvePlayer()
+    {
+        if (playerHealth == null)
+        {
+            playerHealth = FindAnyObjectByType<PlayerHealth>();
+        }
+        if (weaponController == null)
+        {
+            weaponController = FindAnyObjectByType<WeaponController>();
+        }
+        if (playerMovement == null)
+        {
+            playerMovement = FindAnyObjectByType<PlayerMovement>();
+        }
+    }
+
+    private void ApplyEffect(PerkType perk)
+    {
+        ResolvePlayer();
+
+        switch (perk)
+        {
+            case PerkType.Juggernog:
+                // Raise max health and heal to full.
+                if (playerHealth != null)
+                {
+                    playerHealth.SetMaxHealth(juggernogMaxHealth, true);
+                }
+                break;
+
+            case PerkType.SpeedCola:
+                if (weaponController != null)
+                {
+                    weaponController.reloadSpeedMultiplier = Mathf.Max(0.01f, speedColaReloadMultiplier);
+                }
+                break;
+
+            case PerkType.DoubleTap:
+                if (weaponController != null)
+                {
+                    weaponController.fireRateMultiplier = Mathf.Max(0.01f, doubleTapFireRateMultiplier);
+                }
+                break;
+
+            case PerkType.StaminUp:
+                if (playerMovement != null)
+                {
+                    playerMovement.speedMultiplier = Mathf.Max(0.01f, staminUpSpeedMultiplier);
+                }
+                break;
+
+            case PerkType.QuickRevive:
+                // No stat to set here - PlayerHealth queries HasPerk(QuickRevive)
+                // each frame while downed to allow a solo self-revive.
+                break;
+
+            case PerkType.MuleKick:
+                // Allow one extra weapon slot. Stored as a flag others can read.
+                ExtraWeaponSlots = 1;
+                // TODO: a full weapon-pickup / loadout system should read
+                // ExtraWeaponSlots to let the player carry one additional weapon
+                // (WeaponController.weapons currently has no purchase/pickup flow).
+                break;
+        }
+    }
+
+    // --- Owned-perk icon row (bottom-center IMGUI) -------------------------
+
+    private GUIStyle perkLabelStyle;
+
+    private void OnGUI()
+    {
+        if (ownedPerks.Count == 0)
+        {
+            return;
+        }
+
+        if (perkLabelStyle == null)
+        {
+            perkLabelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 12,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
+
+        const float boxSize = 34f;
+        const float gap = 8f;
+        const float labelH = 14f;
+
+        // Count owned perks to center the row along the bottom of the screen.
+        int count = ownedPerks.Count;
+        float totalWidth = count * boxSize + (count - 1) * gap;
+        float startX = (Screen.width - totalWidth) * 0.5f;
+        float y = Screen.height - boxSize - labelH - 12f;
+
+        int i = 0;
+        // Iterate in enum order for a stable on-screen layout.
+        foreach (PerkType perk in (PerkType[])Enum.GetValues(typeof(PerkType)))
+        {
+            if (!ownedPerks.Contains(perk))
+            {
+                continue;
+            }
+
+            float x = startX + i * (boxSize + gap);
+
+            Color prev = GUI.color;
+            GUI.color = PerkColor(perk);
+            GUI.DrawTexture(new Rect(x, y, boxSize, boxSize), Texture2D.whiteTexture);
+            GUI.color = prev;
+
+            GUI.Label(new Rect(x - gap, y + boxSize, boxSize + gap * 2f, labelH), PerkAbbreviation(perk), perkLabelStyle);
+            i++;
+        }
+    }
+
+    /// <summary>Distinct display color for each perk (shared with the perk machines).</summary>
+    public static Color PerkColor(PerkType perk)
+    {
+        switch (perk)
+        {
+            case PerkType.Juggernog:   return new Color(0.85f, 0.15f, 0.15f); // red
+            case PerkType.SpeedCola:   return new Color(0.20f, 0.70f, 0.25f); // green
+            case PerkType.DoubleTap:   return new Color(0.95f, 0.75f, 0.15f); // amber
+            case PerkType.QuickRevive: return new Color(0.20f, 0.55f, 0.95f); // blue
+            case PerkType.StaminUp:    return new Color(0.95f, 0.50f, 0.10f); // orange
+            case PerkType.MuleKick:    return new Color(0.55f, 0.30f, 0.75f); // purple
+            default:                   return Color.gray;
+        }
+    }
+
+    /// <summary>Short human-readable name shown under each perk icon and on machines.</summary>
+    public static string PerkAbbreviation(PerkType perk)
+    {
+        switch (perk)
+        {
+            case PerkType.Juggernog:   return "Jugg";
+            case PerkType.SpeedCola:   return "Speed";
+            case PerkType.DoubleTap:   return "2Tap";
+            case PerkType.QuickRevive: return "Revive";
+            case PerkType.StaminUp:    return "Stamin";
+            case PerkType.MuleKick:    return "Mule";
+            default:                   return perk.ToString();
+        }
+    }
+
+    /// <summary>Full display name (used by perk machine prompts).</summary>
+    public static string PerkDisplayName(PerkType perk)
+    {
+        switch (perk)
+        {
+            case PerkType.Juggernog:   return "Juggernog";
+            case PerkType.SpeedCola:   return "Speed Cola";
+            case PerkType.DoubleTap:   return "Double Tap";
+            case PerkType.QuickRevive: return "Quick Revive";
+            case PerkType.StaminUp:    return "Stamin-Up";
+            case PerkType.MuleKick:    return "Mule Kick";
+            default:                   return perk.ToString();
+        }
+    }
+
+    /// <summary>Default cost for each perk (used by the perk machine placer / inspector default).</summary>
+    public static int DefaultCost(PerkType perk)
+    {
+        switch (perk)
+        {
+            case PerkType.QuickRevive: return 500;
+            case PerkType.DoubleTap:   return 2000;
+            case PerkType.StaminUp:    return 2000;
+            case PerkType.Juggernog:   return 2500;
+            case PerkType.SpeedCola:   return 3000;
+            case PerkType.MuleKick:    return 4000;
+            default:                   return 2000;
+        }
+    }
+}

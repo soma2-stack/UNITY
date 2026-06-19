@@ -21,6 +21,12 @@ public class WeaponController : MonoBehaviour
     [Tooltip("Optional layers the rays can hit. Leave as Everything to hit all.")]
     public LayerMask hitMask = ~0;
 
+    [Header("Perk Multipliers")]
+    [Tooltip("Fire-rate multiplier (Double Tap perk). Higher = faster firing. 1 = normal.")]
+    public float fireRateMultiplier = 1f;
+    [Tooltip("Reload-speed multiplier (Speed Cola perk). Higher = faster reloads. 1 = normal.")]
+    public float reloadSpeedMultiplier = 1f;
+
     // --- Runtime state ---
     private Transform cam;          // Resolved aim transform
     private float nextFireTime;     // Time.time when the next shot is allowed
@@ -185,7 +191,9 @@ public class WeaponController : MonoBehaviour
         isReloading = true;
         Debug.Log("[WeaponController] Reloading " + w.weaponName + "...");
 
-        yield return new WaitForSeconds(Mathf.Max(0f, w.reloadTime));
+        // Speed Cola: shorten the reload wait (guard against zero/negative multiplier).
+        float reloadMul = Mathf.Max(0.01f, reloadSpeedMultiplier);
+        yield return new WaitForSeconds(Mathf.Max(0f, w.reloadTime) / reloadMul);
 
         // Only refill if this is still the equipped weapon (switch cancels via StopAllCoroutines).
         w.Reload();
@@ -219,7 +227,8 @@ public class WeaponController : MonoBehaviour
         }
 
         // Respect fire rate (guard against a zero/negative rate).
-        float rate = Mathf.Max(0.01f, w.fireRate);
+        // Double Tap: fireRateMultiplier scales the effective rate up (faster firing).
+        float rate = Mathf.Max(0.01f, w.fireRate) * Mathf.Max(0.01f, fireRateMultiplier);
         nextFireTime = Time.time + 1f / rate;
 
         Fire(w);

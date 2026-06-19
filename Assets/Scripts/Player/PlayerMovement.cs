@@ -12,6 +12,8 @@ public class PlayerMovement : MonoBehaviour
     public float walkSpeed = 4.5f;
     public float sprintSpeed = 7.5f;
     public float crouchSpeed = 2.5f;
+    [Tooltip("Speed multiplier applied to all movement (Stamin-Up perk). 1 = normal.")]
+    public float speedMultiplier = 1f;
     public float gravity = -19.62f; // Snappy, heavy gravity
     public float jumpHeight = 1.2f;
     public float airControl = 0.35f;
@@ -115,6 +117,8 @@ public class PlayerMovement : MonoBehaviour
 
         bool wantsToSprint = Input.GetKey(KeyCode.LeftShift) && MoveInput.y > 0.1f && !isCrouching;
         CurrentSpeed = isCrouching ? crouchSpeed : wantsToSprint ? sprintSpeed : walkSpeed;
+        // Stamin-Up: scale the resulting speed (guard against negatives).
+        CurrentSpeed *= Mathf.Max(0f, speedMultiplier);
 
         if (!isGrounded)
         {
@@ -168,7 +172,10 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        float interval = isCrouching ? crouchStepInterval : CurrentSpeed >= sprintSpeed - 0.1f ? sprintStepInterval : walkStepInterval;
+        // Compare against the multiplier-scaled sprint speed so Stamin-Up doesn't
+        // make every step register as a sprint step.
+        float sprintThreshold = sprintSpeed * Mathf.Max(0f, speedMultiplier) - 0.1f;
+        float interval = isCrouching ? crouchStepInterval : CurrentSpeed >= sprintThreshold ? sprintStepInterval : walkStepInterval;
         stepTimer += Time.deltaTime;
 
         if (stepTimer < interval)
