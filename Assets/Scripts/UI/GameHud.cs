@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Single consolidated on-screen HUD for "School Of The Dead" (Call of Duty
@@ -60,6 +61,57 @@ public class GameHud : MonoBehaviour
     private GUIStyle smallRightStyle;
     private GUIStyle centerStyle;
     private Texture2D whiteTex;
+
+    // Gameplay scene the HUD should appear in.
+    private const string GameplayScene = "SchoolOfTheDead";
+    private static GameHud _runtimeInstance;
+
+    /// <summary>
+    /// Auto-spawn the HUD when the gameplay scene loads so it shows even without
+    /// any manual GameManager setup. Also guarantees a PlayerPoints singleton so
+    /// the P1 counter has a value. The HUD is removed when leaving gameplay so it
+    /// never draws over the main menu.
+    /// </summary>
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+    private static void Bootstrap()
+    {
+        SceneManager.sceneLoaded -= OnAnySceneLoaded;
+        SceneManager.sceneLoaded += OnAnySceneLoaded;
+        SpawnIfGameplayScene(SceneManager.GetActiveScene());
+    }
+
+    private static void OnAnySceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        SpawnIfGameplayScene(scene);
+    }
+
+    private static void SpawnIfGameplayScene(Scene scene)
+    {
+        if (scene.name != GameplayScene)
+        {
+            if (_runtimeInstance != null)
+            {
+                Destroy(_runtimeInstance.gameObject);
+                _runtimeInstance = null;
+            }
+            return;
+        }
+
+        // Don't add a second HUD if the scene already has one wired up.
+        if (_runtimeInstance != null || FindFirstObjectByType<GameHud>() != null)
+        {
+            return;
+        }
+
+        var go = new GameObject("GameHUD (Runtime)");
+        _runtimeInstance = go.AddComponent<GameHud>();
+
+        // Make sure points have a source so the P1 icon shows a number.
+        if (PlayerPoints.Instance == null)
+        {
+            go.AddComponent<PlayerPoints>();
+        }
+    }
 
     /// <summary>
     /// Register (or clear) the <see cref="PlayerPoints"/> source for a given

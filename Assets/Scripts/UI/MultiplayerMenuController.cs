@@ -99,39 +99,61 @@ public sealed class MultiplayerMenuController : MonoBehaviour
 
     private void BuildInterface()
     {
+        // Full-screen dim backdrop so the card reads cleanly over the menu video.
         gameObject.AddComponent<Image>().color = BackgroundColor;
 
-        GameObject accent = CreateUiObject("Accent", transform);
-        RectTransform accentRect = accent.GetComponent<RectTransform>();
-        accentRect.anchorMin = Vector2.zero;
-        accentRect.anchorMax = new Vector2(0f, 1f);
-        accentRect.pivot = new Vector2(0f, 0.5f);
-        accentRect.sizeDelta = new Vector2(8f, 0f);
-        accent.AddComponent<Image>().color = AccentColor;
+        // Centered card.
+        GameObject card = CreateUiObject("Card", transform);
+        RectTransform cardRect = card.GetComponent<RectTransform>();
+        cardRect.anchorMin = new Vector2(0.5f, 0.5f);
+        cardRect.anchorMax = new Vector2(0.5f, 0.5f);
+        cardRect.pivot = new Vector2(0.5f, 0.5f);
+        cardRect.sizeDelta = new Vector2(840f, 1000f);
+        cardRect.anchoredPosition = Vector2.zero;
+        card.AddComponent<Image>().color = new Color(0.07f, 0.075f, 0.085f, 0.99f);
 
-        GameObject content = CreateUiObject("Content", transform);
+        // Red header bar with the title.
+        GameObject header = CreateUiObject("Header", card.transform);
+        RectTransform headerRect = header.GetComponent<RectTransform>();
+        headerRect.anchorMin = new Vector2(0f, 1f);
+        headerRect.anchorMax = new Vector2(1f, 1f);
+        headerRect.pivot = new Vector2(0.5f, 1f);
+        headerRect.sizeDelta = new Vector2(0f, 96f);
+        headerRect.anchoredPosition = Vector2.zero;
+        header.AddComponent<Image>().color = AccentColor;
+
+        TMP_Text title = CreateText(header.transform, "ONLINE CO-OP", 46f, FontStyles.Bold, Color.white);
+        title.alignment = TextAlignmentOptions.Center;
+        Stretch(title.rectTransform);
+
+        // Body below the header.
+        GameObject content = CreateUiObject("Content", card.transform);
         RectTransform contentRect = content.GetComponent<RectTransform>();
-        contentRect.anchorMin = new Vector2(0f, 0.5f);
-        contentRect.anchorMax = new Vector2(0f, 0.5f);
-        contentRect.pivot = new Vector2(0f, 0.5f);
-        contentRect.anchoredPosition = new Vector2(100f, 0f);
-        contentRect.sizeDelta = new Vector2(760f, 900f);
+        contentRect.anchorMin = Vector2.zero;
+        contentRect.anchorMax = Vector2.one;
+        contentRect.offsetMin = new Vector2(34f, 28f);
+        contentRect.offsetMax = new Vector2(-34f, -116f);
 
         VerticalLayoutGroup layout = content.AddComponent<VerticalLayoutGroup>();
-        layout.spacing = 12f;
-        layout.childAlignment = TextAnchor.MiddleLeft;
+        layout.spacing = 10f;
+        layout.childAlignment = TextAnchor.UpperCenter;
         layout.childControlWidth = true;
         layout.childControlHeight = false;
         layout.childForceExpandWidth = true;
         layout.childForceExpandHeight = false;
 
-        TMP_Text title = CreateText(content.transform, "ONLINE CO-OP", 52f, FontStyles.Bold, TextColor);
-        title.alignment = TextAlignmentOptions.BottomLeft;
-        SetHeight(title.gameObject, 74f);
-
         statusText = CreateText(content.transform, "OFFLINE", 18f, FontStyles.Bold, WarmColor);
-        statusText.alignment = TextAlignmentOptions.MidlineLeft;
-        SetHeight(statusText.gameObject, 32f);
+        statusText.alignment = TextAlignmentOptions.Center;
+        SetHeight(statusText.gameObject, 30f);
+
+        // How-to hint so players know what to do.
+        TMP_Text hint = CreateText(content.transform,
+            "HOST a game to get a 6-character code, then share it.\n" +
+            "Friends pick JOIN and type the code to drop in (up to 4 players).",
+            15f, FontStyles.Italic, new Color(0.78f, 0.78f, 0.74f, 1f));
+        hint.alignment = TextAlignmentOptions.Center;
+        hint.textWrappingMode = TextWrappingModes.Normal;
+        SetHeight(hint.gameObject, 50f);
 
         displayNameInput = CreateInput(content.transform, "DISPLAY NAME", false);
         displayNameInput.characterLimit = 16;
@@ -150,25 +172,35 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         hostButton = CreateButton(connectionRow.transform, "HOST", Host, AccentColor);
         joinButton = CreateButton(connectionRow.transform, "JOIN", Join, WarmColor);
 
-        codeText = CreateText(content.transform, "CODE: ------", 23f, FontStyles.Bold, TextColor);
-        codeText.alignment = TextAlignmentOptions.MidlineLeft;
-        SetHeight(codeText.gameObject, 42f);
+        // Join-code readout + copy, side by side.
+        GameObject codeRow = CreateUiObject("Code Row", content.transform);
+        HorizontalLayoutGroup codeLayout = codeRow.AddComponent<HorizontalLayoutGroup>();
+        codeLayout.spacing = 12f;
+        codeLayout.childControlWidth = true;
+        codeLayout.childControlHeight = true;
+        codeLayout.childForceExpandWidth = true;
+        codeLayout.childAlignment = TextAnchor.MiddleLeft;
+        SetHeight(codeRow, 52f);
 
-        copyButton = CreateButton(content.transform, "COPY JOIN CODE", CopyJoinCode, WarmColor);
-        SetHeight(copyButton.gameObject, 52f);
+        GameObject codeBox = CreateUiObject("Code Box", codeRow.transform);
+        codeBox.AddComponent<Image>().color = RowColor;
+        codeText = CreateText(codeBox.transform, "CODE: ------", 24f, FontStyles.Bold, TextColor);
+        codeText.alignment = TextAlignmentOptions.Center;
+        Stretch(codeText.rectTransform);
+        copyButton = CreateButton(codeRow.transform, "COPY", CopyJoinCode, WarmColor);
 
-        TMP_Text rosterHeading = CreateText(content.transform, "SURVIVORS", 22f, FontStyles.Bold, TextColor);
-        rosterHeading.alignment = TextAlignmentOptions.BottomLeft;
-        SetHeight(rosterHeading.gameObject, 42f);
+        TMP_Text rosterHeading = CreateText(content.transform, "SURVIVORS", 20f, FontStyles.Bold, TextColor);
+        rosterHeading.alignment = TextAlignmentOptions.Center;
+        SetHeight(rosterHeading.gameObject, 34f);
 
         rosterTexts = new TMP_Text[MultiplayerSessionController.MaximumPlayers];
         for (int index = 0; index < rosterTexts.Length; index++)
         {
             GameObject row = CreateUiObject($"Roster Slot {index + 1}", content.transform);
             row.AddComponent<Image>().color = RowColor;
-            SetHeight(row, 48f);
+            SetHeight(row, 44f);
 
-            TMP_Text slot = CreateText(row.transform, $"{index + 1}. EMPTY", 19f, FontStyles.Normal, TextColor);
+            TMP_Text slot = CreateText(row.transform, $"{index + 1}. EMPTY", 18f, FontStyles.Normal, TextColor);
             slot.alignment = TextAlignmentOptions.MidlineLeft;
             slot.margin = new Vector4(18f, 0f, 18f, 0f);
             Stretch(slot.rectTransform);
@@ -178,11 +210,11 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         startButton = CreateButton(content.transform, "START MATCH", StartMatch, AccentColor);
         leaveButton = CreateButton(content.transform, "LEAVE SESSION", Leave, new Color(0.35f, 0.37f, 0.38f, 1f));
         reconnectButton = CreateButton(content.transform, "RECONNECT", Reconnect, WarmColor);
-        backButton = CreateButton(content.transform, "BACK", () => backAction?.Invoke(), new Color(0.35f, 0.37f, 0.38f, 1f));
-        SetHeight(startButton.gameObject, 58f);
-        SetHeight(leaveButton.gameObject, 52f);
-        SetHeight(reconnectButton.gameObject, 52f);
-        SetHeight(backButton.gameObject, 52f);
+        backButton = CreateButton(content.transform, "BACK", () => backAction?.Invoke(), new Color(0.3f, 0.32f, 0.34f, 1f));
+        SetHeight(startButton.gameObject, 56f);
+        SetHeight(leaveButton.gameObject, 50f);
+        SetHeight(reconnectButton.gameObject, 50f);
+        SetHeight(backButton.gameObject, 50f);
     }
 
     private void HandleStateChanged(MultiplayerSessionState state)
