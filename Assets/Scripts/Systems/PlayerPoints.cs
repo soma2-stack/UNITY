@@ -15,6 +15,12 @@ public class PlayerPoints : MonoBehaviour
 
     public int Points { get; private set; }
 
+    /// <summary>
+    /// Global multiplier applied to every <see cref="Add"/> (Double Points power-up).
+    /// 1 = normal. Set/cleared by PowerupManager. Never below 1.
+    /// </summary>
+    public static int PointsMultiplier { get; set; } = 1;
+
     /// <summary>Raised whenever Points changes, passing the new total.</summary>
     public event System.Action<int> OnPointsChanged;
 
@@ -38,6 +44,11 @@ public class PlayerPoints : MonoBehaviour
         {
             return;
         }
+
+        // Double Points (and any future) global multiplier, applied here so every
+        // points source (kills, doors, etc.) benefits without changes elsewhere.
+        int mult = Mathf.Max(1, PointsMultiplier);
+        amount *= mult;
 
         Points += amount;
         Debug.Log($"Added {amount} points (total: {Points})");

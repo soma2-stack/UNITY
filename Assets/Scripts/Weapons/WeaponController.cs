@@ -14,6 +14,9 @@ public class WeaponController : MonoBehaviour
     [Tooltip("Index of the weapon equipped at start.")]
     public int currentIndex = 0;
 
+    [Tooltip("Maximum weapon slots (classic Zombies = 2). When full, GiveWeapon replaces the current slot.")]
+    public int maxWeaponSlots = 2;
+
     [Header("Aiming")]
     [Tooltip("Optional. If left null, Camera.main (then any Camera) is used as the aim ray origin.")]
     public Transform aimCamera;
@@ -51,6 +54,116 @@ public class WeaponController : MonoBehaviour
 
     /// <summary>True when a weapon is equipped (used by the HUD to decide whether to draw ammo).</summary>
     public bool HasWeapon => Current != null;
+
+    // --- Game-loop public API (Mystery Box, Pack-a-Punch, power-ups, wall buys) ---
+
+    /// <summary>
+    /// Add a weapon and equip it (Mystery Box / wall buy). Respects
+    /// <see cref="maxWeaponSlots"/>: if the player already has a slot for this
+    /// exact weapon name its ammo is refilled instead; if all slots are full the
+    /// currently-equipped slot is replaced. Null is ignored. The weapon's runtime
+    /// ammo is initialised. Safe to call any time.
+    /// </summary>
+    public void GiveWeapon(Weapon weapon)
+    {
+        if (weapon == null)
+        {
+            return;
+        }
+
+        if (weapons == null)
+        {
+            weapons = new List<Weapon>();
+        }
+
+        weapon.InitAmmo();
+
+        // Already own this exact weapon: just top its ammo back up and equip it.
+        for (int i = 0; i < weapons.Count; i++)
+        {
+            Weapon w = weapons[i];
+            if (w != null && w.weaponName == weapon.weaponName)
+            {
+                w.ammoInMag = Mathf.Max(0, w.magazineSize);
+                w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
+                SwitchTo(i);
+                EquipCurrent();
+                return;
+            }
+        }
+
+        StopAllCoroutines();
+        isReloading = false;
+
+        int slotCap = Mathf.Max(1, maxWeaponSlots);
+        if (weapons.Count < slotCap)
+        {
+            weapons.Add(weapon);
+            currentIndex = weapons.Count - 1;
+        }
+        else
+        {
+            // Full: replace the slot the player is currently holding.
+            int idx = Mathf.Clamp(currentIndex, 0, weapons.Count - 1);
+            // Hide the outgoing weapon's model so it doesn't linger.
+            if (weapons[idx] != null && weapons[idx].weaponModel != null)
+            {
+                weapons[idx].weaponModel.SetActive(false);
+            }
+            weapons[idx] = weapon;
+            currentIndex = idx;
+        }
+
+        EquipCurrent();
+        Debug.Log("[WeaponController] Gave weapon: " + weapon.weaponName);
+    }
+
+    /// <summary>
+    /// Pack-a-Punch the currently equipped weapon: roughly doubles its damage,
+    /// renames it with a trailing " +", and refills its ammo. No-op if there is no
+    /// current weapon or it is already upgraded.
+    /// </summary>
+    public void UpgradeCurrentWeapon()
+    {
+        Weapon w = Current;
+        if (w == null)
+        {
+            return;
+        }
+
+        if (!w.weaponName.EndsWith(" +"))
+        {
+            w.weaponName += " +";
+        }
+        w.damage = Mathf.Max(1, w.damage * 2);
+        w.reserveAmmo = Mathf.Max(w.reserveAmmo, w.magazineSize * 5);
+        w.ammoInMag = Mathf.Max(0, w.magazineSize);
+        w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
+
+        Debug.Log("[WeaponController] Pack-a-Punched: " + w.weaponName + " (dmg " + w.damage + ")");
+    }
+
+    /// <summary>Refill magazine and reserve ammo for every weapon (Max Ammo power-up).</summary>
+    public void RefillAllAmmo()
+    {
+        if (weapons == null)
+        {
+            return;
+        }
+
+        foreach (Weapon w in weapons)
+        {
+            if (w == null)
+            {
+                continue;
+            }
+            w.InitAmmo();
+            w.ammoInMag = Mathf.Max(0, w.magazineSize);
+            w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
+        }
+
+        Debug.Log("[WeaponController] Max Ammo: all weapons refilled.");
+    }
 
     void Start()
     {
@@ -256,8 +369,10 @@ public class WeaponController : MonoBehaviour
             ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
             if (zombie != null)
             {
-                zombie.TakeDamage(w.damage);
-                Debug.Log("[WeaponController] Hit zombie '" + hit.collider.name + "' for " + w.damage + " damage.");
+                // Insta-Kill power-up: any hit is lethal.
+                int damage = PowerupManager.InstaKillActive ? 99999 : w.damage;
+                zombie.TakeDamage(damage);
+                Debug.Log("[WeaponController] Hit zombie '" + hit.collider.name + "' for " + damage + " damage.");
             }
             else
             {
