@@ -108,14 +108,34 @@ public sealed class MultiplayerMenuController : MonoBehaviour
 
     private void BuildInterface()
     {
-        // Full-screen dim backdrop so the card reads cleanly over the menu video.
-        gameObject.AddComponent<Image>().color = BackgroundColor;
+        // Background: same as the loading screen (school hallway image + dark shade).
+        GameObject hallway = CreateUiObject("School Hallway", transform);
+        Stretch(hallway.GetComponent<RectTransform>());
+        Image hallwayImg = hallway.AddComponent<Image>();
+        Sprite hallwaySprite = Resources.Load<Sprite>("UI/LoadingSchoolHallway");
+        if (hallwaySprite != null)
+        {
+            hallwayImg.sprite = hallwaySprite;
+            hallwayImg.color = Color.white;
+        }
+        else
+        {
+            hallwayImg.color = BackgroundColor;
+        }
+        hallwayImg.preserveAspect = false;
+        hallwayImg.raycastTarget = true;
 
-        // Card fills the whole screen.
+        GameObject shade = CreateUiObject("Readability Shade", transform);
+        Stretch(shade.GetComponent<RectTransform>());
+        Image shadeImg = shade.AddComponent<Image>();
+        shadeImg.color = new Color(0.01f, 0.012f, 0.015f, 0.6f);
+        shadeImg.raycastTarget = true;
+
+        // Card fills the whole screen (transparent so the hallway background shows).
         GameObject card = CreateUiObject("Card", transform);
         RectTransform cardRect = card.GetComponent<RectTransform>();
         Stretch(cardRect);
-        card.AddComponent<Image>().color = new Color(0.07f, 0.075f, 0.085f, 0.99f);
+        card.AddComponent<Image>().color = new Color(0.04f, 0.045f, 0.05f, 0.35f);
 
         // Red header bar with the title (pinned to the top of the card).
         GameObject header = CreateUiObject("Header", card.transform);
