@@ -65,12 +65,14 @@ public class SettingsMenuController : MonoBehaviour
     {
         var root = new GameObject("SettingsMenu", typeof(RectTransform));
         root.transform.SetParent(parent, false);
+        // Deactivate BEFORE adding the component so OnEnable (RefreshFromSettings)
+        // does not run against not-yet-built controls.
+        root.SetActive(false);
 
         var controller = root.AddComponent<SettingsMenuController>();
         controller._onBack = onBack;
         controller.Build(root);
 
-        root.SetActive(false);
         return root;
     }
 

@@ -445,6 +445,15 @@ public sealed class MultiplayerSessionController : MonoBehaviour
     private void BroadcastRoster()
     {
         NotifyRosterChanged();
+
+        // Only a live, listening server can send messages. During shutdown (e.g. on
+        // play-mode exit) CustomMessagingManager is gone, so guard against it.
+        if (networkManager == null || !networkManager.IsServer || !networkManager.IsListening ||
+            networkManager.CustomMessagingManager == null)
+        {
+            return;
+        }
+
         RosterEnvelope envelope = new RosterEnvelope { entries = roster.ToArray() };
         FixedString4096Bytes json = new FixedString4096Bytes(JsonUtility.ToJson(envelope));
         using FastBufferWriter writer = new FastBufferWriter(4096, Allocator.Temp);

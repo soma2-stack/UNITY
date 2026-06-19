@@ -32,15 +32,24 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     {
         GameObject root = CreateUiObject("Online Co-op Overlay", parent);
         Stretch(root.GetComponent<RectTransform>());
+        // Deactivate BEFORE adding the component so OnEnable does not run (and touch
+        // not-yet-built UI) until the overlay is actually shown via SetActive(true).
+        root.SetActive(false);
         MultiplayerMenuController controller = root.AddComponent<MultiplayerMenuController>();
         controller.backAction = onBack;
         controller.BuildInterface();
-        root.SetActive(false);
         return root;
     }
 
     private void OnEnable()
     {
+        // Guard: if the UI has not been built yet, do nothing (avoids touching null
+        // controls if OnEnable ever fires before BuildInterface).
+        if (statusText == null)
+        {
+            return;
+        }
+
         session = MultiplayerSessionController.Instance;
         if (session != null)
         {
@@ -53,7 +62,7 @@ public sealed class MultiplayerMenuController : MonoBehaviour
             HandleJoinCodeChanged(session.JoinCode);
         }
 
-        if (EventSystem.current != null)
+        if (EventSystem.current != null && displayNameInput != null)
         {
             EventSystem.current.SetSelectedGameObject(displayNameInput.gameObject);
         }
@@ -102,45 +111,84 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         // Full-screen dim backdrop so the card reads cleanly over the menu video.
         gameObject.AddComponent<Image>().color = BackgroundColor;
 
-        // Centered card.
+        // Card: vertically stretched with margins so it always fits the screen height.
         GameObject card = CreateUiObject("Card", transform);
         RectTransform cardRect = card.GetComponent<RectTransform>();
-        cardRect.anchorMin = new Vector2(0.5f, 0.5f);
-        cardRect.anchorMax = new Vector2(0.5f, 0.5f);
+        cardRect.anchorMin = new Vector2(0.5f, 0f);
+        cardRect.anchorMax = new Vector2(0.5f, 1f);
         cardRect.pivot = new Vector2(0.5f, 0.5f);
-        cardRect.sizeDelta = new Vector2(840f, 1000f);
+        cardRect.sizeDelta = new Vector2(840f, -70f); // width 840; height = screen - 70
         cardRect.anchoredPosition = Vector2.zero;
         card.AddComponent<Image>().color = new Color(0.07f, 0.075f, 0.085f, 0.99f);
 
-        // Red header bar with the title.
+        // Red header bar with the title (pinned to the top of the card).
         GameObject header = CreateUiObject("Header", card.transform);
         RectTransform headerRect = header.GetComponent<RectTransform>();
         headerRect.anchorMin = new Vector2(0f, 1f);
         headerRect.anchorMax = new Vector2(1f, 1f);
         headerRect.pivot = new Vector2(0.5f, 1f);
-        headerRect.sizeDelta = new Vector2(0f, 96f);
+        headerRect.sizeDelta = new Vector2(0f, 92f);
         headerRect.anchoredPosition = Vector2.zero;
         header.AddComponent<Image>().color = AccentColor;
 
-        TMP_Text title = CreateText(header.transform, "ONLINE CO-OP", 46f, FontStyles.Bold, Color.white);
+        TMP_Text title = CreateText(header.transform, "ONLINE CO-OP", 44f, FontStyles.Bold, Color.white);
         title.alignment = TextAlignmentOptions.Center;
         Stretch(title.rectTransform);
 
-        // Body below the header.
-        GameObject content = CreateUiObject("Content", card.transform);
+        // BACK button pinned to the bottom of the card (always visible).
+        GameObject footer = CreateUiObject("Footer", card.transform);
+        RectTransform footerRect = footer.GetComponent<RectTransform>();
+        footerRect.anchorMin = new Vector2(0f, 0f);
+        footerRect.anchorMax = new Vector2(1f, 0f);
+        footerRect.pivot = new Vector2(0.5f, 0f);
+        footerRect.sizeDelta = new Vector2(0f, 74f);
+        footerRect.anchoredPosition = Vector2.zero;
+        backButton = CreateButton(footer.transform, "BACK", () => backAction?.Invoke(), new Color(0.3f, 0.32f, 0.34f, 1f));
+        RectTransform backRect = backButton.GetComponent<RectTransform>();
+        backRect.anchorMin = Vector2.zero;
+        backRect.anchorMax = Vector2.one;
+        backRect.offsetMin = new Vector2(18f, 14f);
+        backRect.offsetMax = new Vector2(-18f, -12f);
+
+        // Scrollable middle region (between header and footer) so all controls fit.
+        GameObject scroll = CreateUiObject("Scroll", card.transform);
+        RectTransform scrollRect = scroll.GetComponent<RectTransform>();
+        scrollRect.anchorMin = Vector2.zero;
+        scrollRect.anchorMax = Vector2.one;
+        scrollRect.offsetMin = new Vector2(0f, 74f);   // above footer
+        scrollRect.offsetMax = new Vector2(0f, -92f);  // below header
+        ScrollRect sr = scroll.AddComponent<ScrollRect>();
+        sr.horizontal = false;
+        sr.vertical = true;
+        sr.movementType = ScrollRect.MovementType.Clamped;
+        sr.scrollSensitivity = 24f;
+
+        GameObject viewport = CreateUiObject("Viewport", scroll.transform);
+        RectTransform viewportRect = viewport.GetComponent<RectTransform>();
+        Stretch(viewportRect);
+        viewport.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.0035f); // needed for masking
+        viewport.AddComponent<RectMask2D>();
+        sr.viewport = viewportRect;
+
+        GameObject content = CreateUiObject("Content", viewport.transform);
         RectTransform contentRect = content.GetComponent<RectTransform>();
-        contentRect.anchorMin = Vector2.zero;
-        contentRect.anchorMax = Vector2.one;
-        contentRect.offsetMin = new Vector2(34f, 28f);
-        contentRect.offsetMax = new Vector2(-34f, -116f);
+        contentRect.anchorMin = new Vector2(0f, 1f);
+        contentRect.anchorMax = new Vector2(1f, 1f);
+        contentRect.pivot = new Vector2(0.5f, 1f);
+        contentRect.anchoredPosition = Vector2.zero;
+        sr.content = contentRect;
 
         VerticalLayoutGroup layout = content.AddComponent<VerticalLayoutGroup>();
         layout.spacing = 10f;
+        layout.padding = new RectOffset(34, 34, 22, 22);
         layout.childAlignment = TextAnchor.UpperCenter;
         layout.childControlWidth = true;
         layout.childControlHeight = false;
         layout.childForceExpandWidth = true;
         layout.childForceExpandHeight = false;
+
+        ContentSizeFitter fitter = content.AddComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.Fit.PreferredSize;
 
         statusText = CreateText(content.transform, "OFFLINE", 18f, FontStyles.Bold, WarmColor);
         statusText.alignment = TextAlignmentOptions.Center;
@@ -210,11 +258,10 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         startButton = CreateButton(content.transform, "START MATCH", StartMatch, AccentColor);
         leaveButton = CreateButton(content.transform, "LEAVE SESSION", Leave, new Color(0.35f, 0.37f, 0.38f, 1f));
         reconnectButton = CreateButton(content.transform, "RECONNECT", Reconnect, WarmColor);
-        backButton = CreateButton(content.transform, "BACK", () => backAction?.Invoke(), new Color(0.3f, 0.32f, 0.34f, 1f));
         SetHeight(startButton.gameObject, 56f);
         SetHeight(leaveButton.gameObject, 50f);
         SetHeight(reconnectButton.gameObject, 50f);
-        SetHeight(backButton.gameObject, 50f);
+        // NOTE: BACK lives in the pinned footer (built above) so it is always visible.
     }
 
     private void HandleStateChanged(MultiplayerSessionState state)
