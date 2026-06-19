@@ -277,7 +277,7 @@ public static class SchoolRoomTextureApplier
     private static Material CreateClassroomWallMaterial()
     {
         const string materialName = "Classroom Walls";
-        const string textureName = "Classroom walls.png";
+        const string textureName = "Classroom walls.jpg";
         string texturePath = $"{TextureFolder}/{textureName}";
 
         Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
