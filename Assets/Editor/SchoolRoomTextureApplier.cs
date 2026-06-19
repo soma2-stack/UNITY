@@ -21,13 +21,15 @@ public static class SchoolRoomTextureApplier
         EnsureFolder("Assets/Materials");
         EnsureFolder(MaterialFolder);
 
+        // Matte, slightly grimy school surfaces tuned to match the parking-lot ground the player liked.
+        // Low smoothness keeps plaster/concrete/tile reading as matte rather than wet plastic; metallic stays 0.
         Dictionary<SurfaceType, Material> materials = new Dictionary<SurfaceType, Material>
         {
-            { SurfaceType.Floor, CreateOrUpdateMaterial("Dirty School Tile Floor", "FLoor.png", new Vector2(4f, 4f), 0.8f) },
-            { SurfaceType.HallwayWall, CreateOrUpdateMaterial("Grimy Hallway Walls", "Hallway walls.png", new Vector2(1f, 1f), 0.75f) },
-            { SurfaceType.RoomWall, CreateSolidMaterial("Neutral Room Walls", new Color(0.45f, 0.43f, 0.38f, 1f)) },
-            { SurfaceType.Ceiling, CreateOrUpdateMaterial("Stained Hallway Ceiling", "Hallway ceiling.png", new Vector2(3f, 3f), 0.7f) },
-            { SurfaceType.Stairs, CreateOrUpdateMaterial("Worn Concrete Stairs", "Stairs.png", new Vector2(1f, 1f), 0.75f) },
+            { SurfaceType.Floor, CreateOrUpdateMaterial("Dirty School Tile Floor", "FLoor.png", new Vector2(6f, 6f), 0.8f, 0.18f) },
+            { SurfaceType.HallwayWall, CreateOrUpdateMaterial("Grimy Hallway Walls", "Hallway walls.png", new Vector2(2f, 2f), 0.78f, 0.1f) },
+            { SurfaceType.RoomWall, CreateClassroomWallMaterial() },
+            { SurfaceType.Ceiling, CreateOrUpdateMaterial("Stained Hallway Ceiling", "Hallway ceiling.png", new Vector2(3f, 3f), 0.72f, 0.08f) },
+            { SurfaceType.Stairs, CreateOrUpdateMaterial("Worn Concrete Stairs", "Stairs.png", new Vector2(2f, 2f), 0.78f, 0.1f) },
             { SurfaceType.Trim, CreateTrimMaterial() },
         };
 
@@ -214,7 +216,13 @@ public static class SchoolRoomTextureApplier
         return false;
     }
 
+    // Backward-compatible overload: defaults to a matte finish so nothing reads as shiny plastic.
     private static Material CreateOrUpdateMaterial(string materialName, string textureName, Vector2 tiling, float colorValue)
+    {
+        return CreateOrUpdateMaterial(materialName, textureName, tiling, colorValue, 0.1f);
+    }
+
+    private static Material CreateOrUpdateMaterial(string materialName, string textureName, Vector2 tiling, float colorValue, float smoothness)
     {
         string texturePath = $"{TextureFolder}/{textureName}";
         ConfigureTexture(texturePath);
@@ -258,19 +266,78 @@ public static class SchoolRoomTextureApplier
             material.SetColor("_Color", tint);
         }
 
+        ApplyMatteFinish(material, smoothness);
+
         EditorUtility.SetDirty(material);
         return material;
+    }
+
+    // Loads the player's new classroom wall texture; falls back to a plaster-green solid if the file is missing
+    // so room walls are never left as a raw placeholder / pink shader-error surface.
+    private static Material CreateClassroomWallMaterial()
+    {
+        const string materialName = "Classroom Walls";
+        const string textureName = "Classroom walls.jpg";
+        string texturePath = $"{TextureFolder}/{textureName}";
+
+        Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+        if (texture == null)
+        {
+            Debug.LogWarning(
+                $"Classroom wall texture not found at '{texturePath}'. Falling back to a flat plaster-green color. " +
+                $"Add '{textureName}' to {TextureFolder} and re-run Tools/School Of The Dead/Apply Room Textures to texture the room walls.");
+
+            // Desaturated institutional plaster-green so the walls still read as finished, not pink/void.
+            Material fallback = CreateSolidMaterial(materialName, new Color(0.55f, 0.58f, 0.5f, 1f));
+            ApplyMatteFinish(fallback, 0.1f);
+            EditorUtility.SetDirty(fallback);
+            return fallback;
+        }
+
+        // Painted plaster/concrete: moderate tiling for tall walls, low smoothness, no metallic.
+        // Light natural tint (~0.9) keeps the painted look without washing it grey.
+        return CreateOrUpdateMaterial(materialName, textureName, new Vector2(2f, 2f), 0.9f, 0.1f);
+    }
+
+    // Forces a matte, non-metallic finish across both URP/Lit and Standard property names.
+    private static void ApplyMatteFinish(Material material, float smoothness)
+    {
+        if (material == null)
+        {
+            return;
+        }
+
+        if (material.HasProperty("_Smoothness"))
+        {
+            material.SetFloat("_Smoothness", smoothness);
+        }
+
+        if (material.HasProperty("_Glossiness"))
+        {
+            material.SetFloat("_Glossiness", smoothness);
+        }
+
+        if (material.HasProperty("_Metallic"))
+        {
+            material.SetFloat("_Metallic", 0f);
+        }
+
+        if (material.HasProperty("_SpecularHighlights"))
+        {
+            material.SetFloat("_SpecularHighlights", 1f);
+        }
+
+        if (material.HasProperty("_EnvironmentReflections"))
+        {
+            material.SetFloat("_EnvironmentReflections", 1f);
+        }
     }
 
     private static Material CreateTrimMaterial()
     {
         Material material = CreateSolidMaterial("Dark Header Trim", new Color(0.16f, 0.14f, 0.12f, 1f));
-
-        if (material.HasProperty("_Smoothness"))
-        {
-            material.SetFloat("_Smoothness", 0.15f);
-        }
-
+        ApplyMatteFinish(material, 0.15f);
+        EditorUtility.SetDirty(material);
         return material;
     }
 

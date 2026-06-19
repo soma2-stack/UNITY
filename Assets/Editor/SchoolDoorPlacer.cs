@@ -35,7 +35,9 @@ public static class SchoolDoorPlacer
         "nurses_office_backroom", // nurses backroom - no door for now (placeholder)
         "the_vault",              // assumed "fallout shelter" - no door  [VERIFY THIS]
         "gym_w_seg",              // gym doorway next to the stairs - stays open into the gym
-        // "library_staircase",   // library stairs secret: left buyable so it can be the unlock
+        "library_staircase",      // secret PaP stairwell - hidden behind the bookcase, no door
+        "upper_hallway_e_seg1",   // requested removal (matched lower-case)
+        "underground_tunnel_n_seg0", // requested removal (matched lower-case)
     };
 
     [MenuItem("Tools/School Of The Dead/Place Buyable Doors")]
@@ -47,26 +49,61 @@ public static class SchoolDoorPlacer
         Material doorMaterial = CreateSolidMaterial("Buyable Door", new Color(0.36f, 0.22f, 0.12f, 1f));
 
         Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-        GameObject doorsRoot = RecreateRoot(DoorsRootName);
+
+        // NON-DESTRUCTIVE: keep the existing Generated_Doors root and the doors in it
+        // (so any manual width/height/position tweaks are preserved). We only ADD
+        // doorways that have no door yet, REMOVE doors that are now excluded, and
+        // re-apply linking to whatever doors exist.
+        GameObject doorsRoot = GetOrCreateRoot(DoorsRootName);
 
         // Collect every floor surface so each door can find the floor below its doorway.
+        // Stairwells have no "floor" mesh - their walkable surface is steps/stairs/landings,
+        // so accept those names too (lets stairwell_2 etc. find a base to stand the door on).
         List<Renderer> floorRenderers = new List<Renderer>();
         foreach (GameObject root in scene.GetRootGameObjects())
         {
             foreach (MeshRenderer renderer in root.GetComponentsInChildren<MeshRenderer>(true))
             {
-                if (renderer.gameObject.name.ToLowerInvariant().Contains("floor"))
+                if (IsWalkableSurfaceName(renderer.gameObject.name))
                 {
                     floorRenderers.Add(renderer);
                 }
             }
         }
 
+        // Existing doors: index by doorId, seed the dedup positions, and drop any that
+        // are now excluded (e.g. the requested removals or library_staircase).
+        List<Door> allDoors = new List<Door>(doorsRoot.GetComponentsInChildren<Door>(true));
+        HashSet<string> existingDoorIds = new HashSet<string>();
+        List<Vector3> placedPositions = new List<Vector3>();
+        int removedExcluded = 0;
+
+        for (int i = allDoors.Count - 1; i >= 0; i--)
+        {
+            Door door = allDoors[i];
+            if (door == null)
+            {
+                allDoors.RemoveAt(i);
+                continue;
+            }
+
+            if (IsExcluded(door.doorId))
+            {
+                Object.DestroyImmediate(door.gameObject);
+                allDoors.RemoveAt(i);
+                removedExcluded++;
+                continue;
+            }
+
+            existingDoorIds.Add(door.doorId);
+            placedPositions.Add(door.transform.position);
+        }
+
         int doorsCreated = 0;
         int skippedNoFloor = 0;
         int skippedExcluded = 0;
         int skippedDuplicate = 0;
-        List<Vector3> placedPositions = new List<Vector3>();
+        int keptExisting = allDoors.Count;
 
         foreach (GameObject root in scene.GetRootGameObjects())
         {
@@ -97,6 +134,12 @@ public static class SchoolDoorPlacer
                     continue;
                 }
 
+                // This doorway already has a door (kept as-is, manual edits preserved).
+                if (existingDoorIds.Contains(t.gameObject.name))
+                {
+                    continue;
+                }
+
                 // The same opening can have a transom on both sides - only one door.
                 if (IsDuplicatePosition(t.position, placedPositions))
                 {
@@ -104,9 +147,11 @@ public static class SchoolDoorPlacer
                     continue;
                 }
 
-                if (TryCreateDoor(t, doorsRoot.transform, doorMaterial, floorRenderers))
+                if (TryCreateDoor(t, doorsRoot.transform, doorMaterial, floorRenderers, out Door createdDoor))
                 {
                     placedPositions.Add(t.position);
+                    existingDoorIds.Add(t.gameObject.name);
+                    allDoors.Add(createdDoor);
                     doorsCreated++;
                 }
                 else
@@ -116,13 +161,106 @@ public static class SchoolDoorPlacer
             }
         }
 
+        // Re-apply linking across ALL doors (existing + new) so connected doors open together.
+        int linkedGroups = LinkConnectedDoors(allDoors);
+
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
 
-        Debug.Log($"Placed {doorsCreated} buyable doors in {ScenePath}. " +
-                  $"Skipped: {skippedExcluded} excluded (left open), {skippedDuplicate} duplicate openings, {skippedNoFloor} with no usable floor.");
+        Debug.Log($"Doors updated in {ScenePath}: {doorsCreated} added, {keptExisting} kept (your edits preserved), " +
+                  $"{removedExcluded} removed (now excluded), {linkedGroups} linked group(s). " +
+                  $"Skipped: {skippedExcluded} excluded openings, {skippedDuplicate} duplicate openings, {skippedNoFloor} with no usable floor.");
+    }
+
+    /// <summary>
+    /// Links doors that connect the SAME area (e.g. both ends of a stairwell) so
+    /// opening one opens them all. Doors are grouped by the room/area identifier
+    /// parsed from their source transom name; any group with 2+ doors becomes a
+    /// mutually-linked set. Returns the number of multi-door groups linked.
+    /// </summary>
+    private static int LinkConnectedDoors(List<Door> doors)
+    {
+        Dictionary<string, List<Door>> groups = new Dictionary<string, List<Door>>();
+
+        foreach (Door door in doors)
+        {
+            if (door == null)
+            {
+                continue;
+            }
+
+            string key = ParseAreaKey(door.doorId);
+            if (string.IsNullOrEmpty(key))
+            {
+                continue;
+            }
+
+            if (!groups.TryGetValue(key, out List<Door> list))
+            {
+                list = new List<Door>();
+                groups[key] = list;
+            }
+            list.Add(door);
+        }
+
+        int linkedGroups = 0;
+        foreach (KeyValuePair<string, List<Door>> pair in groups)
+        {
+            List<Door> group = pair.Value;
+            if (group.Count < 2)
+            {
+                continue;
+            }
+
+            linkedGroups++;
+            foreach (Door door in group)
+            {
+                // Link each door to every OTHER door in the same area.
+                List<Door> others = new List<Door>();
+                foreach (Door other in group)
+                {
+                    if (other != door)
+                    {
+                        others.Add(other);
+                    }
+                }
+                door.linkedDoors = others.ToArray();
+            }
+        }
+
+        return linkedGroups;
+    }
+
+    /// <summary>
+    /// Parses the room/area identifier from a transom name by stripping the trailing
+    /// directional + segment suffix (e.g. "..._W_Seg2_Right_Transom" -> the area).
+    /// Doors that share this key connect the same area and should open together.
+    /// </summary>
+    private static string ParseAreaKey(string transomName)
+    {
+        if (string.IsNullOrEmpty(transomName))
+        {
+            return null;
+        }
+
+        string name = transomName.ToLowerInvariant();
+
+        // Cut at the first directional/segment marker so "stairwell_2_W_Seg1" and
+        // "stairwell_2_E_Seg3" both reduce to "stairwell_2".
+        string[] markers = { "_w_seg", "_e_seg", "_n_seg", "_s_seg", "_seg", "_transom" };
+        int cut = name.Length;
+        foreach (string marker in markers)
+        {
+            int idx = name.IndexOf(marker, System.StringComparison.Ordinal);
+            if (idx >= 0 && idx < cut)
+            {
+                cut = idx;
+            }
+        }
+
+        return name.Substring(0, cut);
     }
 
     private static bool IsDoorwayTransom(string objectName)
@@ -161,8 +299,9 @@ public static class SchoolDoorPlacer
         return false;
     }
 
-    private static bool TryCreateDoor(Transform transom, Transform parent, Material material, List<Renderer> floorRenderers)
+    private static bool TryCreateDoor(Transform transom, Transform parent, Material material, List<Renderer> floorRenderers, out Door createdDoor)
     {
+        createdDoor = null;
         // Transoms are upright (yaw-only) boxes, so their vertical extent is just the Y scale.
         Vector3 worldScale = transom.lossyScale;
         float width = Mathf.Abs(worldScale.x);
@@ -215,6 +354,7 @@ public static class SchoolDoorPlacer
         // Slide the door straight down into the floor when opened, fully clearing the gap.
         doorComponent.openMoveOffset = new Vector3(0f, -(height + 0.1f), 0f);
 
+        createdDoor = doorComponent;
         return foundFloor;
     }
 
@@ -226,13 +366,27 @@ public static class SchoolDoorPlacer
         Transform current = transom.parent;
         while (current != null)
         {
+            // Prefer the lowest walkable surface in this room/stairwell so a door over
+            // a staircase reaches the bottom step rather than floating on a landing.
+            float lowest = float.PositiveInfinity;
+            bool any = false;
             foreach (MeshRenderer renderer in current.GetComponentsInChildren<MeshRenderer>(true))
             {
-                if (renderer.gameObject.name.ToLowerInvariant().Contains("floor"))
+                if (IsWalkableSurfaceName(renderer.gameObject.name))
                 {
-                    floorTopY = renderer.bounds.max.y;
-                    return true;
+                    float top = renderer.bounds.max.y;
+                    if (top < lowest)
+                    {
+                        lowest = top;
+                        any = true;
+                    }
                 }
+            }
+
+            if (any)
+            {
+                floorTopY = lowest;
+                return true;
             }
 
             current = current.parent;
@@ -240,6 +394,13 @@ public static class SchoolDoorPlacer
 
         floorTopY = 0f;
         return false;
+    }
+
+    private static bool IsWalkableSurfaceName(string objectName)
+    {
+        string name = objectName.ToLowerInvariant();
+        return name.Contains("floor") || name.Contains("stair") || name.Contains("step") ||
+               name.Contains("landing");
     }
 
     private static bool TryGetFloorTopBelow(Vector3 worldPos, float belowY, List<Renderer> floorRenderers, out float floorTopY)
@@ -274,12 +435,13 @@ public static class SchoolDoorPlacer
         return found;
     }
 
-    private static GameObject RecreateRoot(string rootName)
+    private static GameObject GetOrCreateRoot(string rootName)
     {
         GameObject existing = GameObject.Find(rootName);
         if (existing != null)
         {
-            Object.DestroyImmediate(existing);
+            // Keep it (and its existing doors) so manual tweaks survive re-runs.
+            return existing;
         }
 
         GameObject root = new GameObject(rootName);
