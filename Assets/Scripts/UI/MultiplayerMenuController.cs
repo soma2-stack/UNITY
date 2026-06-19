@@ -188,7 +188,7 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         layout.childForceExpandHeight = false;
 
         ContentSizeFitter fitter = content.AddComponent<ContentSizeFitter>();
-        fitter.verticalFit = ContentSizeFitter.Fit.PreferredSize;
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
         statusText = CreateText(content.transform, "OFFLINE", 18f, FontStyles.Bold, WarmColor);
         statusText.alignment = TextAlignmentOptions.Center;
