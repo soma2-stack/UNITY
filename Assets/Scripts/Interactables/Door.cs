@@ -30,6 +30,11 @@ public class Door : MonoBehaviour
     [Tooltip("How fast the door slides to its open position.")]
     public float openSpeed = 6f;
 
+    [Header("Linked Doors")]
+    [Tooltip("Other doors that open together with this one (e.g. both ends of a stairwell). " +
+             "Opening this door opens all of these too. Set automatically by the door placer.")]
+    public Door[] linkedDoors;
+
     public bool IsOpen { get; private set; }
 
     private Transform player;
@@ -38,6 +43,7 @@ public class Door : MonoBehaviour
     private Vector3 openLocalPosition;
     private bool isMoving;
     private float nextPromptTime;
+    private bool playerInRange;
 
     private void Awake()
     {
@@ -67,27 +73,51 @@ public class Door : MonoBehaviour
             FindPlayer();
             if (player == null)
             {
+                playerInRange = false;
                 return;
             }
         }
 
         float distance = Vector3.Distance(transform.position, player.position);
-        if (distance > interactionRange)
+        playerInRange = distance <= interactionRange;
+        if (!playerInRange)
         {
             return;
-        }
-
-        // Simple placeholder prompt (throttled so it does not spam the console).
-        if (Time.time >= nextPromptTime)
-        {
-            Debug.Log("Press E to open door");
-            nextPromptTime = Time.time + 1.5f;
         }
 
         if (Input.GetKeyDown(interactKey))
         {
             TryOpen();
         }
+    }
+
+    private void OnGUI()
+    {
+        if (IsOpen || !playerInRange)
+        {
+            return;
+        }
+
+        string label = cost > 0 ? $"Press E   [{cost}]" : "Press E   Open Door";
+
+        GUIStyle style = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 22,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleCenter,
+        };
+
+        float w = 360f;
+        float h = 34f;
+        Rect rect = new Rect((Screen.width - w) * 0.5f, Screen.height * 0.62f, w, h);
+
+        // Drop shadow then the bright label for readability over any background.
+        Color prev = GUI.color;
+        GUI.color = new Color(0f, 0f, 0f, 0.85f);
+        GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), label, style);
+        GUI.color = new Color(0.96f, 0.93f, 0.86f, 1f);
+        GUI.Label(rect, label, style);
+        GUI.color = prev;
     }
 
     /// <summary>
@@ -125,6 +155,7 @@ public class Door : MonoBehaviour
 
         IsOpen = true;
         isMoving = true;
+        playerInRange = false;
 
         // Stop blocking the player immediately.
         if (doorCollider != null)
@@ -132,7 +163,18 @@ public class Door : MonoBehaviour
             doorCollider.enabled = false;
         }
 
-        Debug.Log("Door opened");
+        // Open every linked door too (e.g. both ends of a stairwell). The IsOpen
+        // guard at the top of Open() prevents mutual links from looping forever.
+        if (linkedDoors != null)
+        {
+            foreach (Door linked in linkedDoors)
+            {
+                if (linked != null && !linked.IsOpen)
+                {
+                    linked.Open();
+                }
+            }
+        }
     }
 
     private void AnimateOpen()
