@@ -49,7 +49,12 @@ public static class SchoolDoorPlacer
         Material doorMaterial = CreateSolidMaterial("Buyable Door", new Color(0.36f, 0.22f, 0.12f, 1f));
 
         Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-        GameObject doorsRoot = RecreateRoot(DoorsRootName);
+
+        // NON-DESTRUCTIVE: keep the existing Generated_Doors root and the doors in it
+        // (so any manual width/height/position tweaks are preserved). We only ADD
+        // doorways that have no door yet, REMOVE doors that are now excluded, and
+        // re-apply linking to whatever doors exist.
+        GameObject doorsRoot = GetOrCreateRoot(DoorsRootName);
 
         // Collect every floor surface so each door can find the floor below its doorway.
         // Stairwells have no "floor" mesh - their walkable surface is steps/stairs/landings,
@@ -66,12 +71,39 @@ public static class SchoolDoorPlacer
             }
         }
 
+        // Existing doors: index by doorId, seed the dedup positions, and drop any that
+        // are now excluded (e.g. the requested removals or library_staircase).
+        List<Door> allDoors = new List<Door>(doorsRoot.GetComponentsInChildren<Door>(true));
+        HashSet<string> existingDoorIds = new HashSet<string>();
+        List<Vector3> placedPositions = new List<Vector3>();
+        int removedExcluded = 0;
+
+        for (int i = allDoors.Count - 1; i >= 0; i--)
+        {
+            Door door = allDoors[i];
+            if (door == null)
+            {
+                allDoors.RemoveAt(i);
+                continue;
+            }
+
+            if (IsExcluded(door.doorId))
+            {
+                Object.DestroyImmediate(door.gameObject);
+                allDoors.RemoveAt(i);
+                removedExcluded++;
+                continue;
+            }
+
+            existingDoorIds.Add(door.doorId);
+            placedPositions.Add(door.transform.position);
+        }
+
         int doorsCreated = 0;
         int skippedNoFloor = 0;
         int skippedExcluded = 0;
         int skippedDuplicate = 0;
-        List<Vector3> placedPositions = new List<Vector3>();
-        List<Door> createdDoors = new List<Door>();
+        int keptExisting = allDoors.Count;
 
         foreach (GameObject root in scene.GetRootGameObjects())
         {
@@ -102,6 +134,12 @@ public static class SchoolDoorPlacer
                     continue;
                 }
 
+                // This doorway already has a door (kept as-is, manual edits preserved).
+                if (existingDoorIds.Contains(t.gameObject.name))
+                {
+                    continue;
+                }
+
                 // The same opening can have a transom on both sides - only one door.
                 if (IsDuplicatePosition(t.position, placedPositions))
                 {
@@ -112,7 +150,8 @@ public static class SchoolDoorPlacer
                 if (TryCreateDoor(t, doorsRoot.transform, doorMaterial, floorRenderers, out Door createdDoor))
                 {
                     placedPositions.Add(t.position);
-                    createdDoors.Add(createdDoor);
+                    existingDoorIds.Add(t.gameObject.name);
+                    allDoors.Add(createdDoor);
                     doorsCreated++;
                 }
                 else
@@ -122,15 +161,17 @@ public static class SchoolDoorPlacer
             }
         }
 
-        int linkedGroups = LinkConnectedDoors(createdDoors);
+        // Re-apply linking across ALL doors (existing + new) so connected doors open together.
+        int linkedGroups = LinkConnectedDoors(allDoors);
 
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
 
-        Debug.Log($"Placed {doorsCreated} buyable doors in {ScenePath} ({linkedGroups} linked door group(s)). " +
-                  $"Skipped: {skippedExcluded} excluded (left open), {skippedDuplicate} duplicate openings, {skippedNoFloor} with no usable floor.");
+        Debug.Log($"Doors updated in {ScenePath}: {doorsCreated} added, {keptExisting} kept (your edits preserved), " +
+                  $"{removedExcluded} removed (now excluded), {linkedGroups} linked group(s). " +
+                  $"Skipped: {skippedExcluded} excluded openings, {skippedDuplicate} duplicate openings, {skippedNoFloor} with no usable floor.");
     }
 
     /// <summary>
@@ -394,12 +435,13 @@ public static class SchoolDoorPlacer
         return found;
     }
 
-    private static GameObject RecreateRoot(string rootName)
+    private static GameObject GetOrCreateRoot(string rootName)
     {
         GameObject existing = GameObject.Find(rootName);
         if (existing != null)
         {
-            Object.DestroyImmediate(existing);
+            // Keep it (and its existing doors) so manual tweaks survive re-runs.
+            return existing;
         }
 
         GameObject root = new GameObject(rootName);
