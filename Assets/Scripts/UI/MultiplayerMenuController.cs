@@ -111,14 +111,10 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         // Full-screen dim backdrop so the card reads cleanly over the menu video.
         gameObject.AddComponent<Image>().color = BackgroundColor;
 
-        // Card: vertically stretched with margins so it always fits the screen height.
+        // Card fills the whole screen.
         GameObject card = CreateUiObject("Card", transform);
         RectTransform cardRect = card.GetComponent<RectTransform>();
-        cardRect.anchorMin = new Vector2(0.5f, 0f);
-        cardRect.anchorMax = new Vector2(0.5f, 1f);
-        cardRect.pivot = new Vector2(0.5f, 0.5f);
-        cardRect.sizeDelta = new Vector2(840f, -70f); // width 840; height = screen - 70
-        cardRect.anchoredPosition = Vector2.zero;
+        Stretch(cardRect);
         card.AddComponent<Image>().color = new Color(0.07f, 0.075f, 0.085f, 0.99f);
 
         // Red header bar with the title (pinned to the top of the card).
@@ -145,10 +141,11 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         footerRect.anchoredPosition = Vector2.zero;
         backButton = CreateButton(footer.transform, "BACK", () => backAction?.Invoke(), new Color(0.3f, 0.32f, 0.34f, 1f));
         RectTransform backRect = backButton.GetComponent<RectTransform>();
-        backRect.anchorMin = Vector2.zero;
-        backRect.anchorMax = Vector2.one;
-        backRect.offsetMin = new Vector2(18f, 14f);
-        backRect.offsetMax = new Vector2(-18f, -12f);
+        backRect.anchorMin = new Vector2(0.5f, 0f);
+        backRect.anchorMax = new Vector2(0.5f, 1f);
+        backRect.pivot = new Vector2(0.5f, 0.5f);
+        backRect.sizeDelta = new Vector2(760f, -22f);
+        backRect.anchoredPosition = new Vector2(0f, 1f);
 
         // Scrollable middle region (between header and footer) so all controls fit.
         GameObject scroll = CreateUiObject("Scroll", card.transform);
@@ -170,11 +167,13 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         viewport.AddComponent<RectMask2D>();
         sr.viewport = viewportRect;
 
+        // Centered fixed-width column so controls stay readable on a full-screen panel.
         GameObject content = CreateUiObject("Content", viewport.transform);
         RectTransform contentRect = content.GetComponent<RectTransform>();
-        contentRect.anchorMin = new Vector2(0f, 1f);
-        contentRect.anchorMax = new Vector2(1f, 1f);
+        contentRect.anchorMin = new Vector2(0.5f, 1f);
+        contentRect.anchorMax = new Vector2(0.5f, 1f);
         contentRect.pivot = new Vector2(0.5f, 1f);
+        contentRect.sizeDelta = new Vector2(780f, 0f);
         contentRect.anchoredPosition = Vector2.zero;
         sr.content = contentRect;
 
@@ -347,6 +346,27 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         input.targetGraphic = background;
         input.lineType = TMP_InputField.LineType.SingleLine;
         input.contentType = uppercase ? TMP_InputField.ContentType.Alphanumeric : TMP_InputField.ContentType.Standard;
+
+        // A code-built TMP_InputField needs a proper "Text Area" viewport (with a mask)
+        // that contains the placeholder + text; without it, clicking/focusing the field
+        // throws because the caret has nowhere to live. Build the standard hierarchy.
+        GameObject textArea = CreateUiObject("Text Area", root.transform);
+        RectTransform textAreaRect = textArea.GetComponent<RectTransform>();
+        textAreaRect.anchorMin = Vector2.zero;
+        textAreaRect.anchorMax = Vector2.one;
+        textAreaRect.offsetMin = new Vector2(16f, 8f);
+        textAreaRect.offsetMax = new Vector2(-16f, -8f);
+        textArea.AddComponent<RectMask2D>();
+        input.textViewport = textAreaRect;
+
+        TMP_Text placeholder = CreateText(textArea.transform, placeholderValue, 20f, FontStyles.Normal, new Color(1f, 1f, 1f, 0.4f));
+        Stretch(placeholder.rectTransform);
+        input.placeholder = placeholder;
+
+        TMP_Text text = CreateText(textArea.transform, string.Empty, 20f, FontStyles.Normal, TextColor);
+        Stretch(text.rectTransform);
+        input.textComponent = text;
+
         input.onValueChanged.AddListener(value =>
         {
             if (uppercase && value != value.ToUpperInvariant())
@@ -355,15 +375,6 @@ public sealed class MultiplayerMenuController : MonoBehaviour
             }
         });
 
-        TMP_Text text = CreateText(root.transform, string.Empty, 20f, FontStyles.Normal, TextColor);
-        Stretch(text.rectTransform);
-        text.margin = new Vector4(18f, 10f, 18f, 10f);
-        input.textComponent = text;
-
-        TMP_Text placeholder = CreateText(root.transform, placeholderValue, 20f, FontStyles.Normal, new Color(1f, 1f, 1f, 0.35f));
-        Stretch(placeholder.rectTransform);
-        placeholder.margin = new Vector4(18f, 10f, 18f, 10f);
-        input.placeholder = placeholder;
         SetHeight(root, 56f);
         return input;
     }

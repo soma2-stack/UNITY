@@ -30,6 +30,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
     private readonly Dictionary<ulong, ConnectionPayload> pendingPayloads = new Dictionary<ulong, ConnectionPayload>();
     private readonly Dictionary<string, float> disconnectedAt = new Dictionary<string, float>();
     private readonly HashSet<string> lockedRoster = new HashSet<string>();
+    private readonly HashSet<ulong> spawnedPlayers = new HashSet<ulong>();
 
     private NetworkManager networkManager;
     private UnityTransport transport;
@@ -339,6 +340,49 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         messaging.UnregisterNamedMessageHandler(MatchStartMessage);
         messaging.RegisterNamedMessageHandler(RosterMessage, ReceiveRosterMessage);
         messaging.RegisterNamedMessageHandler(MatchStartMessage, ReceiveMatchStartMessage);
+
+        // Spawn each client's player body only after the gameplay scene finishes
+        // loading for them (so no player exists while in the menu/lobby).
+        if (networkManager.SceneManager != null)
+        {
+            networkManager.SceneManager.OnLoadComplete -= HandleNetworkSceneLoadComplete;
+            networkManager.SceneManager.OnLoadComplete += HandleNetworkSceneLoadComplete;
+        }
+    }
+
+    private void HandleNetworkSceneLoadComplete(ulong clientId, string sceneName, LoadSceneMode loadSceneMode)
+    {
+        if (networkManager == null || !networkManager.IsServer || sceneName != GameplayScene)
+        {
+            return;
+        }
+
+        SpawnPlayerObject(clientId);
+    }
+
+    private void SpawnPlayerObject(ulong clientId)
+    {
+        if (spawnedPlayers.Contains(clientId))
+        {
+            return;
+        }
+
+        GameObject prefab = networkManager.NetworkConfig.PlayerPrefab;
+        if (prefab == null)
+        {
+            return;
+        }
+
+        GameObject instance = Instantiate(prefab);
+        NetworkObject netObj = instance.GetComponent<NetworkObject>();
+        if (netObj == null)
+        {
+            Destroy(instance);
+            return;
+        }
+
+        netObj.SpawnAsPlayerObject(clientId, true);
+        spawnedPlayers.Add(clientId);
     }
 
     private void ConfigureConnectionData()
@@ -365,7 +409,11 @@ public sealed class MultiplayerSessionController : MonoBehaviour
                             !reconnectExpired &&
                             (!rosterLocked || isReconnect) &&
                             (!isFull || isReconnect);
-        response.CreatePlayerObject = response.Approved && networkManager.NetworkConfig.PlayerPrefab != null;
+        // Do NOT auto-create the player object on connection. Otherwise hosting from
+        // the menu immediately spawns a first-person player in the MENU scene. Players
+        // are spawned by the server only once the gameplay scene has loaded
+        // (see HandleNetworkSceneLoadComplete).
+        response.CreatePlayerObject = false;
         response.Pending = false;
         response.Reason = response.Approved ? string.Empty : GetRejectionReason(isDuplicate, reconnectExpired, isFull);
 
@@ -425,6 +473,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
                 BroadcastRoster();
             }
 
+            // Allow a re-spawn if this client comes back.
+            spawnedPlayers.Remove(clientId);
             return;
         }
 
@@ -541,6 +591,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         pendingPayloads.Clear();
         lockedRoster.Clear();
         disconnectedAt.Clear();
+        spawnedPlayers.Clear();
         rosterLocked = false;
         JoinCode = string.Empty;
         JoinCodeChanged?.Invoke(string.Empty);
