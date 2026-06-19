@@ -44,11 +44,18 @@ public class ZombieAgent : MonoBehaviour
     public string attackParam = "Attack";
     [Tooltip("Animator trigger fired when the zombie dies (plays the death animation).")]
     public string dieParam = "Die";
+    [Tooltip("Animator trigger fired when the zombie is shot but survives (flinch).")]
+    public string hitParam = "Hit";
+    [Tooltip("Minimum seconds between hit-react flinches (prevents stun-locking).")]
+    public float hitReactCooldown = 1.2f;
     [Tooltip("Seconds to keep the body after death so the death animation can play before it is removed.")]
     public float deathDestroyDelay = 3f;
 
     /// <summary>Raised when this zombie dies. Passes itself so listeners can untrack it.</summary>
     public event System.Action<ZombieAgent> OnDeath;
+
+    /// <summary>Raised (static) at the world position where ANY zombie dies. Used by power-up drops.</summary>
+    public static event System.Action<Vector3> OnAnyZombieKilled;
 
     private NavMeshAgent agent;
     private Transform player;
@@ -57,8 +64,10 @@ public class ZombieAgent : MonoBehaviour
     private bool hasSpeedParam;
     private bool hasAttackParam;
     private bool hasDieParam;
+    private bool hasHitParam;
     private float nextRepathTime;
     private float nextAttackTime;
+    private float nextHitReactTime;
     private bool isDead;
 
     private void Awake()
@@ -123,6 +132,7 @@ public class ZombieAgent : MonoBehaviour
             if (p.name == speedParam) hasSpeedParam = true;
             else if (p.name == attackParam) hasAttackParam = true;
             else if (p.name == dieParam) hasDieParam = true;
+            else if (p.name == hitParam) hasHitParam = true;
         }
     }
 
@@ -176,6 +186,14 @@ public class ZombieAgent : MonoBehaviour
         if (health <= 0)
         {
             Die();
+            return;
+        }
+
+        // Survived the hit: play a brief flinch (rate-limited so it can't be stun-locked).
+        if (animator != null && hasHitParam && Time.time >= nextHitReactTime)
+        {
+            animator.SetTrigger(hitParam);
+            nextHitReactTime = Time.time + hitReactCooldown;
         }
     }
 
@@ -191,6 +209,7 @@ public class ZombieAgent : MonoBehaviour
         // Award points + notify the spawner/round system immediately (this kill counts now).
         PlayerPoints.Instance?.Add(killReward);
         OnDeath?.Invoke(this);
+        OnAnyZombieKilled?.Invoke(transform.position); // power-up drops, kill feeds, etc.
 
         // Play the death animation.
         if (animator != null && hasDieParam)

@@ -31,6 +31,7 @@ public static class ZombieSetup
     private const string RunFbx = ClipFolder + "/zombie_run_01.fbx";
     private const string AttackFbx = ClipFolder + "/zombie_light_attack_01.fbx";
     private const string DeathFbx = ClipFolder + "/zombie_death_FD_01.fbx";
+    private const string HitFbx = ClipFolder + "/zombie_hit_react_F_01.fbx";
 
     [MenuItem("Tools/School Of The Dead/Set Up Zombie")]
     public static void SetUpZombie()
@@ -43,6 +44,7 @@ public static class ZombieSetup
         AnimationClip run = LoadClip(RunFbx);
         AnimationClip attack = LoadClip(AttackFbx);
         AnimationClip death = LoadClip(DeathFbx);
+        AnimationClip hit = LoadClip(HitFbx); // optional flinch
 
         if (idle == null || run == null || attack == null || death == null)
         {
@@ -50,7 +52,7 @@ public static class ZombieSetup
             return;
         }
 
-        AnimatorController controller = BuildController(idle, run, attack, death);
+        AnimatorController controller = BuildController(idle, run, attack, death, hit);
 
         GameObject source = AssetDatabase.LoadAssetAtPath<GameObject>(ModelPrefab);
         if (source == null)
@@ -120,7 +122,7 @@ public static class ZombieSetup
                   " Remember to BAKE a NavMesh and add spawn points.");
     }
 
-    private static AnimatorController BuildController(AnimationClip idle, AnimationClip run, AnimationClip attack, AnimationClip death)
+    private static AnimatorController BuildController(AnimationClip idle, AnimationClip run, AnimationClip attack, AnimationClip death, AnimationClip hit)
     {
         EnsureFolder(AnimFolder);
         if (AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath) != null)
@@ -132,6 +134,7 @@ public static class ZombieSetup
         controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
         controller.AddParameter("Attack", AnimatorControllerParameterType.Trigger);
         controller.AddParameter("Die", AnimatorControllerParameterType.Trigger);
+        controller.AddParameter("Hit", AnimatorControllerParameterType.Trigger);
 
         AnimatorStateMachine sm = controller.layers[0].stateMachine;
 
@@ -172,6 +175,24 @@ public static class ZombieSetup
         anyToDeath.duration = 0.05f;
         anyToDeath.canTransitionToSelf = false;
         anyToDeath.AddCondition(AnimatorConditionMode.If, 0f, "Die");
+
+        // Hit-react flinch (added AFTER death so death keeps priority). Brief, returns to Idle.
+        if (hit != null)
+        {
+            AnimatorState sHit = sm.AddState("Hit");
+            sHit.motion = hit;
+
+            AnimatorStateTransition anyToHit = sm.AddAnyStateTransition(sHit);
+            anyToHit.hasExitTime = false;
+            anyToHit.duration = 0.05f;
+            anyToHit.canTransitionToSelf = false;
+            anyToHit.AddCondition(AnimatorConditionMode.If, 0f, "Hit");
+
+            AnimatorStateTransition hitToIdle = sHit.AddTransition(sIdle);
+            hitToIdle.hasExitTime = true;
+            hitToIdle.exitTime = 0.6f;
+            hitToIdle.duration = 0.1f;
+        }
 
         EditorUtility.SetDirty(controller);
         AssetDatabase.SaveAssets();
