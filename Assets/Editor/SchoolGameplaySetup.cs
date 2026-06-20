@@ -23,12 +23,32 @@ public static class SchoolGameplaySetup
     private const int MaxSpawnPoints = 10;
     private const float MinSpawnSpacing = 6f;
 
+    // Name of the doors-only layer the NavMesh bake EXCLUDES. Doors are baked-out so
+    // every doorway is fully connected in the navmesh; closed doors then block at
+    // runtime via their carving NavMeshObstacle (see Door.cs). Falls back gracefully
+    // if the layer hasn't been added to the project.
+    private const string DoorsLayerName = "Doors";
+    private const string DoorsRootName = "Generated_Doors";
+    private const string StairLinksRootName = "Generated_StairLinks";
+
+    // Stair traversal: agent step height / max slope used when (re)baking so normal
+    // stairs are walkable, plus NavMeshLink settings spanning each stairway.
+    private const float AgentStepHeight = 0.4f;
+    private const float AgentMaxSlope = 50f;
+    private const float StairLinkWidth = 2.5f;
+
     [MenuItem("Tools/School Of The Dead/Setup Gameplay (NavMesh + Spawners)")]
     public static void SetupGameplay()
     {
         Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
-        // 1) Bake the NavMesh off the level's render geometry.
+        // 1a) Put every generated door on the dedicated "Doors" layer so the bake can
+        //     EXCLUDE them. This is what makes the navmesh include every doorway with
+        //     FULL connectivity; closed doors then carve those openings shut at runtime
+        //     via their NavMeshObstacle, and Door.Open() removes the carve.
+        int doorsExcludedLayer = MoveDoorsToLayer();
+
+        // 1b) Bake the NavMesh off the level's render geometry (doors excluded).
         GameObject navObj = GameObject.Find("NavMesh Surface");
         if (navObj == null)
         {
@@ -41,8 +61,29 @@ public static class SchoolGameplaySetup
         }
         surface.collectObjects = CollectObjects.All;
         surface.useGeometry = NavMeshCollectGeometry.RenderMeshes;
+
+        // Exclude the doors layer from collection so doorways bake open.
+        if (doorsExcludedLayer >= 0)
+        {
+            surface.layerMask = ~(1 << doorsExcludedLayer);
+        }
+        else
+        {
+            surface.layerMask = ~0;
+        }
+
+        // Make normal stairs walkable: bump step height / max slope on the bake.
+        ApplyStairFriendlyBuildSettings(surface);
+
         surface.BuildNavMesh();
-        Debug.Log("[GameplaySetup] NavMesh baked.");
+        Debug.Log($"[GameplaySetup] NavMesh baked (doors excluded layer={doorsExcludedLayer}, " +
+                  $"step={AgentStepHeight}, slope={AgentMaxSlope}).");
+
+        // 1c) NavMeshLinks spanning each stairway so agents reliably traverse up/down,
+        //     independent of the baked-in step climbing. Built right after the bake so
+        //     both ends sample onto the fresh navmesh.
+        int stairLinks = BuildStairLinks(scene, surface);
+        Debug.Log($"[GameplaySetup] Created {stairLinks} stair NavMeshLink(s).");
 
         // 2) GameManager: points + spawner + round manager.
         GameObject gm = GameObject.Find("GameManager");
@@ -90,6 +131,352 @@ public static class SchoolGameplaySetup
 
         Debug.Log("[GameplaySetup] Done. Press Play: zombies spawn and chase. " +
                   (zombiePrefab == null ? "(Assign a Zombie prefab and re-run.)" : ""));
+    }
+
+    /// <summary>
+    /// Moves every object under Generated_Doors onto the dedicated "Doors" layer so
+    /// the NavMeshSurface bake can exclude them (doorways bake fully connected).
+    /// Returns the layer index, or -1 if the project has no "Doors" layer yet.
+    /// </summary>
+    private static int MoveDoorsToLayer()
+    {
+        int layer = LayerMask.NameToLayer(DoorsLayerName);
+        if (layer < 0)
+        {
+            Debug.LogWarning($"[GameplaySetup] No '{DoorsLayerName}' layer found - doors will be " +
+                             "baked into the navmesh and rely only on carving obstacles. Add a " +
+                             $"'{DoorsLayerName}' layer (Project Settings > Tags and Layers) and re-run " +
+                             "for fully-connected doorways.");
+            return -1;
+        }
+
+        GameObject doorsRoot = GameObject.Find(DoorsRootName);
+        if (doorsRoot == null)
+        {
+            return layer; // no doors yet - layer still valid for the mask
+        }
+
+        int count = 0;
+        foreach (Transform t in doorsRoot.GetComponentsInChildren<Transform>(true))
+        {
+            if (t.gameObject.layer != layer)
+            {
+                t.gameObject.layer = layer;
+                count++;
+            }
+        }
+        Debug.Log($"[GameplaySetup] Moved {count} door object(s) to layer '{DoorsLayerName}'.");
+        return layer;
+    }
+
+    /// <summary>
+    /// Pushes stair-friendly step height / max slope onto the agent type the surface
+    /// bakes against, so ordinary stairs bake into a continuous walkable surface. In
+    /// com.unity.ai.navigation 2.0 the per-surface bake reads its agent type's settings
+    /// (<see cref="NavMesh.GetSettingsByID"/>); those settings live in the project's
+    /// Navigation Agent-Types asset, which we edit via its SerializedObject (no obsolete
+    /// editor APIs). This is best-effort and non-fatal: the NavMeshLinks created by
+    /// <see cref="BuildStairLinks"/> guarantee stair traversal regardless of the bake
+    /// settings, so we only log if the settings can't be edited.
+    /// </summary>
+    private static void ApplyStairFriendlyBuildSettings(NavMeshSurface surface)
+    {
+        NavMeshBuildSettings current = NavMesh.GetSettingsByID(surface.agentTypeID);
+        if (current.agentClimb >= AgentStepHeight && current.agentSlope >= AgentMaxSlope)
+        {
+            return; // already stair-friendly
+        }
+
+        // The agent-type settings are serialized assets under ProjectSettings; load and
+        // edit the matching agent's climb/slope through SerializedObject.
+        Object[] settingsAssets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/NavMeshAreas.asset");
+        if (settingsAssets == null || settingsAssets.Length == 0)
+        {
+            // Older/newer layouts keep agent types in the NavMesh settings object instead.
+            Debug.Log("[GameplaySetup] Agent bake settings asset not found - relying on stair " +
+                      "NavMeshLinks for stair traversal.");
+            return;
+        }
+
+        bool edited = false;
+        foreach (Object asset in settingsAssets)
+        {
+            if (asset == null)
+            {
+                continue;
+            }
+            SerializedObject so = new SerializedObject(asset);
+            SerializedProperty settingsArray = so.FindProperty("m_Settings");
+            if (settingsArray == null || !settingsArray.isArray)
+            {
+                continue;
+            }
+
+            for (int i = 0; i < settingsArray.arraySize; i++)
+            {
+                SerializedProperty element = settingsArray.GetArrayElementAtIndex(i);
+                SerializedProperty climb = element.FindPropertyRelative("agentClimb");
+                SerializedProperty slope = element.FindPropertyRelative("agentSlope");
+                if (climb == null && slope == null)
+                {
+                    continue;
+                }
+                if (climb != null)
+                {
+                    climb.floatValue = Mathf.Max(climb.floatValue, AgentStepHeight);
+                }
+                if (slope != null)
+                {
+                    slope.floatValue = Mathf.Max(slope.floatValue, AgentMaxSlope);
+                }
+                edited = true;
+            }
+
+            if (edited)
+            {
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+        }
+
+        if (edited)
+        {
+            Debug.Log($"[GameplaySetup] Set agent bake climb>={AgentStepHeight}, slope>={AgentMaxSlope}.");
+        }
+        else
+        {
+            Debug.Log("[GameplaySetup] Could not edit agent bake settings - relying on stair " +
+                      "NavMeshLinks for stair traversal.");
+        }
+    }
+
+    /// <summary>
+    /// Creates a bidirectional <see cref="NavMeshLink"/> across each stairway so zombies
+    /// can chase the player up and down stairs even where step geometry alone would not
+    /// bake into a continuous surface. Stairways are detected by name: the stair geometry
+    /// roots are the "*_Stairs" transforms (one per stairwell - stairwell, stairwell_2,
+    /// east_stairwell, library_staircase) which parent the individual Step_N meshes. The
+    /// link spans the bottom landing &lt;-&gt; top landing, with both ends sampled onto the
+    /// freshly-baked navmesh. Re-runnable: the link root is rebuilt each call.
+    /// </summary>
+    private static int BuildStairLinks(Scene scene, NavMeshSurface surface)
+    {
+        GameObject root = GameObject.Find(StairLinksRootName);
+        if (root != null)
+        {
+            Object.DestroyImmediate(root);
+        }
+        root = new GameObject(StairLinksRootName);
+
+        // Find stair geometry roots by name. "*_Stairs" objects parent the Step_N meshes
+        // (the steps themselves are NOT named with "stair"), so we read the combined
+        // bounds of each root's child renderers to get the full vertical run. We also
+        // accept any other transform whose name contains "stair"/"stairwell"/"staircase"
+        // and that has child renderers, so additional stair groups are still covered.
+        Dictionary<string, Bounds> groups = new Dictionary<string, Bounds>();
+        foreach (GameObject go in scene.GetRootGameObjects())
+        {
+            if (go.name == StairLinksRootName || go.name == DoorsRootName)
+            {
+                continue;
+            }
+
+            foreach (Transform t in go.GetComponentsInChildren<Transform>(true))
+            {
+                if (!IsStairGeometryRoot(t.gameObject.name))
+                {
+                    continue;
+                }
+
+                // Combine every child renderer (the Step_N meshes) into one bounds.
+                Renderer[] childRenderers = t.GetComponentsInChildren<Renderer>(true);
+                if (childRenderers.Length == 0)
+                {
+                    continue;
+                }
+
+                bool any = false;
+                Bounds b = new Bounds();
+                foreach (Renderer child in childRenderers)
+                {
+                    if (!any)
+                    {
+                        b = child.bounds;
+                        any = true;
+                    }
+                    else
+                    {
+                        b.Encapsulate(child.bounds);
+                    }
+                }
+                if (!any)
+                {
+                    continue;
+                }
+
+                string key = StairGroupKey(t.gameObject.name.ToLowerInvariant());
+                if (string.IsNullOrEmpty(key))
+                {
+                    key = t.gameObject.name.ToLowerInvariant();
+                }
+
+                if (groups.TryGetValue(key, out Bounds existing))
+                {
+                    existing.Encapsulate(b);
+                    groups[key] = existing;
+                }
+                else
+                {
+                    groups[key] = b;
+                }
+            }
+        }
+
+        int created = 0;
+        foreach (KeyValuePair<string, Bounds> pair in groups)
+        {
+            if (TryCreateStairLink(pair.Key, pair.Value, root.transform))
+            {
+                created++;
+            }
+        }
+
+        if (created == 0)
+        {
+            Object.DestroyImmediate(root);
+        }
+        return created;
+    }
+
+    /// <summary>
+    /// True for the transform that roots a stairway's step geometry. Primary match is
+    /// "*_stairs" (the parents of the Step_N meshes). We deliberately ignore walls,
+    /// ceilings, floors, transoms, void backstops and blockers so each stairway yields
+    /// exactly one group.
+    /// </summary>
+    private static bool IsStairGeometryRoot(string objectName)
+    {
+        string n = objectName.ToLowerInvariant();
+        if (!n.Contains("stair"))
+        {
+            return false;
+        }
+        // The walkable stair root is named "..._stairs". Exclude the non-walkable parts.
+        if (n.EndsWith("_stairs"))
+        {
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Derives the stairway group key (e.g. "stairwell_2") from a stair object's
+    /// lower-cased name by cutting at the trailing "_stairs"/structural suffix so all
+    /// pieces of one stairwell share a key.
+    /// </summary>
+    private static string StairGroupKey(string lowerName)
+    {
+        // The stair roots are "<area>_stairs"; cut the trailing "_stairs" so every piece
+        // of one stairwell shares the area key (e.g. "east_stairwell_stairs" -> "east_stairwell",
+        // "stairwell_2_stairs" -> "stairwell_2"). Fall back to seg markers for any other shapes.
+        string[] markers =
+        {
+            "_stairs", "_w_seg", "_e_seg", "_n_seg", "_s_seg", "_seg",
+        };
+        int cut = lowerName.Length;
+        foreach (string marker in markers)
+        {
+            int idx = lowerName.IndexOf(marker, System.StringComparison.Ordinal);
+            if (idx > 0 && idx < cut)
+            {
+                cut = idx;
+            }
+        }
+        return lowerName.Substring(0, cut);
+    }
+
+    /// <summary>
+    /// Builds one NavMeshLink across a stairway from its bottom end to its top end.
+    /// The run direction is the larger horizontal extent of the stair bounds; the two
+    /// endpoints sit just beyond each end of that axis (the landings) and are sampled
+    /// onto the navmesh so the link actually connects.
+    /// </summary>
+    private static bool TryCreateStairLink(string key, Bounds bounds, Transform parent)
+    {
+        // Stairs run along whichever horizontal axis is longer; the two landings sit just
+        // beyond each end of that axis. We don't assume which end ascends - we sample BOTH
+        // ends onto the navmesh (across the stair's full height) and then call the lower
+        // hit the bottom and the higher hit the top.
+        bool runX = bounds.size.x >= bounds.size.z;
+        float runHalf = (runX ? bounds.size.x : bounds.size.z) * 0.5f;
+        if (runHalf < 0.5f)
+        {
+            return false; // degenerate / not a real staircase
+        }
+
+        Vector3 center = bounds.center;
+        Vector3 runDir = runX ? Vector3.right : Vector3.forward;
+        const float landingPush = 0.6f;
+
+        Vector3 endA = center + runDir * (runHalf + landingPush);
+        Vector3 endB = center - runDir * (runHalf + landingPush);
+
+        if (!SampleStairEnd(endA, bounds, out NavMeshHit hitA) ||
+            !SampleStairEnd(endB, bounds, out NavMeshHit hitB))
+        {
+            Debug.LogWarning($"[GameplaySetup] Stair '{key}': couldn't sample both ends onto the " +
+                             "navmesh - no link created (check the stair landings are baked).");
+            return false;
+        }
+
+        Vector3 bottom = hitA.position.y <= hitB.position.y ? hitA.position : hitB.position;
+        Vector3 top = hitA.position.y <= hitB.position.y ? hitB.position : hitA.position;
+
+        // Skip a "stair" that is actually flat (no real vertical connection to make).
+        if (Mathf.Abs(top.y - bottom.y) < 0.2f)
+        {
+            return false;
+        }
+
+        GameObject linkObj = new GameObject($"StairLink_{key}");
+        linkObj.transform.SetParent(parent);
+        linkObj.transform.position = bottom;
+
+        NavMeshLink link = linkObj.AddComponent<NavMeshLink>();
+        // Endpoints are stored relative to the link transform.
+        link.startPoint = Vector3.zero;
+        link.endPoint = linkObj.transform.InverseTransformPoint(top);
+        link.width = StairLinkWidth;
+        link.bidirectional = true;
+        link.area = 0; // Walkable
+        link.UpdateLink();
+        return true;
+    }
+
+    /// <summary>
+    /// Samples a stairway end onto the navmesh. Tries several heights spanning the stair's
+    /// vertical extent (bottom, middle, top) so the probe snaps to whichever landing exists
+    /// at that end regardless of which way the stairs ascend.
+    /// </summary>
+    private static bool SampleStairEnd(Vector3 endXZ, Bounds bounds, out NavMeshHit hit)
+    {
+        float[] heights =
+        {
+            bounds.min.y + 0.2f,
+            bounds.center.y,
+            bounds.max.y + 0.2f,
+        };
+
+        foreach (float y in heights)
+        {
+            Vector3 probe = new Vector3(endXZ.x, y, endXZ.z);
+            if (NavMesh.SamplePosition(probe, out hit, 2.5f, NavMesh.AllAreas))
+            {
+                return true;
+            }
+        }
+
+        hit = default;
+        return false;
     }
 
     private static Transform[] BuildSpawnPoints(Scene scene)
