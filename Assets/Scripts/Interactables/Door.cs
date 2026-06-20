@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.AI;
 
 /// <summary>
 /// Simple buyable-style door (Call of Duty Zombies feel).
@@ -39,6 +40,7 @@ public class Door : MonoBehaviour
 
     private Transform player;
     private Collider doorCollider;
+    private NavMeshObstacle navObstacle;
     private Vector3 closedLocalPosition;
     private Vector3 openLocalPosition;
     private bool isMoving;
@@ -50,6 +52,41 @@ public class Door : MonoBehaviour
         doorCollider = GetComponent<Collider>();
         closedLocalPosition = transform.localPosition;
         openLocalPosition = closedLocalPosition + openMoveOffset;
+
+        SetupNavObstacle();
+    }
+
+    /// <summary>
+    /// Adds (or reuses) a carving <see cref="NavMeshObstacle"/> so a CLOSED door
+    /// cuts a hole in the baked NavMesh - zombies cannot path through it. The
+    /// obstacle is sized to the door's own footprint (the door cube is scaled to
+    /// the doorway), and carving is enabled so the navmesh is actually removed
+    /// rather than just steered around. <see cref="Open"/> disables this obstacle
+    /// so the navmesh reconnects and zombies can chase through the opening.
+    ///
+    /// The NavMesh is baked WITH every doorway open (the door geometry is excluded
+    /// from the bake via a dedicated layer in SchoolGameplaySetup); these carving
+    /// obstacles are what actually block the closed doorways at runtime.
+    /// </summary>
+    private void SetupNavObstacle()
+    {
+        navObstacle = GetComponent<NavMeshObstacle>();
+        if (navObstacle == null)
+        {
+            navObstacle = gameObject.AddComponent<NavMeshObstacle>();
+        }
+
+        navObstacle.shape = NavMeshObstacleShape.Box;
+        // size is local-space and is scaled by the transform's lossyScale. The door
+        // cube's localScale already matches the doorway (width, height, thickness),
+        // so a unit box centred on the door carves exactly the opening. Pad the depth
+        // a little so the carve reliably spans the doorway gap.
+        navObstacle.center = Vector3.zero;
+        navObstacle.size = new Vector3(1f, 1f, 1.5f);
+        navObstacle.carving = true;
+        // Carve immediately and keep it carved while closed (it never moves).
+        navObstacle.carveOnlyStationary = false;
+        navObstacle.enabled = !IsOpen;
     }
 
     private void Start()
@@ -161,6 +198,13 @@ public class Door : MonoBehaviour
         if (doorCollider != null)
         {
             doorCollider.enabled = false;
+        }
+
+        // Stop blocking zombies: disabling the carving obstacle lets the baked
+        // NavMesh reconnect across this doorway so agents can path through.
+        if (navObstacle != null)
+        {
+            navObstacle.enabled = false;
         }
 
         // Open every linked door too (e.g. both ends of a stairwell). The IsOpen
