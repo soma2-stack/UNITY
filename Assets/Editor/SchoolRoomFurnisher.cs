@@ -326,44 +326,84 @@ public static class SchoolRoomFurnisher
 
     private static void FurnishClassroom(RoomContext ctx)
     {
-        // 1) Teacher desk + chair near one wall (the +Z "front" wall), facing the room.
-        float frontZ = ctx.MaxZ - 0.4f;
-        if (PlaceAt(ctx, ctx.Center.x, frontZ, 0.55f, 0.35f,
-                pos => MakeDesk(ctx, pos, 180f, "TeacherDesk")))
+        // Choose the "front" (board) wall deterministically: the wall farthest from
+        // any doorway so desks never face a door. Everything below is oriented from
+        // that wall's geometry, so the whole room reads consistently regardless of
+        // which way the room happens to be aligned in world space.
+        Wall front = ChooseFrontWall(ctx);
+        WallInfo(ctx, front, out float ffx, out float ffz, out bool runAlongX, out _);
+
+        // Axis abstraction. "depth" = perpendicular to the board (back wall -> front
+        // wall); "run" = along the board (where columns of desks spread out).
+        bool depthIsZ = runAlongX;                 // N/S front -> depth on Z; E/W front -> depth on X
+        float frontCoord = depthIsZ ? ffz : ffx;   // world coord of the front wall on the depth axis
+        float backCoord = depthIsZ
+            ? (front == Wall.North ? ctx.MinZ : ctx.MaxZ)
+            : (front == Wall.East ? ctx.MinX : ctx.MaxX);
+        float depthSign = Mathf.Sign(frontCoord - backCoord);   // back -> front along depth
+        float runMin = runAlongX ? ctx.MinX : ctx.MinZ;
+        float runMax = runAlongX ? ctx.MaxX : ctx.MaxZ;
+        float runCenter = 0.5f * (runMin + runMax);
+
+        Vector3 inward = InwardNormal(front);       // board -> students
+        Vector3 boardDir = -inward;                 // students -> board (what a student faces)
+        float studentYaw = YawFromDir(boardDir);    // every student desk + chair uses this
+        float teacherYaw = YawFromDir(inward);      // teacher faces the students
+
+        // 1) Whiteboard on the chosen front wall (decorative, no collider).
+        MakeWhiteboard(ctx, front, "Whiteboard");
+
+        // 2) Teacher desk near the front wall, facing the students; chair tucked
+        //    between the desk and the wall (occupant on the wall side).
+        float teacherDepth = frontCoord - depthSign * 0.6f; // 0.6m off the board wall
+        float tdx = depthIsZ ? runCenter : teacherDepth;
+        float tdz = depthIsZ ? teacherDepth : runCenter;
+        if (PlaceAt(ctx, tdx, tdz, 0.6f, 0.45f, p => MakeDesk(ctx, p, teacherYaw, "TeacherDesk")))
         {
-            Vector3 tp = new Vector3(ctx.Center.x, ctx.FloorY, frontZ - 0.7f);
-            if (ctx.Fits(tp.x, tp.z, 0.3f, 0.3f)) MakeChair(ctx, tp, 0f, "TeacherChair");
+            Vector3 tc = new Vector3(tdx, ctx.FloorY, tdz) + (-boardDir) * 0.7f; // wall side of desk
+            if (ctx.Fits(tc.x, tc.z, 0.3f, 0.3f)) MakeChair(ctx, tc, teacherYaw, "TeacherChair");
         }
 
-        // 2) Whiteboard panel on the front wall (decorative, no collider).
-        MakeWhiteboard(ctx, Wall.North, "Whiteboard");
-
-        // 3) Corner shelf/cabinet.
+        // 3) Corner shelf + trash can (away from the board wall so they don't crowd it).
         PlaceInCorner(ctx, 0, 1.0f, 0.4f, (pos, yaw) => MakeShelf(ctx, pos, yaw, "Shelf"));
-
-        // 4) Trash can by another corner.
         PlaceInCorner(ctx, 2, 0.3f, 0.3f, (pos, yaw) => MakeTrashCan(ctx, pos, "TrashCan"));
 
-        // 5) Rows of student desks+chairs across the room, leaving a centre aisle.
+        // 4) Neat rows of student desks, all FACING THE BOARD, chairs tucked behind
+        //    each desk, with a clear central aisle running front-to-back so students
+        //    (and zombies) can walk up the middle.
         int budget = Mathf.Min(ctx.PropBudget(), 16);
-        const float deskW = 1.0f, deskD = 0.6f, gapX = 0.7f, gapZ = 1.1f;
-        float startZ = ctx.MinZ + 1.2f;
-        float endZ = frontZ - 1.6f; // leave space in front of teacher desk
-        int row = 0;
-        for (float z = startZ; z <= endZ && ctx.PropCount < budget; z += gapZ, row++)
-        {
-            int col = 0;
-            for (float x = ctx.MinX + deskW * 0.5f; x + deskW * 0.5f <= ctx.MaxX && ctx.PropCount < budget; x += deskW + gapX, col++)
-            {
-                // Leave a vertical centre aisle (skip desks straddling the middle).
-                if (Mathf.Abs(x - ctx.Center.x) < 0.7f) continue;
+        const float deskW = 1.0f, deskD = 0.6f, runGap = 0.7f, depthGap = 1.15f, aisleHalf = 0.7f;
 
-                if (PlaceAt(ctx, x, z, deskW * 0.5f + 0.05f, deskD * 0.5f + 0.05f,
-                        p => MakeDesk(ctx, p, 0f, $"Desk_{row}_{col}")))
+        // Rows march from near the back wall toward the front, stopping short of the
+        // teacher desk. "d" is the world coord on the depth axis for the row.
+        // (Guard against a degenerate room so the depth loop always terminates.)
+        if (Mathf.Abs(depthSign) < 0.5f) return;
+        float firstRow = backCoord + depthSign * 1.2f;
+        float lastRow = teacherDepth - depthSign * 1.7f; // gap in front of the teacher
+        int row = 0;
+        for (float d = firstRow;
+             depthSign > 0 ? d <= lastRow : d >= lastRow;
+             d += depthSign * depthGap, row++)
+        {
+            if (ctx.PropCount >= budget) break;
+            int col = 0;
+            for (float r = runMin + deskW * 0.5f; r + deskW * 0.5f <= runMax && ctx.PropCount < budget; r += deskW + runGap, col++)
+            {
+                // Keep a clear central aisle (skip desks straddling the run centre).
+                if (Mathf.Abs(r - runCenter) < aisleHalf) continue;
+
+                float dx = depthIsZ ? r : d;
+                float dz = depthIsZ ? d : r;
+                // Footprint half-extents follow the desk's facing: width spans the run
+                // axis, depth spans the depth axis.
+                float hX = depthIsZ ? deskW * 0.5f + 0.05f : deskD * 0.5f + 0.05f;
+                float hZ = depthIsZ ? deskD * 0.5f + 0.05f : deskW * 0.5f + 0.05f;
+                int rr = row, cc = col;
+                if (PlaceAt(ctx, dx, dz, hX, hZ, p => MakeDesk(ctx, p, studentYaw, $"Desk_{rr}_{cc}")))
                 {
-                    // Student chair tucked behind (toward -Z).
-                    Vector3 cp = new Vector3(x, ctx.FloorY, z - 0.55f);
-                    if (ctx.Fits(cp.x, cp.z, 0.28f, 0.28f)) MakeChair(ctx, cp, 180f, $"Chair_{row}_{col}");
+                    // Chair tucked behind the desk (away from the board) facing it.
+                    Vector3 cp = new Vector3(dx, ctx.FloorY, dz) + (-boardDir) * 0.55f;
+                    if (ctx.Fits(cp.x, cp.z, 0.28f, 0.28f)) MakeChair(ctx, cp, studentYaw, $"Chair_{rr}_{cc}");
                 }
             }
         }
@@ -432,15 +472,20 @@ public static class SchoolRoomFurnisher
 
     private static void FurnishCafeteria(RoomContext ctx)
     {
-        // Food-counter line along the north wall.
-        MakeCounterRun(ctx, Wall.North, "FoodCounter", withSink: false);
+        // Food-service line set ~1.2m OFF the north wall so the player can walk
+        // behind it (server side). Stop the dining rows short of it.
+        const float counterOffset = 1.2f, counterDepth = 0.6f;
+        MakeCounterRun(ctx, Wall.North, "FoodCounter", withSink: false, wallOffset: counterOffset);
+        float counterFrontZ = ctx.MaxZ - (counterOffset + counterDepth); // inner face of the line
 
-        // Several long tables with bench seats, leaving walking gaps.
+        // Several long tables with bench seats, in neat parallel rows with walking
+        // gaps; kept clear of the service line and doorways (Fits handles doors).
         int budget = Mathf.Min(ctx.PropBudget(), 12);
         float tableLen = Mathf.Clamp(ctx.SizeX * 0.5f, 2.5f, 5f);
         const float tableW = 0.9f, rowGap = 2.2f;
         int idx = 0;
-        for (float z = ctx.MinZ + 1.4f; z <= ctx.MaxZ - 2.4f && ctx.PropCount < budget; z += rowGap)
+        float diningMaxZ = Mathf.Min(ctx.MaxZ - 2.4f, counterFrontZ - 1.0f);
+        for (float z = ctx.MinZ + 1.4f; z <= diningMaxZ && ctx.PropCount < budget; z += rowGap)
         {
             float x = ctx.Center.x;
             if (PlaceAt(ctx, x, z, tableLen * 0.5f + 0.1f, tableW * 0.5f + 0.45f,
@@ -463,15 +508,19 @@ public static class SchoolRoomFurnisher
 
     private static void FurnishKitchen(RoomContext ctx)
     {
-        // Counters / prep tables along walls.
-        MakeCounterRun(ctx, Wall.North, "PrepCounterN", withSink: true);
-        MakeCounterRun(ctx, Wall.South, "PrepCounterS", withSink: false);
+        // Prep/sink line set ~1.2m off the north wall so the player can walk behind
+        // it. The south wall keeps a flush back-counter, preserving a clear central
+        // working lane (and never blocking the kitchen entrance - Fits clears doors).
+        const float counterOffset = 1.2f;
+        MakeCounterRun(ctx, Wall.North, "PrepCounterN", withSink: true, wallOffset: counterOffset);
+        MakeCounterRun(ctx, Wall.South, "PrepCounterS", withSink: false, wallOffset: 0f);
 
         // Storage shelves on a side wall.
         MakeWallShelfRun(ctx, Wall.West, "StorageShelves");
 
-        // A prep table island if there's room.
-        if (ctx.SizeX > 3f && ctx.SizeZ > 3f)
+        // A prep-table island only when the room is deep enough that the offset
+        // north line + island + south counter still leave walking lanes.
+        if (ctx.SizeX > 3f && ctx.SizeZ > 5.5f)
         {
             Vector3 c = ctx.Center;
             PlaceAt(ctx, c.x, c.z, 0.9f, 0.6f,
@@ -508,8 +557,9 @@ public static class SchoolRoomFurnisher
             float z = ctx.Center.z;
             if (PlaceAt(ctx, x, z, 0.7f, 0.5f, p => MakeTable(ctx, p, 0f, 1.4f, 0.9f, 0.75f, _matWoodMid, "StudyTable")))
             {
+                // Chair south of the table, facing the table (north, +Z).
                 Vector3 cp = new Vector3(x, ctx.FloorY, z - 0.7f);
-                if (ctx.Fits(cp.x, cp.z, 0.28f, 0.28f)) MakeChair(ctx, cp, 180f, "StudyChair");
+                if (ctx.Fits(cp.x, cp.z, 0.28f, 0.28f)) MakeChair(ctx, cp, 0f, "StudyChair");
             }
         }
 
@@ -547,14 +597,9 @@ public static class SchoolRoomFurnisher
 
     private static void FurnishOffice(RoomContext ctx)
     {
-        // A desk + chair near a wall.
-        float z = ctx.MaxZ - 0.5f;
-        float x = ctx.Center.x;
-        if (PlaceAt(ctx, x, z, 0.6f, 0.4f, p => MakeDesk(ctx, p, 180f, "Desk")))
-        {
-            Vector3 cp = new Vector3(x, ctx.FloorY, z - 0.75f);
-            if (ctx.Fits(cp.x, cp.z, 0.28f, 0.28f)) MakeChair(ctx, cp, 0f, "Chair");
-        }
+        // Desk against the north wall, occupant seated on the wall side facing into
+        // the room (principal-desk look).
+        PlaceWallDesk(ctx, Wall.North, "Desk", "Chair", null);
 
         // Filing cabinets along a side wall.
         MakeFilingCabinets(ctx, Wall.West, "FilingCabinets");
@@ -565,20 +610,57 @@ public static class SchoolRoomFurnisher
 
     private static void FurnishSecurity(RoomContext ctx)
     {
-        // Desk with stacked "monitor" boxes.
-        float z = ctx.MaxZ - 0.5f;
-        float x = ctx.Center.x;
-        if (PlaceAt(ctx, x, z, 0.6f, 0.4f, p => MakeDesk(ctx, p, 180f, "SecurityDesk")))
+        // Desk against the north wall with two monitor boxes on the room-facing edge,
+        // occupant on the wall side facing the monitors / into the room.
+        PlaceWallDesk(ctx, Wall.North, "SecurityDesk", "Chair", deskCenter =>
         {
-            // Two monitor boxes on the desk.
-            MakeMonitor(ctx, new Vector3(x - 0.3f, ctx.FloorY + 0.75f, z), "Monitor0");
-            MakeMonitor(ctx, new Vector3(x + 0.3f, ctx.FloorY + 0.75f, z), "Monitor1");
-            Vector3 cp = new Vector3(x, ctx.FloorY, z - 0.75f);
-            if (ctx.Fits(cp.x, cp.z, 0.28f, 0.28f)) MakeChair(ctx, cp, 0f, "Chair");
-        }
+            Vector3 inward = InwardNormal(Wall.North);
+            Vector3 along = new Vector3(inward.z, 0f, -inward.x); // perpendicular run axis
+            Vector3 top = deskCenter + Vector3.up * 0.75f + inward * 0.12f;
+            MakeMonitor(ctx, top - along * 0.3f, "Monitor0");
+            MakeMonitor(ctx, top + along * 0.3f, "Monitor1");
+        });
 
         MakeFilingCabinets(ctx, Wall.West, "FilingCabinets");
         PlaceInCorner(ctx, 1, 0.5f, 0.5f, (pos, yaw) => MakeLocker(ctx, pos, yaw, "Locker"));
+    }
+
+    /// <summary>
+    /// Places a desk flush-ish against <paramref name="wall"/> with its occupant on
+    /// the WALL side facing into the room, and a chair tucked between desk and wall.
+    /// Optional <paramref name="onDesk"/> callback receives the desk's world centre
+    /// (floor Y) to add desktop items. Facing is derived from the wall normal.
+    /// </summary>
+    private static void PlaceWallDesk(RoomContext ctx, Wall wall, string deskName, string chairName, System.Action<Vector3> onDesk)
+    {
+        WallInfo(ctx, wall, out float fx, out float fz, out bool alongX, out float inwardSign);
+        Vector3 inward = InwardNormal(wall);
+        float wallLine = alongX ? fz : fx;
+        float yaw = YawFromDir(inward); // occupant faces into the room
+
+        // Desk centre offset off the wall along the inward normal, leaving room for
+        // the chair between desk and wall, centred on the run axis.
+        const float deskOffset = 1.05f;
+        float runCenter = alongX ? ctx.Center.x : ctx.Center.z;
+        float normC = wallLine + inwardSign * deskOffset;
+        float x = alongX ? runCenter : normC;
+        float z = alongX ? normC : runCenter;
+
+        // Footprint half-extents follow facing (desk 1.1 wide x 0.6 deep).
+        float hX = alongX ? 0.6f : 0.4f;
+        float hZ = alongX ? 0.4f : 0.6f;
+        if (!PlaceAt(ctx, x, z, hX, hZ, p =>
+            {
+                MakeDesk(ctx, p, yaw, deskName);
+                onDesk?.Invoke(p);
+            }))
+        {
+            return;
+        }
+
+        // Chair on the wall side of the desk, facing into the room like the desk.
+        Vector3 cp = new Vector3(x, ctx.FloorY, z) - inward * 0.7f;
+        if (ctx.Fits(cp.x, cp.z, 0.28f, 0.28f)) MakeChair(ctx, cp, yaw, chairName);
     }
 
     private static void FurnishNurse(RoomContext ctx)
@@ -760,6 +842,74 @@ public static class SchoolRoomFurnisher
         }
     }
 
+    // === Facing / orientation helpers ======================================
+    //
+    // FACING CONVENTION (used by every chair/desk/seat in this tool):
+    //   A prop built by MakeDesk/MakeChair/etc. has its "front" (the side a person
+    //   sits at, the back of a chair, the working edge of a desk) on local +Z.
+    //   So a yaw of 0 makes the occupant FACE world +Z; +90 -> +X; 180 -> -Z;
+    //   270 -> -X. YawFromDir converts any world direction into that yaw, so all
+    //   facing is derived deterministically from room geometry (wall normals).
+
+    /// <summary>Yaw (degrees) that makes a prop's local +Z point along <paramref name="dir"/> (world X/Z).</summary>
+    private static float YawFromDir(Vector3 dir)
+    {
+        if (dir.sqrMagnitude < 1e-6f) return 0f;
+        return Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+    }
+
+    /// <summary>Unit world direction pointing from the wall INTO the room interior.</summary>
+    private static Vector3 InwardNormal(Wall wall)
+    {
+        switch (wall)
+        {
+            case Wall.North: return new Vector3(0f, 0f, -1f);
+            case Wall.South: return new Vector3(0f, 0f, 1f);
+            case Wall.East: return new Vector3(-1f, 0f, 0f);
+            default: return new Vector3(1f, 0f, 0f); // West
+        }
+    }
+
+    /// <summary>
+    /// Picks the classroom "front" (board/teacher) wall: the wall whose nearest
+    /// doorway is FARTHEST away, so desks never face a door. Ties (e.g. no doorways
+    /// at all) are broken toward the wall that gives the WIDER board / more columns
+    /// of desks, then deterministically. Pure read of room geometry.
+    /// </summary>
+    private static Wall ChooseFrontWall(RoomContext ctx)
+    {
+        Wall[] walls = { Wall.North, Wall.South, Wall.East, Wall.West };
+        Wall best = Wall.North;
+        float bestScore = float.NegativeInfinity;
+
+        foreach (Wall w in walls)
+        {
+            WallInfo(ctx, w, out float fx, out float fz, out bool alongX, out _);
+            float wallLine = alongX ? fz : fx;
+
+            // Nearest doorway, measured perpendicular to this wall line.
+            float nearest = float.PositiveInfinity;
+            foreach (Vector3 d in ctx.Doorways)
+            {
+                float perp = alongX ? Mathf.Abs(d.z - wallLine) : Mathf.Abs(d.x - wallLine);
+                if (perp < nearest) nearest = perp;
+            }
+            if (float.IsPositiveInfinity(nearest)) nearest = 1000f; // no doorways on/near this wall
+
+            // Prefer distance-from-doors first; small bonus for a wider board so the
+            // teacher faces down the long axis when doors are equivalent.
+            float wallWidth = alongX ? ctx.SizeX : ctx.SizeZ;
+            float score = nearest * 10f + wallWidth;
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = w;
+            }
+        }
+        return best;
+    }
+
     /// <summary>World-aligned box scale for a wall-run piece: <paramref name="runLen"/>
     /// along the run axis, <paramref name="depth"/> along the wall-normal axis.</summary>
     private static Vector3 WallBoxScale(bool runsAlongX, float runLen, float height, float depth)
@@ -781,7 +931,14 @@ public static class SchoolRoomFurnisher
 
     // === Composite wall-run builders =======================================
 
-    private static void MakeCounterRun(RoomContext ctx, Wall wall, string label, bool withSink)
+    /// <summary>
+    /// A run of counters along a wall. <paramref name="wallOffset"/> pushes the
+    /// counter's BACK face this far off the wall line (into the room) so the player
+    /// can walk behind it - used for cafeteria/kitchen service lines. 0 keeps it
+    /// flush (the default for lab benches against the wall). If the room is too
+    /// shallow for the requested offset it is reduced so the counter still fits.
+    /// </summary>
+    private static void MakeCounterRun(RoomContext ctx, Wall wall, string label, bool withSink, float wallOffset = 0f)
     {
         WallInfo(ctx, wall, out float fx, out float fz, out bool alongX, out float inward);
         const float depth = 0.6f, height = 0.9f, segLen = 1.2f;
@@ -789,12 +946,18 @@ public static class SchoolRoomFurnisher
         float runMax = alongX ? ctx.MaxX : ctx.MaxZ;
         float wallLine = alongX ? fz : fx;
 
+        // Clamp the walk-behind offset so the counter body still lands inside the
+        // inset room rectangle on the wall-normal axis.
+        float roomDepth = alongX ? ctx.SizeZ : ctx.SizeX;
+        float maxOffset = Mathf.Max(0f, roomDepth - depth - 0.6f);
+        float offset = Mathf.Clamp(wallOffset, 0f, maxOffset);
+
         int seg = 0;
         for (float t = runMin + segLen * 0.5f; t + segLen * 0.5f <= runMax; t += segLen, seg++)
         {
-            // Sit the body against the wall, pushed inward by half its depth.
+            // Body back face sits 'offset' off the wall, pushed inward by half its depth.
             float runC = t;
-            float normC = wallLine + inward * depth * 0.5f;
+            float normC = wallLine + inward * (offset + depth * 0.5f);
             float x = alongX ? runC : normC;
             float z = alongX ? normC : runC;
             float hx = alongX ? segLen * 0.5f : depth * 0.5f;
