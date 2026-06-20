@@ -154,6 +154,28 @@ public class ZombieAgent : MonoBehaviour
             return;
         }
 
+        // Line-of-sight: don't attack through walls/floors/ceilings/closed doors.
+        // Ray from chest height toward the player; if a non-player collider is in the
+        // way, the player isn't actually reachable for a melee hit.
+        Vector3 origin = transform.position + Vector3.up * 1f;
+        Vector3 target = player.position + Vector3.up * 1f;
+        Vector3 to = target - origin;
+        float dist = to.magnitude;
+        if (dist > 0.01f)
+        {
+            // Start just past our own body so we don't hit ourselves.
+            Vector3 dir = to / dist;
+            Vector3 rayStart = origin + dir * 0.5f;
+            if (Physics.Raycast(rayStart, dir, out RaycastHit hit, dist, ~0, QueryTriggerInteraction.Ignore))
+            {
+                // Blocked unless the first thing we hit is the player.
+                if (hit.collider.GetComponentInParent<CharacterController>() == null)
+                {
+                    return;
+                }
+            }
+        }
+
         nextAttackTime = Time.time + attackInterval;
         if (animator != null && hasAttackParam)
         {

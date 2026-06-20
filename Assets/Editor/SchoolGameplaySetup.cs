@@ -155,9 +155,14 @@ public static class SchoolGameplaySetup
 
     private static void EnsurePlayer(Scene scene)
     {
-        if (Object.FindFirstObjectByType<PlayerMovement>() != null)
+        PlayerMovement existing = Object.FindFirstObjectByType<PlayerMovement>();
+        if (existing != null)
         {
-            return; // a player already exists
+            // A player is already in the scene (e.g. the original "Capsule"). Make sure
+            // it can actually take damage and shoot - add the missing gameplay bits.
+            EnsurePlayerGameplay(existing.gameObject);
+            Debug.Log("[GameplaySetup] Existing player '" + existing.gameObject.name + "' upgraded with health + weapon loadout.");
+            return;
         }
 
         GameObject playerPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(PlayerPrefabPath);
@@ -186,7 +191,91 @@ public static class SchoolGameplaySetup
 
         GameObject player = (GameObject)PrefabUtility.InstantiatePrefab(playerPrefab);
         player.transform.position = start;
+        EnsurePlayerGameplay(player); // Player.prefab already has these, but be safe.
         Debug.Log("[GameplaySetup] Placed Player at " + start + ".");
+    }
+
+    /// <summary>
+    /// Make sure a player GameObject can take damage and shoot: adds PlayerHealth,
+    /// WeaponController (+ a starter weapon loadout under the camera) and the
+    /// first-person body hide if they are missing. Non-destructive.
+    /// </summary>
+    private static void EnsurePlayerGameplay(GameObject player)
+    {
+        if (player.GetComponent<PlayerHealth>() == null)
+        {
+            player.AddComponent<PlayerHealth>();
+        }
+
+        Camera cam = player.GetComponentInChildren<Camera>();
+        Transform camT = cam != null ? cam.transform : null;
+        if (cam != null && !cam.CompareTag("MainCamera"))
+        {
+            cam.tag = "MainCamera";
+        }
+
+        WeaponController wc = player.GetComponent<WeaponController>();
+        if (wc == null)
+        {
+            wc = player.AddComponent<WeaponController>();
+            if (camT != null)
+            {
+                BuildLoadout(wc, camT);
+            }
+            else
+            {
+                Debug.LogWarning("[GameplaySetup] Player has no Camera child - added WeaponController but couldn't mount weapon models.");
+            }
+        }
+
+        if (player.GetComponent<FirstPersonView>() == null)
+        {
+            player.AddComponent<FirstPersonView>();
+        }
+    }
+
+    private static void BuildLoadout(WeaponController wc, Transform camT)
+    {
+        Transform holderT = camT.Find("WeaponHolder");
+        if (holderT == null)
+        {
+            GameObject holder = new GameObject("WeaponHolder");
+            holder.transform.SetParent(camT, false);
+            holder.transform.localPosition = new Vector3(0.25f, -0.25f, 0.5f);
+            holderT = holder.transform;
+        }
+
+        var guns = new (string file, string display, WeaponLoadoutSetup.GunCategory cat)[]
+        {
+            ("M1911", "M1911", WeaponLoadoutSetup.GunCategory.Pistol),
+            ("AK74", "AK74", WeaponLoadoutSetup.GunCategory.Rifle),
+            ("Bennelli_M4", "Benelli M4", WeaponLoadoutSetup.GunCategory.Shotgun),
+            ("M107", "M107", WeaponLoadoutSetup.GunCategory.Sniper),
+        };
+
+        wc.weapons = new List<Weapon>();
+        int i = 0;
+        foreach (var g in guns)
+        {
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>($"Assets/Low Poly Weapons VOL.1/Prefabs/{g.file}.prefab");
+            if (prefab == null)
+            {
+                continue;
+            }
+            GameObject inst = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            inst.transform.SetParent(holderT, false);
+            inst.transform.localPosition = Vector3.zero;
+            inst.transform.localRotation = Quaternion.identity;
+            inst.SetActive(i == 0);
+
+            Weapon w = WeaponLoadoutSetup.MakeWeapon(g.display, g.cat, inst);
+            w.InitAmmo();
+            wc.weapons.Add(w);
+            i++;
+        }
+
+        wc.currentIndex = 0;
+        wc.aimCamera = camT;
     }
 
     private static MeshRenderer FindFloor(Scene scene, string lowerName)
