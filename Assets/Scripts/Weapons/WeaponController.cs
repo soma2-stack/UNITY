@@ -369,10 +369,25 @@ public class WeaponController : MonoBehaviour
             ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
             if (zombie != null)
             {
+                bool isHeadshot = hit.collider.CompareTag("Head");
                 // Insta-Kill power-up: any hit is lethal.
                 int damage = PowerupManager.InstaKillActive ? 99999 : w.damage;
-                zombie.TakeDamage(damage);
-                Debug.Log("[WeaponController] Hit zombie '" + hit.collider.name + "' for " + damage + " damage.");
+                bool wasAlive = !zombie.IsDead;
+                zombie.TakeDamage(damage, isHeadshot);
+                
+                if (wasAlive)
+                {
+                    if (zombie.IsDead)
+                    {
+                        Debug.Log($"[WeaponController] Killed zombie '{hit.collider.name}' {(isHeadshot ? "(HEADSHOT)" : "")} for {damage} damage.");
+                    }
+                    else
+                    {
+                        // Bullet hit but didn't kill
+                        PlayerPoints.Instance?.AddPoints(10);
+                        Debug.Log($"[WeaponController] Hit zombie '{hit.collider.name}' for {damage} damage. (+10 points)");
+                    }
+                }
             }
             else
             {

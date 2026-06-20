@@ -57,6 +57,9 @@ public class ZombieAgent : MonoBehaviour
     /// <summary>Raised (static) at the world position where ANY zombie dies. Used by power-up drops.</summary>
     public static event System.Action<Vector3> OnAnyZombieKilled;
 
+    /// <summary>True if the zombie is dead.</summary>
+    public bool IsDead => isDead;
+
     private NavMeshAgent agent;
     private Transform player;
     private PlayerHealth playerHealth;
@@ -197,7 +200,7 @@ public class ZombieAgent : MonoBehaviour
     /// <summary>
     /// Damage this zombie. When health reaches zero the zombie dies.
     /// </summary>
-    public void TakeDamage(int amount)
+    public void TakeDamage(int amount, bool isHeadshot = false)
     {
         if (isDead || amount <= 0)
         {
@@ -207,7 +210,7 @@ public class ZombieAgent : MonoBehaviour
         health -= amount;
         if (health <= 0)
         {
-            Die();
+            Die(isHeadshot);
             return;
         }
 
@@ -219,7 +222,20 @@ public class ZombieAgent : MonoBehaviour
         }
     }
 
-    private void Die()
+    /// <summary>
+    /// Kill this zombie via melee/knife. Awards bonus points.
+    /// </summary>
+    public void KillByMelee()
+    {
+        if (isDead)
+        {
+            return;
+        }
+        health = 0;
+        Die(false, true);
+    }
+
+    private void Die(bool isHeadshot = false, bool isMelee = false)
     {
         if (isDead)
         {
@@ -228,8 +244,17 @@ public class ZombieAgent : MonoBehaviour
 
         isDead = true;
 
-        // Award points + notify the spawner/round system immediately (this kill counts now).
-        PlayerPoints.Instance?.Add(killReward);
+        // Award points based on kill type
+        int reward = killReward; // Normal kill = 60
+        if (isMelee)
+        {
+            reward = 130; // Melee/knife kill = 130
+        }
+        else if (isHeadshot)
+        {
+            reward = 100; // Headshot kill = 100
+        }
+        PlayerPoints.Instance?.AddPoints(reward);
         OnDeath?.Invoke(this);
         OnAnyZombieKilled?.Invoke(transform.position); // power-up drops, kill feeds, etc.
 
