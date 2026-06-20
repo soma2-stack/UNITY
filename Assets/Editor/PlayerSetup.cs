@@ -25,9 +25,10 @@ public static class PlayerSetup
     private const string PrefabFolder = "Assets/Prefabs";
     private const string PrefabPath = "Assets/Prefabs/Player.prefab";
 
-    // Set this to the exact western model path to force it, e.g.
-    // "Assets/Low Poly Western/Models/Cowboy.fbx". Leave empty to auto-detect.
-    private const string ForcedModelPath = "";
+    // Western player model to build the player from. The pack ships 3 Humanoid
+    // models (sheriff / gunman / outlow) - swap this to gunman/outlow if preferred.
+    // Leave empty to auto-detect a western/player Humanoid model.
+    private const string ForcedModelPath = "Assets/tt-3d/Low-PolyWesternStarterPack/Character/Models/sheriff.fbx";
 
     private const string KiBase = "Assets/Kevin Iglesias/Human Animations/Animations/Male";
     private const string IdleFbx = KiBase + "/Idles/HumanM@Idle01.fbx";
