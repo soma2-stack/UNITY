@@ -57,25 +57,75 @@ public static class PlayerSetup
         }
 
         AnimatorController controller = BuildController(idle, move, sprint, crouch);
+        EnsureFolder(PrefabFolder);
 
-        string modelPath = ResolveModelPath();
-        GameObject modelAsset = AssetDatabase.LoadAssetAtPath<GameObject>(modelPath);
-        if (modelAsset == null)
+        // Build one player prefab per western model. The sheriff is the PRIMARY
+        // (Assets/Prefabs/Player.prefab) used by the weapon/gameplay tools; the
+        // others are extra prefabs (use them for co-op survivors / character pick).
+        var builds = new (string model, string prefab)[]
         {
-            Debug.LogError("[PlayerSetup] Could not load a character model. Import your western player models and set ForcedModelPath, then re-run.");
+            ("Assets/tt-3d/Low-PolyWesternStarterPack/Character/Models/sheriff.fbx", PrefabPath),
+            ("Assets/tt-3d/Low-PolyWesternStarterPack/Character/Models/gunman.fbx", "Assets/Prefabs/Player_Gunman.prefab"),
+            ("Assets/tt-3d/Low-PolyWesternStarterPack/Character/Models/outlow.fbx", "Assets/Prefabs/Player_Outlow.prefab"),
+        };
+
+        int built = 0;
+        bool primaryBuilt = false;
+        foreach (var b in builds)
+        {
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(b.model) == null)
+            {
+                continue;
+            }
+            if (BuildPlayerPrefab(b.model, b.prefab, controller))
+            {
+                built++;
+                if (b.prefab == PrefabPath)
+                {
+                    primaryBuilt = true;
+                }
+            }
+        }
+
+        // Fallback: if none of the western models were found, build the primary from
+        // an auto-detected humanoid (or the demo human) so the tool still works.
+        if (!primaryBuilt)
+        {
+            string modelPath = ResolveModelPath();
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(modelPath) != null && BuildPlayerPrefab(modelPath, PrefabPath, controller))
+            {
+                built++;
+                Debug.LogWarning("[PlayerSetup] Western models not found - built Player.prefab from fallback model: " + modelPath);
+            }
+        }
+
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+
+        if (built == 0)
+        {
+            Debug.LogError("[PlayerSetup] No character model could be loaded. Import the western models and re-run.");
             return;
         }
 
-        bool usingFallback = modelPath == FallbackModel;
+        Debug.Log($"[PlayerSetup] Built {built} player prefab(s) + {ControllerPath}. Primary = Assets/Prefabs/Player.prefab (sheriff). " +
+                  "Run 'Set Up Weapons' next to fill its loadout, then 'Setup Gameplay' to place it.");
+    }
 
-        // Build the player from a temporary instance.
+    private static bool BuildPlayerPrefab(string modelPath, string prefabPath, AnimatorController controller)
+    {
+        GameObject modelAsset = AssetDatabase.LoadAssetAtPath<GameObject>(modelPath);
+        if (modelAsset == null)
+        {
+            return false;
+        }
+
         GameObject root = new GameObject("Player");
         CharacterController cc = root.AddComponent<CharacterController>();
         cc.height = 1.8f;
         cc.radius = 0.3f;
         cc.center = new Vector3(0f, 0.9f, 0f);
 
-        // Visible character model (child).
         GameObject model = (GameObject)PrefabUtility.InstantiatePrefab(modelAsset);
         model.name = "Model";
         model.transform.SetParent(root.transform, false);
@@ -90,7 +140,6 @@ public static class PlayerSetup
         animator.runtimeAnimatorController = controller;
         animator.applyRootMotion = false;
 
-        // First-person camera at head height.
         GameObject camObj = new GameObject("Player Camera");
         camObj.tag = "MainCamera";
         camObj.transform.SetParent(root.transform, false);
@@ -99,7 +148,6 @@ public static class PlayerSetup
         cam.fieldOfView = 90f;
         camObj.AddComponent<AudioListener>();
 
-        // Player scripts.
         PlayerMovement movement = root.AddComponent<PlayerMovement>();
         movement.playerCamera = camObj.transform;
 
@@ -110,19 +158,9 @@ public static class PlayerSetup
         root.AddComponent<WeaponController>();
         root.AddComponent<PlayerAnimator>();
 
-        EnsureFolder(PrefabFolder);
-        GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
+        PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
         Object.DestroyImmediate(root);
-
-        AssetDatabase.SaveAssets();
-        AssetDatabase.Refresh();
-
-        Debug.Log("[PlayerSetup] Built " + ControllerPath + " and " + PrefabPath +
-                  " using model: " + modelPath +
-                  (usingFallback
-                      ? "  (FALLBACK demo human - import your western models and re-run, or set ForcedModelPath)."
-                      : ".") +
-                  " Place Player.prefab in the scene (one per level / as the multiplayer player) and assign weapons on its WeaponController.");
+        return true;
     }
 
     private static string ResolveModelPath()

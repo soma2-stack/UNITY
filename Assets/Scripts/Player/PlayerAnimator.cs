@@ -22,8 +22,10 @@ public class PlayerAnimator : MonoBehaviour
     public string sprintParam = "Sprint";
     [Tooltip("Animator bool parameter set while crouched.")]
     public string crouchParam = "Crouch";
-    [Tooltip("How quickly the Speed value eases toward the target (higher = snappier).")]
-    public float speedDamp = 12f;
+    [Tooltip("How quickly the Speed value eases toward the target while moving (higher = snappier).")]
+    public float speedDamp = 14f;
+    [Tooltip("How quickly the Speed value drops to 0 when you stop (higher = stops sooner, no run-on).")]
+    public float stopDamp = 22f;
 
     private PlayerMovement movement;
     private Animator animator;
@@ -63,7 +65,15 @@ public class PlayerAnimator : MonoBehaviour
 
         // Target speed is the actual move speed when there is input, else 0 (idle).
         float target = movement.MoveInput.sqrMagnitude > 0.01f ? movement.CurrentSpeed : 0f;
-        smoothedSpeed = Mathf.Lerp(smoothedSpeed, target, Mathf.Clamp01(speedDamp * Time.deltaTime));
+
+        // Ease toward the target; drop to idle faster when stopping so the run
+        // animation doesn't keep playing after the player releases the keys.
+        float damp = target <= 0.01f ? stopDamp : speedDamp;
+        smoothedSpeed = Mathf.Lerp(smoothedSpeed, target, Mathf.Clamp01(damp * Time.deltaTime));
+        if (target <= 0.01f && smoothedSpeed < 0.15f)
+        {
+            smoothedSpeed = 0f;
+        }
 
         if (hasSpeed)
         {
