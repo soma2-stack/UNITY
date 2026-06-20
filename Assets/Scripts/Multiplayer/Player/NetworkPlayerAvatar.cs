@@ -2,11 +2,18 @@ using TMPro;
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 
 [RequireComponent(typeof(NetworkObject))]
 public sealed class NetworkPlayerAvatar : NetworkBehaviour
 {
+    // Animator parameters - MUST match Assets/Animations/PlayerLocomotion.controller
+    // (built by the "Set Up Player" tool): Speed (float), Sprint (bool), Crouch (bool).
+    private const string SpeedParam = "Speed";
+    private const string SprintParam = "Sprint";
+    private const string CrouchParam = "Crouch";
+
     private static readonly Color[] SurvivorColors =
     {
         new Color(0.34f, 0.48f, 0.36f),
@@ -29,9 +36,17 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     [SerializeField] private Animator animator;
     [SerializeField] private Renderer[] survivorRenderers;
 
+    [Tooltip("The selectable western body models (e.g. sheriff / gunman / outlow). " +
+             "One is enabled per OwnerClientId; the rest are disabled.")]
+    [SerializeField] private GameObject[] modelVariants;
+
     private readonly NetworkVariable<FixedString64Bytes> displayName = new NetworkVariable<FixedString64Bytes>();
     private readonly NetworkVariable<float> movementSpeed = new NetworkVariable<float>(
         0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Owner);
+    private readonly NetworkVariable<bool> sprinting = new NetworkVariable<bool>(
+        false,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
     private readonly NetworkVariable<bool> crouching = new NetworkVariable<bool>(
@@ -39,12 +54,14 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
 
+    private PlayerAnimator playerAnimator;
     private TMP_Text worldName;
 
     public string DisplayName => displayName.Value.ToString();
 
     public override void OnNetworkSpawn()
     {
+        SelectModelVariant();
         ResolveReferences();
         SceneManager.sceneLoaded += OnSceneLoaded;
         displayName.OnValueChanged += OnDisplayNameChanged;
@@ -68,16 +85,22 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
     private void Update()
     {
+        // The owner replicates its real locomotion state for everyone else to read.
         if (IsOwner && movement != null && movement.enabled)
         {
             movementSpeed.Value = movement.MoveInput.magnitude * movement.CurrentSpeed;
+            sprinting.Value = movement.CurrentSpeed > (movement.sprintSpeed - 0.5f);
             crouching.Value = movement.IsCrouching;
         }
 
-        if (animator != null)
+        // Remote bodies are animated from the replicated NetworkVariables. The owner's
+        // own body is driven by PlayerAnimator (which we leave enabled only for the owner),
+        // so the avatar does NOT touch the animator for the owner to avoid double-driving.
+        if (!IsOwner && animator != null && animator.runtimeAnimatorController != null)
         {
-            animator.SetFloat("Speed", movementSpeed.Value, 0.1f, Time.deltaTime);
-            animator.SetBool("Crouching", crouching.Value);
+            animator.SetFloat(SpeedParam, movementSpeed.Value, 0.1f, Time.deltaTime);
+            animator.SetBool(SprintParam, sprinting.Value);
+            animator.SetBool(CrouchParam, crouching.Value);
         }
 
         if (worldName != null && Camera.main != null)
@@ -90,6 +113,39 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     private void SetDisplayNameServerRpc(FixedString64Bytes value)
     {
         displayName.Value = value;
+    }
+
+    // Per-player model variety: pick one body based on OwnerClientId and disable the
+    // others, so the four survivors look different (cycles sheriff / gunman / outlow).
+    private void SelectModelVariant()
+    {
+        if (modelVariants == null || modelVariants.Length == 0)
+        {
+            return;
+        }
+
+        int chosen = (int)(OwnerClientId % (ulong)modelVariants.Length);
+        for (int i = 0; i < modelVariants.Length; i++)
+        {
+            if (modelVariants[i] != null)
+            {
+                modelVariants[i].SetActive(i == chosen);
+            }
+        }
+
+        // Point the animator + renderer references at the visible body and rebind so
+        // the chosen body actually plays the locomotion controller.
+        GameObject body = modelVariants[chosen];
+        if (body != null)
+        {
+            Animator bodyAnimator = body.GetComponentInChildren<Animator>(true);
+            if (bodyAnimator != null)
+            {
+                animator = bodyAnimator;
+                animator.Rebind();
+            }
+            survivorRenderers = body.GetComponentsInChildren<Renderer>(true);
+        }
     }
 
     private void ConfigureOwnership()
@@ -114,13 +170,22 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
             audioListener.enabled = IsOwner;
         }
 
-        foreach (Renderer survivorRenderer in survivorRenderers)
+        // The owner uses PlayerAnimator to drive their own body; remote players are
+        // driven by this avatar from the replicated NetworkVariables. Disable
+        // PlayerAnimator on non-owners so the two systems never fight.
+        if (playerAnimator != null)
         {
-            if (survivorRenderer != null)
-            {
-                survivorRenderer.enabled = !IsOwner;
-            }
+            playerAnimator.enabled = IsOwner;
         }
+
+        // Weapons (firing / switching / first-person model) belong to the owner only.
+        WeaponController weaponController = GetComponent<WeaponController>();
+        if (weaponController != null)
+        {
+            weaponController.enabled = IsOwner;
+        }
+
+        ApplyBodyVisibility();
 
         if (!IsOwner)
         {
@@ -128,9 +193,33 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         }
     }
 
+    // First-person view: the owner's own body is hidden from their camera but still
+    // casts a shadow (ShadowsOnly), mirroring FirstPersonView. Remote players see the
+    // full body normally.
+    private void ApplyBodyVisibility()
+    {
+        if (survivorRenderers == null)
+        {
+            return;
+        }
+
+        ShadowCastingMode mode = IsOwner ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.On;
+        foreach (Renderer survivorRenderer in survivorRenderers)
+        {
+            if (survivorRenderer == null)
+            {
+                continue;
+            }
+
+            survivorRenderer.enabled = true;
+            survivorRenderer.shadowCastingMode = mode;
+        }
+    }
+
     private void ResolveReferences()
     {
         movement ??= GetComponent<PlayerMovement>();
+        playerAnimator ??= GetComponent<PlayerAnimator>();
         playerCamera ??= GetComponentInChildren<Camera>(true);
         audioListener ??= GetComponentInChildren<AudioListener>(true);
         animator ??= GetComponentInChildren<Animator>(true);
@@ -143,6 +232,11 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     private void ApplySurvivorColor()
     {
         Color color = SurvivorColors[(int)(OwnerClientId % (ulong)SurvivorColors.Length)];
+        if (survivorRenderers == null)
+        {
+            return;
+        }
+
         foreach (Renderer survivorRenderer in survivorRenderers)
         {
             if (survivorRenderer == null)
@@ -152,7 +246,14 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
             foreach (Material material in survivorRenderer.materials)
             {
-                material.color = color;
+                if (material.HasProperty("_Color"))
+                {
+                    material.color = color;
+                }
+                else if (material.HasProperty("_BaseColor"))
+                {
+                    material.SetColor("_BaseColor", color);
+                }
             }
         }
     }
@@ -175,11 +276,15 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
             playerCamera.gameObject.SetActive(gameplay && IsOwner);
         }
 
-        foreach (Renderer survivorRenderer in survivorRenderers)
+        if (survivorRenderers != null)
         {
-            if (survivorRenderer != null)
+            foreach (Renderer survivorRenderer in survivorRenderers)
             {
-                survivorRenderer.enabled = gameplay && !IsOwner;
+                if (survivorRenderer != null)
+                {
+                    // Owner keeps a shadow-only body in gameplay; remote shows full body.
+                    survivorRenderer.enabled = gameplay;
+                }
             }
         }
 
