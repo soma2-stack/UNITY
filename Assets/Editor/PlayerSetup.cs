@@ -146,6 +146,7 @@ public static class PlayerSetup
         camObj.transform.localPosition = new Vector3(0f, 1.65f, 0f);
         Camera cam = camObj.AddComponent<Camera>();
         cam.fieldOfView = 90f;
+        cam.nearClipPlane = 0.02f; // tight near plane so nothing clips into view
         camObj.AddComponent<AudioListener>();
 
         PlayerMovement movement = root.AddComponent<PlayerMovement>();
@@ -157,6 +158,7 @@ public static class PlayerSetup
         root.AddComponent<PlayerHealth>();
         root.AddComponent<WeaponController>();
         root.AddComponent<PlayerAnimator>();
+        root.AddComponent<FirstPersonView>(); // hide own body from the FP camera
 
         PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
         Object.DestroyImmediate(root);
