@@ -117,13 +117,38 @@ risk, so classrooms are **left as-is** (correct per the "don't touch what passes
 > Unity in this environment, so I can't apply it for you, and hand-authoring dozens of desk/chair
 > GameObjects into the scene YAML would risk corrupting it.)
 
+## Checkpoint 4 — DONE (cafeteria & kitchen)
+
+Measured both rooms' actual layouts directly from the scene YAML (world positions + floor extents):
+
+**Kitchen (`cafeteria_kitchen`, 15.2 × 10.4 m):** fully and believably furnished — prep counters along the
+north and south walls, a central prep island, and storage shelves down the west wall. Walk-behind aisles
+measure ~3 m (counter front → island), well above the 0.3 m player radius. **No changes needed; left as-is.**
+
+**Cafeteria (`cafeteria`, 24 × 20 m):** found a real believability gap — its container holds **only the
+`FoodCounter_*` serving line; all dining tables, benches, the trash can and tray crate are missing** (the
+room was furnished by an older pass). The current `FurnishCafeteria` code already produces neat parallel
+table+bench rows kept clear of the service line and doorways, so the fix is to refurnish the cafeteria
+in place.
+
+Code changes:
+- Refactored the office-only tool into a reusable, type-aware `RefreshRoomsInPlace(ids)` that furnishes
+  each named room via `Dispatch` (so cafeteria→`FurnishCafeteria`, office→`FurnishOffice`, etc.), clearing
+  only that room's container and leaving everything else untouched.
+- `FurnishOfficesOnly` now calls it; added `FurnishCafeteriaOnly`
+  (`Tools ▸ School Of The Dead ▸ Furnish Cafeteria (Safe, Cafeteria Only)`).
+
+> ACTION REQUIRED IN UNITY: code-only changes again. Click **Tools ▸ School Of The Dead ▸ Furnish
+> Cafeteria (Safe, Cafeteria Only)** once to add the dining tables/benches/trash to the cafeteria in
+> place. (Kitchen needs nothing.)
+
 ## Suggested next checkpoint
 
-**Checkpoint 4 — cafeteria & kitchen:** verify table/counter lanes; both already pass automated checks, so
-expect verification + at most small spacing tweaks via the same surgical approach.
+**Checkpoint 5 — gym, hallways, stairs:** gym has only 4 props (under-dressed); hallways are empty and need
+wall-biased dressing (lockers/signs/benches) without blocking center lanes; stairs must stay clear.
 
 ## Working state
 
-- Branch: `claude/school-of-the-dead`. CP3 changed `SchoolRoomFurnisher.cs` only (code; scene untouched).
-  Brace-balanced (225/225), all reused helpers verified present.
+- Branch: `claude/school-of-the-dead`. CP4 changed `SchoolRoomFurnisher.cs` only (code; scene untouched).
+  Brace-balanced (233/233), new menus verified.
 - Safe to continue.

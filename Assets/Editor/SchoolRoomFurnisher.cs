@@ -227,15 +227,30 @@ public static class SchoolRoomFurnisher
             "Re-running rebuilds Generated_RoomProps from scratch (non-destructive).");
     }
 
-    /// <summary>
-    /// SURGICAL, OFFICE-ONLY refresh. Unlike "Furnish Rooms" (which rebuilds the whole
-    /// Generated_RoomProps root from scratch), this rebuilds ONLY the under-furnished
-    /// office rooms in place, leaving every other room - and any hand-tuned prop
-    /// positions elsewhere - completely untouched. Use this to finish the offices
-    /// without discarding manual fixes made to the rest of the map.
-    /// </summary>
+    // Only the clearly under-furnished offices. west_south_office already has a usable
+    // layout (6 props, passes all checks) so it is deliberately left as-is.
     [MenuItem("Tools/School Of The Dead/Furnish Offices (Safe, Offices Only)")]
     public static void FurnishOfficesOnly()
+    {
+        RefreshRoomsInPlace(new[] { "main_office", "principal_office" }, "Offices");
+    }
+
+    // The cafeteria currently has only its serving counter; this adds the dining
+    // tables/benches/trash the current FurnishCafeteria produces, in place.
+    [MenuItem("Tools/School Of The Dead/Furnish Cafeteria (Safe, Cafeteria Only)")]
+    public static void FurnishCafeteriaOnly()
+    {
+        RefreshRoomsInPlace(new[] { "cafeteria" }, "Cafeteria");
+    }
+
+    /// <summary>
+    /// SURGICAL in-place refresh of specific rooms. Unlike "Furnish Rooms" (which rebuilds
+    /// the whole Generated_RoomProps root from scratch), this rebuilds ONLY the named rooms
+    /// in place, leaving every other room - and any hand-tuned prop positions elsewhere -
+    /// completely untouched. Each room is furnished using its authoritative type from the
+    /// Rooms table via Dispatch, so cafeteria/office/etc. all get the right layout.
+    /// </summary>
+    private static void RefreshRoomsInPlace(string[] ids, string label)
     {
         EnsureFolder("Assets/Materials");
         EnsureFolder(MaterialFolder);
@@ -252,7 +267,7 @@ public static class SchoolRoomFurnisher
         {
             Debug.LogError(
                 $"[SchoolRoomFurnisher] '{RootName}' not found in the scene. Run 'Furnish Rooms' first; " +
-                "this safe tool only refreshes the office rooms in place.");
+                "this safe tool only refreshes named rooms in place.");
             return;
         }
 
@@ -263,23 +278,24 @@ public static class SchoolRoomFurnisher
             allRenderers.AddRange(rootGo.GetComponentsInChildren<MeshRenderer>(true));
         }
 
-        // Only the clearly under-furnished offices. west_south_office already has a
-        // usable layout (6 props, passes all checks) so it is deliberately left as-is.
-        string[] offices = { "main_office", "principal_office" };
         List<string> done = new List<string>();
         List<string> skipped = new List<string>();
 
-        foreach (string id in offices)
+        foreach (string id in ids)
         {
-            MeshRenderer floor = FindFloor(allRenderers, id);
-            if (floor == null)
+            // Authoritative room type from the Rooms table.
+            RoomType? type = null;
+            foreach ((string rid, RoomType rtype) in Rooms)
             {
-                skipped.Add($"{id} (no '{id}_Floor')");
-                continue;
+                if (rid == id) { type = rtype; break; }
             }
+            if (type == null) { skipped.Add($"{id} (not in room table)"); continue; }
 
-            // Find this office's existing container under the root, or create it.
-            // Only this office's children are cleared - nothing else in the scene.
+            MeshRenderer floor = FindFloor(allRenderers, id);
+            if (floor == null) { skipped.Add($"{id} (no '{id}_Floor')"); continue; }
+
+            // Find this room's existing container under the root, or create it. Only this
+            // room's children are cleared - nothing else in the scene is touched.
             Transform container = root.transform.Find(id);
             if (container != null)
             {
@@ -296,9 +312,9 @@ public static class SchoolRoomFurnisher
             }
 
             List<Vector3> doorways = CollectDoorways(allRenderers, id);
-            RoomContext ctx = new RoomContext(id, RoomType.Office, floor.bounds, doorways, container);
+            RoomContext ctx = new RoomContext(id, type.Value, floor.bounds, doorways, container);
             int before = ctx.PropCount;
-            FurnishOffice(ctx);
+            Dispatch(ctx);
             done.Add($"{id} (+{ctx.PropCount - before} props)");
         }
 
@@ -309,7 +325,7 @@ public static class SchoolRoomFurnisher
 
         string skipMsg = skipped.Count == 0 ? "none" : string.Join(", ", skipped);
         Debug.Log(
-            $"[SchoolRoomFurnisher] Office-only refresh complete: {string.Join(", ", done)}. " +
+            $"[SchoolRoomFurnisher] {label} in-place refresh complete: {string.Join(", ", done)}. " +
             $"Skipped: {skipMsg}. All other rooms left untouched.");
     }
 
