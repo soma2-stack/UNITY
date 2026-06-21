@@ -69,6 +69,9 @@ public class PowerupManager : MonoBehaviour
     private bool nukeFlashActive;   // true while the nuke white flash is on screen
     private float nukeFlashEndTime;
 
+    // Single source of truth for the Double Points multiplier value.
+    private const int DoublePointsMultiplier = 2;
+
     private const string GameplayScene = "SchoolOfTheDead";
     private static PowerupManager _runtimeInstance;
 
@@ -123,7 +126,7 @@ public class PowerupManager : MonoBehaviour
         DoublePointsActive = false;
         instaKillEndTime = 0f;
         doublePointsEndTime = 0f;
-        PlayerPoints.PointsMultiplier = 1;
+        PlayerPoints.PointsMultiplier = 1; // clear any DoublePointsMultiplier back to normal
     }
 
     private void Awake()
@@ -282,9 +285,17 @@ public class PowerupManager : MonoBehaviour
                 break;
 
             case PowerupType.DoublePoints:
+                if (DoublePointsActive)
+                {
+                    // Already active: just refresh the timer, never re-stack the multiplier.
+                    doublePointsEndTime = Time.time + Mathf.Max(0f, doublePointsDuration);
+                    Debug.Log("[PowerupManager] Double Points timer refreshed.");
+                    return;
+                }
                 DoublePointsActive = true;
                 doublePointsEndTime = Time.time + Mathf.Max(0f, doublePointsDuration);
-                PlayerPoints.PointsMultiplier = 2;
+                PlayerPoints.PointsMultiplier = DoublePointsMultiplier;
+                Debug.Log("[PowerupManager] Double Points activated.");
                 break;
 
             case PowerupType.Nuke:
