@@ -185,6 +185,7 @@ public class GameOverController : MonoBehaviour
     {
         Time.timeScale = 1f;
         showScreen = false;
+        ZombieAgent.ResetKillCount(); // fresh run starts at zero kills
         SceneManager.LoadScene(GameplayScene);
     }
 
@@ -192,6 +193,7 @@ public class GameOverController : MonoBehaviour
     {
         Time.timeScale = 1f;
         showScreen = false;
+        ZombieAgent.ResetKillCount(); // clear the run kill count when leaving to the menu
         SceneManager.LoadScene(MainMenuScene);
     }
 
