@@ -72,6 +72,7 @@ public class ZombieAgent : MonoBehaviour
     private float nextAttackTime;
     private float nextHitReactTime;
     private bool isDead;
+    private bool pointsAwarded; // guard: the kill reward may be granted at most once
 
     private void Awake()
     {
@@ -244,17 +245,29 @@ public class ZombieAgent : MonoBehaviour
 
         isDead = true;
 
-        // Award points based on kill type
-        int reward = killReward; // Normal kill = 60
-        if (isMelee)
+        // ---------------------------------------------------------------------
+        // POINTS OWNERSHIP: ZombieAgent.Die() is the SOLE awarder of KILL points
+        // (60 normal / 100 headshot / 130 melee). WeaponController owns ONLY the
+        // +10 non-lethal-hit bonus and never awards kill points. The pointsAwarded
+        // guard guarantees the kill reward can never be granted twice, even if
+        // Die() were somehow re-entered (melee + bullet landing on the same frame).
+        // ---------------------------------------------------------------------
+        if (!pointsAwarded)
         {
-            reward = 130; // Melee/knife kill = 130
+            pointsAwarded = true;
+
+            int reward = killReward; // Normal kill = 60
+            if (isMelee)
+            {
+                reward = 130; // Melee/knife kill always = 130 (checked before headshot)
+            }
+            else if (isHeadshot)
+            {
+                reward = 100; // Headshot kill = 100
+            }
+            PlayerPoints.Instance?.AddPoints(reward);
         }
-        else if (isHeadshot)
-        {
-            reward = 100; // Headshot kill = 100
-        }
-        PlayerPoints.Instance?.AddPoints(reward);
+
         OnDeath?.Invoke(this);
         OnAnyZombieKilled?.Invoke(transform.position); // power-up drops, kill feeds, etc.
 

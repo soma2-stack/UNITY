@@ -383,7 +383,13 @@ public class WeaponController : MonoBehaviour
                     }
                     else
                     {
-                        // Bullet hit but didn't kill
+                        // -----------------------------------------------------
+                        // POINTS OWNERSHIP: WeaponController owns ONLY the +10
+                        // non-lethal HIT bonus, awarded here when a bullet hits a
+                        // zombie that survives. The KILL reward (60/100/130) is
+                        // owned exclusively by ZombieAgent.Die() - never awarded
+                        // from the weapon - so the two can never double-count.
+                        // -----------------------------------------------------
                         PlayerPoints.Instance?.AddPoints(10);
                         Debug.Log($"[WeaponController] Hit zombie '{hit.collider.name}' for {damage} damage. (+10 points)");
                     }
