@@ -66,6 +66,9 @@ public class ZombieAgent : MonoBehaviour
     /// <summary>True if the zombie is dead.</summary>
     public bool IsDead => isDead;
 
+    /// <summary>True if the agent currently exists and is on the baked NavMesh.</summary>
+    public bool IsOnNavMesh => agent != null && agent.isOnNavMesh;
+
     private NavMeshAgent agent;
     private Transform player;
     private PlayerHealth playerHealth;
@@ -77,6 +80,7 @@ public class ZombieAgent : MonoBehaviour
     private float nextRepathTime;
     private float nextAttackTime;
     private float nextHitReactTime;
+    private float nextRecoveryTime; // throttles off-mesh recovery attempts
     private bool isDead;
     private bool pointsAwarded; // guard: the kill reward may be granted at most once
 
@@ -111,6 +115,17 @@ public class ZombieAgent : MonoBehaviour
             return;
         }
 
+        // FIX C: if the agent has fallen off the NavMesh, sample a nearby point and
+        // warp back onto the surface. Throttled so it can't run every frame.
+        if (agent != null && !isDead && !agent.isOnNavMesh && Time.time >= nextRecoveryTime)
+        {
+            nextRecoveryTime = Time.time + 0.5f;
+            if (NavMesh.SamplePosition(transform.position, out NavMeshHit recoverHit, 2f, NavMesh.AllAreas))
+            {
+                agent.Warp(recoverHit.position);
+            }
+        }
+
         // Throttled path recompute toward the player.
         if (Time.time >= nextRepathTime)
         {
@@ -118,6 +133,16 @@ public class ZombieAgent : MonoBehaviour
             if (agent != null && agent.isOnNavMesh)
             {
                 agent.SetDestination(player.position);
+
+                // FIX B: a partial/invalid path means the target is currently
+                // unreachable (e.g. a door state just changed) - drop the stale path
+                // and retry quickly instead of freezing on it.
+                if (agent.pathStatus == NavMeshPathStatus.PathPartial ||
+                    agent.pathStatus == NavMeshPathStatus.PathInvalid)
+                {
+                    agent.ResetPath();
+                    nextRepathTime = Time.time + 0.1f;
+                }
             }
         }
 
@@ -207,6 +232,21 @@ public class ZombieAgent : MonoBehaviour
         health = Mathf.Max(1, newHealth);
         moveSpeed = Mathf.Max(0.1f, newSpeed);
         ApplyAgentSpeed();
+    }
+
+    /// <summary>
+    /// Immediately recompute the path to the player. Called when a door opens so
+    /// zombies don't sit on a now-stale, blocked route. Also clears the repath timer
+    /// so the next regular repath fires right away.
+    /// </summary>
+    public void ForceRepath()
+    {
+        nextRepathTime = 0f;
+        if (player != null && agent != null && agent.isOnNavMesh)
+        {
+            agent.ResetPath();
+            agent.SetDestination(player.position);
+        }
     }
 
     /// <summary>

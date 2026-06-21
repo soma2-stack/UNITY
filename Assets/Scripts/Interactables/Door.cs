@@ -235,6 +235,17 @@ public class Door : MonoBehaviour
             navObstacle.enabled = false;
         }
 
+        // The doorway just opened: force every live, on-mesh zombie to recompute its
+        // path immediately so none stay stuck on the now-stale blocked route.
+        ZombieAgent[] zombies = FindObjectsByType<ZombieAgent>(FindObjectsSortMode.None);
+        foreach (ZombieAgent z in zombies)
+        {
+            if (z != null && !z.IsDead && z.IsOnNavMesh)
+            {
+                z.ForceRepath();
+            }
+        }
+
         // Open every linked door too (e.g. both ends of a stairwell). The IsOpen
         // guard at the top of Open() prevents mutual links from looping forever.
         if (linkedDoors != null)
