@@ -72,6 +72,12 @@ public class PowerupManager : MonoBehaviour
     private const string GameplayScene = "SchoolOfTheDead";
     private static PowerupManager _runtimeInstance;
 
+    // Weighted drop table (CoD-style: common drops far more frequent than rare ones).
+    // Index order MUST match the PowerupType enum: MaxAmmo=0, InstaKill=1,
+    // DoublePoints=2, Nuke=3, Carpenter=4. Total is 100 so each weight is ~its %:
+    //   MaxAmmo 35%, InstaKill 20%, DoublePoints 30%, Nuke 10%, Carpenter 5%.
+    private static readonly float[] DropWeights = { 35f, 20f, 30f, 10f, 5f };
+
     private GUIStyle hudStyle;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -210,8 +216,34 @@ public class PowerupManager : MonoBehaviour
             return;
         }
 
-        PowerupType type = (PowerupType)Random.Range(0, System.Enum.GetValues(typeof(PowerupType)).Length);
+        PowerupType type = PickWeightedRandom();
         SpawnPickup(type, position + Vector3.up * 0.5f);
+    }
+
+    /// <summary>
+    /// Picks a power-up type using <see cref="DropWeights"/>: sums the weights, rolls a
+    /// random value in [0, total), then walks the table to find the selected type.
+    /// </summary>
+    private PowerupType PickWeightedRandom()
+    {
+        float total = 0f;
+        for (int i = 0; i < DropWeights.Length; i++)
+        {
+            total += DropWeights[i];
+        }
+
+        float roll = Random.value * total;
+        float cumulative = 0f;
+        for (int i = 0; i < DropWeights.Length; i++)
+        {
+            cumulative += DropWeights[i];
+            if (roll < cumulative)
+            {
+                return (PowerupType)i;
+            }
+        }
+
+        return PowerupType.MaxAmmo; // fallback (only if weights are empty/zero)
     }
 
     private void SpawnPickup(PowerupType type, Vector3 position)
