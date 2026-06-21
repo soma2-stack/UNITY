@@ -194,6 +194,28 @@ public class WeaponController : MonoBehaviour
         EquipCurrent();
     }
 
+    /// <summary>
+    /// Refill ONLY the reserve ammo for the named weapon back to its configured
+    /// reserveAmmo (CoD wall-buy ammo). Never touches ammoInMag, so it does not
+    /// reload the current magazine. No-op if the weapon isn't owned.
+    /// </summary>
+    public void RefillReserveAmmo(string weaponName)
+    {
+        if (weapons == null)
+        {
+            return;
+        }
+
+        foreach (Weapon w in weapons)
+        {
+            if (w != null && w.weaponName == weaponName)
+            {
+                w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
+                return;
+            }
+        }
+    }
+
     /// <summary>Refill magazine and reserve ammo for every weapon (Max Ammo power-up).</summary>
     public void RefillAllAmmo()
     {

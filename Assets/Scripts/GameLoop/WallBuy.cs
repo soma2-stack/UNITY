@@ -70,20 +70,29 @@ public class WallBuy : InteractableBase
             return;
         }
 
-        Weapon weapon = new Weapon
+        if (owns)
         {
-            weaponName = weaponName,
-            damage = damage,
-            fireRate = fireRate,
-            automatic = automatic,
-            range = range,
-            spread = spread,
-            magazineSize = magazineSize,
-            reserveAmmo = reserveAmmo,
-            reloadTime = reloadTime,
-        };
-        // GiveWeapon refills ammo if already owned, otherwise adds/equips it.
-        wc.GiveWeapon(weapon);
-        Debug.Log("[WallBuy] " + (owns ? "Refilled ammo for " : "Bought ") + weaponName);
+            // Already own it: top up RESERVES only (CoD wall-buy ammo never reloads
+            // the current magazine).
+            wc.RefillReserveAmmo(weaponName);
+            Debug.Log("[WallBuy] Refilled reserves for " + weaponName);
+        }
+        else
+        {
+            Weapon weapon = new Weapon
+            {
+                weaponName = weaponName,
+                damage = damage,
+                fireRate = fireRate,
+                automatic = automatic,
+                range = range,
+                spread = spread,
+                magazineSize = magazineSize,
+                reserveAmmo = reserveAmmo,
+                reloadTime = reloadTime,
+            };
+            wc.GiveWeapon(weapon);
+            Debug.Log("[WallBuy] Bought " + weaponName);
+        }
     }
 }
