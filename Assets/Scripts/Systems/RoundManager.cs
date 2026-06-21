@@ -32,10 +32,10 @@ public class RoundManager : MonoBehaviour
     public int baseZombieCount = 6;
     [Tooltip("Extra zombies added per round.")]
     public int zombiesPerRound = 2;
-    [Tooltip("Base zombie health in round 1.")]
+    [Tooltip("Round 1 base health (default 150). Per-round scaling is handled by an " +
+             "exponential formula (x1.1 per round through round 9, then x1.5 per round); " +
+             "zombiesPerRound affects only the COUNT, not health.")]
     public int baseZombieHealth = 150;
-    [Tooltip("Health added to each zombie per round.")]
-    public int healthPerRound = 100;
     [Tooltip("Base zombie speed in round 1.")]
     public float baseZombieSpeed = 3.0f;
     [Tooltip("Speed added per round, up to maxZombieSpeed.")]
@@ -150,7 +150,7 @@ public class RoundManager : MonoBehaviour
         CurrentRound++;
 
         int count = baseZombieCount + (CurrentRound - 1) * zombiesPerRound;
-        int hp = baseZombieHealth + (CurrentRound - 1) * healthPerRound;
+        int hp = CalculateZombieHealth(CurrentRound);
         float speed = Mathf.Min(maxZombieSpeed, baseZombieSpeed + (CurrentRound - 1) * speedPerRound);
 
         if (spawner != null)
@@ -165,6 +165,25 @@ public class RoundManager : MonoBehaviour
         state = State.InProgress;
         Debug.Log("Round " + CurrentRound + " started (" + count + " zombies, " + hp + " hp, " + speed.ToString("0.0") + " speed)");
         OnRoundChanged?.Invoke(CurrentRound);
+    }
+
+    /// <summary>
+    /// CoD-authentic exponential zombie health for the given round:
+    ///   rounds 1-9: baseZombieHealth * 1.1^(round-1)
+    ///   rounds 10+: baseZombieHealth * 1.1^9 * 1.5^(round-9)  (steeper post-9 ramp)
+    /// Rounded to the nearest integer and clamped to a sane range.
+    /// </summary>
+    private int CalculateZombieHealth(int round)
+    {
+        round = Mathf.Max(1, round);
+
+        double health = round <= 9
+            ? baseZombieHealth * System.Math.Pow(1.1, round - 1)
+            : baseZombieHealth * System.Math.Pow(1.1, 9) * System.Math.Pow(1.5, round - 9);
+
+        // Round to nearest int; clamp so extreme late rounds can't overflow int.
+        double rounded = System.Math.Round(System.Math.Min(health, int.MaxValue));
+        return Mathf.Max(1, (int)rounded);
     }
 
     // The round number is now drawn centrally by GameHud (via CurrentRound / OnRoundChanged),
