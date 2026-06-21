@@ -81,6 +81,14 @@ public class PlayerHealth : MonoBehaviour
     private void Awake()
     {
         CurrentHealth = maxHealth;
+
+        // CoD Zombies: losing a random perk each time you are revived.
+        OnPlayerRevived += HandleRevivedLosePerk;
+    }
+
+    private void HandleRevivedLosePerk()
+    {
+        PerkManager.Instance?.LoseRandomPerk();
     }
 
     private void Update()

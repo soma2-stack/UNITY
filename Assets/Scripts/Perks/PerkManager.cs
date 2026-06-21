@@ -44,6 +44,11 @@ public class PerkManager : MonoBehaviour
     [Tooltip("Movement-speed multiplier applied to PlayerMovement (higher = faster).")]
     public float staminUpSpeedMultiplier = 1.35f;
 
+    [Header("Down / Revive")]
+    [Tooltip("Solo mode: Quick Revive is protected from the random perk loss on revive " +
+             "(it drives the solo self-revive). Turn off for co-op so any perk can be lost.")]
+    public bool SoloMode = true;
+
     /// <summary>Raised whenever the owned-perk set changes.</summary>
     public event Action OnPerksChanged;
 
@@ -216,6 +221,91 @@ public class PerkManager : MonoBehaviour
                 // ExtraWeaponSlots to raise the carry cap; RemoveExtraWeaponSlot()
                 // trims it back down if the perk is later lost.
                 ExtraWeaponSlots = 1;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// CoD Zombies: when the player is revived they lose one random perk. Removes a
+    /// random owned perk and reverts its gameplay effect. In <see cref="SoloMode"/>
+    /// Quick Revive is protected (it drives the solo self-revive) - if it is the only
+    /// perk owned, nothing is lost. Fires <see cref="OnPerksChanged"/> on removal.
+    /// </summary>
+    public void LoseRandomPerk()
+    {
+        if (ownedPerks.Count == 0)
+        {
+            return;
+        }
+
+        // Eligible pool: every owned perk except a solo-protected Quick Revive.
+        List<PerkType> pool = new List<PerkType>();
+        foreach (PerkType p in ownedPerks)
+        {
+            if (SoloMode && p == PerkType.QuickRevive)
+            {
+                continue;
+            }
+            pool.Add(p);
+        }
+
+        if (pool.Count == 0)
+        {
+            return; // only a protected Quick Revive was owned
+        }
+
+        PerkType lost = pool[UnityEngine.Random.Range(0, pool.Count)];
+        ownedPerks.Remove(lost);
+        RevertEffect(lost);
+        Debug.Log("[PerkManager] Lost perk on revive: " + lost);
+        OnPerksChanged?.Invoke();
+    }
+
+    /// <summary>Undo a perk's gameplay effect when it is lost (mirror of ApplyEffect).</summary>
+    private void RevertEffect(PerkType perk)
+    {
+        ResolvePlayer();
+
+        switch (perk)
+        {
+            case PerkType.Juggernog:
+                if (playerHealth != null)
+                {
+                    playerHealth.SetMaxHealth(100, false); // back to base max, don't heal
+                }
+                break;
+
+            case PerkType.SpeedCola:
+                if (weaponController != null)
+                {
+                    weaponController.reloadSpeedMultiplier = 1f;
+                }
+                break;
+
+            case PerkType.DoubleTap:
+                if (weaponController != null)
+                {
+                    weaponController.fireRateMultiplier = 1f;
+                }
+                break;
+
+            case PerkType.StaminUp:
+                if (playerMovement != null)
+                {
+                    playerMovement.speedMultiplier = 1f;
+                }
+                break;
+
+            case PerkType.QuickRevive:
+                // No stat to revert.
+                break;
+
+            case PerkType.MuleKick:
+                ExtraWeaponSlots = 0;
+                if (weaponController != null)
+                {
+                    weaponController.RemoveExtraWeaponSlot();
+                }
                 break;
         }
     }
