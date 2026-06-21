@@ -17,9 +17,18 @@ public class Powerup : MonoBehaviour
     [Tooltip("Seconds before the pickup despawns on its own.")]
     public float lifetime = 15f;
 
+    [Header("Pickup Motion")]
+    [Tooltip("Bob cycles per second.")]
+    public float bobSpeed = 2f;
+    [Tooltip("Bob amplitude in world units (peak offset above/below the spawn height).")]
+    public float bobHeight = 0.2f;
+    [Tooltip("Spin speed in degrees/second (90 = one full rotation every 4 seconds).")]
+    public float spinSpeed = 90f;
+
     private float spawnTime;
     private Transform player;
     private Renderer rend;
+    private Vector3 spawnPosition; // captured once so the bob oscillates without drifting
 
     /// <summary>Create a power-up pickup at a world position. Returns the new instance.</summary>
     public static Powerup Spawn(PowerupType type, Vector3 position, float lifetime)
@@ -67,13 +76,18 @@ public class Powerup : MonoBehaviour
     {
         spawnTime = Time.time;
         rend = GetComponent<Renderer>();
+        // Capture the spawn position ONCE so the bob oscillates around it instead of
+        // accumulating (which would make the pickup drift upward forever).
+        spawnPosition = transform.position;
         FindPlayer();
     }
 
     private void Update()
     {
-        // Spin + bob for visibility.
-        transform.Rotate(Vector3.up, 90f * Time.deltaTime, Space.World);
+        // Spin around Y, and bob up/down around the spawn height, for visibility.
+        transform.Rotate(0f, spinSpeed * Time.deltaTime, 0f);
+        float bob = Mathf.Sin(Time.time * bobSpeed) * bobHeight;
+        transform.position = new Vector3(spawnPosition.x, spawnPosition.y + bob, spawnPosition.z);
 
         float age = Time.time - spawnTime;
         if (age >= lifetime)
