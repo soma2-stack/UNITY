@@ -30,8 +30,14 @@ public class ZombieAgent : MonoBehaviour
     public float attackInterval = 1.2f;
 
     [Header("Rewards")]
-    [Tooltip("Points awarded to the player when this zombie is killed.")]
+    [Tooltip("Total points for a body gun-kill, including the killing hit's +10 (e.g. 60 = +10 hit + +50 kill bonus).")]
     public int killReward = 60;
+    [Tooltip("Award +10 points per bullet hit (CoD economy). Disable for zombie types that shouldn't pay out per hit.")]
+    public bool awardHitPoints = true;
+
+    // Points awarded per bullet hit (CoD: +10). The kill bonus is computed so the
+    // killing shot's hit + bonus total the intended body/headshot reward.
+    private const int HitPoints = 10;
 
     [Header("Pathing")]
     [Tooltip("How often (seconds) to recompute the path to the player. Throttled for performance.")]
@@ -213,6 +219,14 @@ public class ZombieAgent : MonoBehaviour
             return;
         }
 
+        // +10 per bullet hit (CoD economy), awarded for EVERY hit regardless of
+        // whether it kills. Melee (KillByMelee) bypasses TakeDamage, so it never
+        // receives this hit award - only its full kill reward in Die().
+        if (awardHitPoints)
+        {
+            PlayerPoints.Instance?.AddPoints(HitPoints);
+        }
+
         health -= amount;
         if (health <= 0)
         {
@@ -251,24 +265,28 @@ public class ZombieAgent : MonoBehaviour
         isDead = true;
 
         // ---------------------------------------------------------------------
-        // POINTS OWNERSHIP: ZombieAgent.Die() is the SOLE awarder of KILL points
-        // (60 normal / 100 headshot / 130 melee). WeaponController owns ONLY the
-        // +10 non-lethal-hit bonus and never awards kill points. The pointsAwarded
-        // guard guarantees the kill reward can never be granted twice, even if
-        // Die() were somehow re-entered (melee + bullet landing on the same frame).
+        // POINTS OWNERSHIP: ZombieAgent owns the whole point economy. TakeDamage()
+        // awards +10 per bullet hit; Die() awards the KILL BONUS below so the
+        // killing bullet totals +60 body / +100 headshot (its +10 hit + the bonus),
+        // never +70. A melee kill bypasses TakeDamage, so it awards the full +130
+        // here. The pointsAwarded guard ensures the bonus is granted at most once.
         // ---------------------------------------------------------------------
         if (!pointsAwarded)
         {
             pointsAwarded = true;
 
-            int reward = killReward; // Normal kill = 60
+            int reward;
             if (isMelee)
             {
-                reward = 130; // Melee/knife kill always = 130 (checked before headshot)
+                reward = 130; // melee kill: full reward, no separate hit award
             }
             else if (isHeadshot)
             {
-                reward = 100; // Headshot kill = 100
+                reward = Mathf.Max(0, 100 - HitPoints); // +90 -> 100 total headshot kill
+            }
+            else
+            {
+                reward = Mathf.Max(0, killReward - HitPoints); // +50 -> 60 total body kill
             }
             PlayerPoints.Instance?.AddPoints(reward);
         }

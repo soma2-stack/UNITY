@@ -543,21 +543,16 @@ public class WeaponController : MonoBehaviour
                 
                 if (wasAlive)
                 {
+                    // POINTS OWNERSHIP: ZombieAgent owns the entire economy now -
+                    // TakeDamage() awards the +10 hit and Die() awards the kill
+                    // bonus. WeaponController only logs so points never double-count.
                     if (zombie.IsDead)
                     {
                         Debug.Log($"[WeaponController] Killed zombie '{hit.collider.name}' {(isHeadshot ? "(HEADSHOT)" : "")} for {damage} damage.");
                     }
                     else
                     {
-                        // -----------------------------------------------------
-                        // POINTS OWNERSHIP: WeaponController owns ONLY the +10
-                        // non-lethal HIT bonus, awarded here when a bullet hits a
-                        // zombie that survives. The KILL reward (60/100/130) is
-                        // owned exclusively by ZombieAgent.Die() - never awarded
-                        // from the weapon - so the two can never double-count.
-                        // -----------------------------------------------------
-                        PlayerPoints.Instance?.AddPoints(10);
-                        Debug.Log($"[WeaponController] Hit zombie '{hit.collider.name}' for {damage} damage. (+10 points)");
+                        Debug.Log($"[WeaponController] Hit zombie '{hit.collider.name}' for {damage} damage.");
                     }
                 }
             }
