@@ -55,6 +55,13 @@ public class RoundManager : MonoBehaviour
     /// <summary>The current round number.</summary>
     public int CurrentRound { get; private set; }
 
+    /// <summary>True during the between-rounds intermission (the start banner shows then).</summary>
+    public static bool IntermissionActive { get; private set; }
+    /// <summary>The round number that begins after the current intermission.</summary>
+    public static int UpcomingRound { get; private set; }
+    /// <summary>Seconds remaining in the current intermission (drives the banner fade).</summary>
+    public static float IntermissionRemaining { get; private set; }
+
     // Simple internal state machine.
     private enum State { Idle, Starting, InProgress, Intermission }
     private State state = State.Idle;
@@ -71,6 +78,7 @@ public class RoundManager : MonoBehaviour
     private void Start()
     {
         CurrentRound = Mathf.Max(1, startRound) - 1; // BeginNextRound() will increment to startRound
+        IntermissionActive = false; // fresh run starts with no intermission banner
         stateTimer = startDelay;
         state = State.Starting;
     }
@@ -93,12 +101,16 @@ public class RoundManager : MonoBehaviour
                     spawner.RemainingToSpawn <= 0 && spawner.AliveCount == 0)
                 {
                     stateTimer = timeBetweenRounds;
+                    IntermissionActive = true;
+                    UpcomingRound = CurrentRound + 1;
+                    IntermissionRemaining = stateTimer;
                     state = State.Intermission;
                 }
                 break;
 
             case State.Intermission:
                 stateTimer -= Time.deltaTime;
+                IntermissionRemaining = Mathf.Max(0f, stateTimer);
                 if (stateTimer <= 0f)
                 {
                     // Drop a milestone power-up for the round about to begin, before it starts.
@@ -149,6 +161,7 @@ public class RoundManager : MonoBehaviour
 
     private void BeginNextRound()
     {
+        IntermissionActive = false; // the round is starting now; hide the banner
         CurrentRound++;
 
         int count = Mathf.Min(maxZombiesPerRound, baseZombieCount + (CurrentRound - 1) * zombiesPerRound);
