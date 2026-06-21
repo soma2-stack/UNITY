@@ -25,6 +25,9 @@ public class GameOverController : MonoBehaviour
     private bool showScreen;
     private int finalRound;
     private int finalScore;
+    private int finalKills;
+    private int bestRound;
+    private int bestScore;
 
     private GUIStyle titleStyle;
     private GUIStyle infoStyle;
@@ -57,6 +60,9 @@ public class GameOverController : MonoBehaviour
 
         // Make sure time is running for a fresh run (in case we left it paused).
         Time.timeScale = 1f;
+
+        // Fresh run: reset the run kill counter so the game-over screen starts at zero.
+        ZombieAgent.ResetKillCount();
 
         if (_runtimeInstance != null || FindFirstObjectByType<GameOverController>() != null)
         {
@@ -149,6 +155,23 @@ public class GameOverController : MonoBehaviour
         RoundManager rm = FindFirstObjectByType<RoundManager>();
         finalRound = rm != null ? rm.CurrentRound : 0;
         finalScore = PlayerPoints.Instance != null ? PlayerPoints.Instance.Points : 0;
+        finalKills = ZombieAgent.TotalKillsThisRun;
+
+        // Best round / best score persistence (PlayerPrefs). Update the local copies so
+        // a new record is reflected immediately on the game-over screen.
+        bestRound = PlayerPrefs.GetInt("BestRound", 0);
+        bestScore = PlayerPrefs.GetInt("BestScore", 0);
+        if (finalRound > bestRound)
+        {
+            bestRound = finalRound;
+            PlayerPrefs.SetInt("BestRound", bestRound);
+        }
+        if (finalScore > bestScore)
+        {
+            bestScore = finalScore;
+            PlayerPrefs.SetInt("BestScore", bestScore);
+        }
+        PlayerPrefs.Save();
 
         showScreen = true;
         Time.timeScale = 0f;
@@ -196,6 +219,10 @@ public class GameOverController : MonoBehaviour
         DrawCentered("You survived to Round " + finalRound, infoStyle, cx, y, 560f, 34f);
         y += 40f;
         DrawCentered("Final Score: " + finalScore, infoStyle, cx, y, 560f, 34f);
+        y += 40f;
+        DrawCentered("Zombies Killed: " + finalKills, infoStyle, cx, y, 560f, 34f);
+        y += 40f;
+        DrawCentered("Best Round: " + bestRound + "   Best Score: " + bestScore, infoStyle, cx, y, 560f, 34f);
         y += 70f;
 
         float bw = 240f;

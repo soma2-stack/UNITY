@@ -69,6 +69,15 @@ public class ZombieAgent : MonoBehaviour
     /// <summary>True if the agent currently exists and is on the baked NavMesh.</summary>
     public bool IsOnNavMesh => agent != null && agent.isOnNavMesh;
 
+    /// <summary>Total zombies killed this run (reset on a fresh run via ResetKillCount).</summary>
+    public static int TotalKillsThisRun { get; private set; }
+
+    /// <summary>Reset the run kill counter so a fresh run starts at zero.</summary>
+    public static void ResetKillCount()
+    {
+        TotalKillsThisRun = 0;
+    }
+
     private NavMeshAgent agent;
     private Transform player;
     private PlayerHealth playerHealth;
@@ -303,6 +312,7 @@ public class ZombieAgent : MonoBehaviour
         }
 
         isDead = true;
+        TotalKillsThisRun++; // count this kill toward the run total (shown on game over)
 
         // ---------------------------------------------------------------------
         // POINTS OWNERSHIP: ZombieAgent owns the whole point economy. TakeDamage()
