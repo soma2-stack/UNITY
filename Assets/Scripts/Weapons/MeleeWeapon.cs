@@ -1,9 +1,11 @@
 using UnityEngine;
 
 /// <summary>
-/// Simple melee/knife system for School of the Dead.
-/// Press the melee key (default V) to perform a quick knife attack.
-/// Awards +130 points on kill.
+/// LEGACY standalone melee/knife (V key, +130 on kill). WeaponController now owns
+/// the knife input. This component self-disables in Awake() when a WeaponController
+/// is present on the same object or a parent, so prefabs that still carry it never
+/// produce a duplicate V-key knife. Kept only so existing prefab references don't
+/// break; new players should rely on WeaponController's built-in melee.
 /// </summary>
 public class MeleeWeapon : MonoBehaviour
 {
@@ -25,6 +27,16 @@ public class MeleeWeapon : MonoBehaviour
 
     private Transform cam;
     private float nextMeleeTime;
+
+    private void Awake()
+    {
+        // WeaponController now owns the knife/melee input. Defer to it (and avoid a
+        // duplicate V-key knife) by disabling this legacy component when one exists.
+        if (GetComponentInParent<WeaponController>() != null)
+        {
+            enabled = false;
+        }
+    }
 
     private void Start()
     {

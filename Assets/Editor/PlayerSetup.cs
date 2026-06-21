@@ -156,8 +156,7 @@ public static class PlayerSetup
         codCam.playerBody = root.transform;
 
         root.AddComponent<PlayerHealth>();
-        root.AddComponent<WeaponController>();
-        root.AddComponent<MeleeWeapon>();
+        root.AddComponent<WeaponController>(); // also owns the V-key knife/melee
         root.AddComponent<PlayerAnimator>();
         root.AddComponent<FirstPersonView>(); // hide own body from the FP camera
 
