@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -43,6 +44,8 @@ public class PowerupManager : MonoBehaviour
     [Header("Nuke")]
     [Tooltip("Bonus points awarded to the player when a Nuke is collected.")]
     public int nukeBonusPoints = 400;
+    [Tooltip("Flash the screen white when a Nuke fires (CoD-style). Disable to skip the flash.")]
+    public bool nukeFlashEnabled = true;
 
     [Header("Carpenter")]
     [Tooltip("Bonus points awarded when a Carpenter is collected (boards up barricades in classic CoD).")]
@@ -62,6 +65,9 @@ public class PowerupManager : MonoBehaviour
 
     private static float instaKillEndTime;
     private static float doublePointsEndTime;
+
+    private bool nukeFlashActive;   // true while the nuke white flash is on screen
+    private float nukeFlashEndTime;
 
     private const string GameplayScene = "SchoolOfTheDead";
     private static PowerupManager _runtimeInstance;
@@ -162,6 +168,39 @@ public class PowerupManager : MonoBehaviour
             DoublePointsActive = false;
             PlayerPoints.PointsMultiplier = 1;
         }
+        if (nukeFlashActive && Time.time >= nukeFlashEndTime)
+        {
+            nukeFlashActive = false;
+        }
+    }
+
+    /// <summary>
+    /// Nuke: flash the screen white (0.3s), then kill every living zombie with a small
+    /// stagger (~0.05s each) so they drop over roughly a second, then award the bonus.
+    /// </summary>
+    private IEnumerator NukeRoutine()
+    {
+        if (nukeFlashEnabled)
+        {
+            nukeFlashActive = true;
+            nukeFlashEndTime = Time.time + 0.3f;
+            yield return new WaitForSeconds(0.3f);
+        }
+
+        ZombieAgent[] zombies = FindObjectsByType<ZombieAgent>(FindObjectsSortMode.None);
+        foreach (ZombieAgent z in zombies)
+        {
+            if (z != null && !z.IsDead)
+            {
+                z.TakeDamage(99999);
+                yield return new WaitForSeconds(0.05f);
+            }
+        }
+
+        if (PlayerPoints.Instance != null && nukeBonusPoints > 0)
+        {
+            PlayerPoints.Instance.Add(nukeBonusPoints);
+        }
     }
 
     private void HandleZombieKilled(Vector3 position)
@@ -217,21 +256,10 @@ public class PowerupManager : MonoBehaviour
                 break;
 
             case PowerupType.Nuke:
-            {
-                ZombieAgent[] zombies = FindObjectsByType<ZombieAgent>(FindObjectsSortMode.None);
-                foreach (ZombieAgent z in zombies)
-                {
-                    if (z != null)
-                    {
-                        z.TakeDamage(99999);
-                    }
-                }
-                if (PlayerPoints.Instance != null && nukeBonusPoints > 0)
-                {
-                    PlayerPoints.Instance.Add(nukeBonusPoints);
-                }
+                // Flash the screen, then kill all zombies staggered over ~1s, then
+                // award the bonus (handled in the coroutine).
+                StartCoroutine(NukeRoutine());
                 break;
-            }
 
             case PowerupType.Carpenter:
             {
@@ -277,6 +305,16 @@ public class PowerupManager : MonoBehaviour
 
     private void OnGUI()
     {
+        // Nuke white flash (fades out over its 0.3s window), drawn over everything.
+        if (nukeFlashActive)
+        {
+            float remaining = Mathf.Clamp01((nukeFlashEndTime - Time.time) / 0.3f);
+            Color prevC = GUI.color;
+            GUI.color = new Color(1f, 1f, 1f, 0.7f * remaining);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = prevC;
+        }
+
         if (!InstaKillActive && !DoublePointsActive)
         {
             return;
