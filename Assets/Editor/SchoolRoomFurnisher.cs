@@ -227,6 +227,92 @@ public static class SchoolRoomFurnisher
             "Re-running rebuilds Generated_RoomProps from scratch (non-destructive).");
     }
 
+    /// <summary>
+    /// SURGICAL, OFFICE-ONLY refresh. Unlike "Furnish Rooms" (which rebuilds the whole
+    /// Generated_RoomProps root from scratch), this rebuilds ONLY the under-furnished
+    /// office rooms in place, leaving every other room - and any hand-tuned prop
+    /// positions elsewhere - completely untouched. Use this to finish the offices
+    /// without discarding manual fixes made to the rest of the map.
+    /// </summary>
+    [MenuItem("Tools/School Of The Dead/Furnish Offices (Safe, Offices Only)")]
+    public static void FurnishOfficesOnly()
+    {
+        EnsureFolder("Assets/Materials");
+        EnsureFolder(MaterialFolder);
+        BuildMaterials();
+
+        Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+
+        GameObject root = null;
+        foreach (GameObject go in scene.GetRootGameObjects())
+        {
+            if (go.name == RootName) { root = go; break; }
+        }
+        if (root == null)
+        {
+            Debug.LogError(
+                $"[SchoolRoomFurnisher] '{RootName}' not found in the scene. Run 'Furnish Rooms' first; " +
+                "this safe tool only refreshes the office rooms in place.");
+            return;
+        }
+
+        List<MeshRenderer> allRenderers = new List<MeshRenderer>();
+        foreach (GameObject rootGo in scene.GetRootGameObjects())
+        {
+            if (IsGeneratedRoot(rootGo.name)) continue;
+            allRenderers.AddRange(rootGo.GetComponentsInChildren<MeshRenderer>(true));
+        }
+
+        // Only the clearly under-furnished offices. west_south_office already has a
+        // usable layout (6 props, passes all checks) so it is deliberately left as-is.
+        string[] offices = { "main_office", "principal_office" };
+        List<string> done = new List<string>();
+        List<string> skipped = new List<string>();
+
+        foreach (string id in offices)
+        {
+            MeshRenderer floor = FindFloor(allRenderers, id);
+            if (floor == null)
+            {
+                skipped.Add($"{id} (no '{id}_Floor')");
+                continue;
+            }
+
+            // Find this office's existing container under the root, or create it.
+            // Only this office's children are cleared - nothing else in the scene.
+            Transform container = root.transform.Find(id);
+            if (container != null)
+            {
+                for (int i = container.childCount - 1; i >= 0; i--)
+                {
+                    Object.DestroyImmediate(container.GetChild(i).gameObject);
+                }
+            }
+            else
+            {
+                GameObject go = new GameObject(id);
+                go.transform.SetParent(root.transform, false);
+                container = go.transform;
+            }
+
+            List<Vector3> doorways = CollectDoorways(allRenderers, id);
+            RoomContext ctx = new RoomContext(id, RoomType.Office, floor.bounds, doorways, container);
+            int before = ctx.PropCount;
+            FurnishOffice(ctx);
+            done.Add($"{id} (+{ctx.PropCount - before} props)");
+        }
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+
+        string skipMsg = skipped.Count == 0 ? "none" : string.Join(", ", skipped);
+        Debug.Log(
+            $"[SchoolRoomFurnisher] Office-only refresh complete: {string.Join(", ", done)}. " +
+            $"Skipped: {skipMsg}. All other rooms left untouched.");
+    }
+
     // === Per-room context ===================================================
 
     /// <summary>
@@ -597,15 +683,82 @@ public static class SchoolRoomFurnisher
 
     private static void FurnishOffice(RoomContext ctx)
     {
-        // Desk against the north wall, occupant seated on the wall side facing into
-        // the room (principal-desk look).
-        PlaceWallDesk(ctx, Wall.North, "Desk", "Chair", null);
+        // Main desk against the wall FARTHEST from any doorway (never in a doorway),
+        // occupant seated on the wall side facing into the room. Orientation is derived
+        // from geometry so the office reads correctly however the room is aligned.
+        Wall deskWall = ChooseFrontWall(ctx);
+        Vector3? deskCenter = TryOfficeDesk(ctx, deskWall);
 
-        // Filing cabinets along a side wall.
-        MakeFilingCabinets(ctx, Wall.West, "FilingCabinets");
+        // Fallback: if the preferred wall was too tight or blocked, try the others so
+        // small/awkward offices (e.g. main_office) still get a usable desk.
+        if (!deskCenter.HasValue)
+        {
+            foreach (Wall w in new[] { Wall.North, Wall.South, Wall.East, Wall.West })
+            {
+                if (w == deskWall) continue;
+                deskCenter = TryOfficeDesk(ctx, w);
+                if (deskCenter.HasValue) { deskWall = w; break; }
+            }
+        }
 
-        // A shelf in a corner.
-        PlaceInCorner(ctx, 1, 1.0f, 0.4f, (pos, yaw) => MakeShelf(ctx, pos, yaw, "Shelf"));
+        Vector3 inward = InwardNormal(deskWall);
+
+        // Guest chair in front of the desk, facing back toward the occupant.
+        if (deskCenter.HasValue)
+        {
+            Vector3 gp = deskCenter.Value + inward * 1.2f;
+            if (ctx.Fits(gp.x, gp.z, 0.28f, 0.28f)) MakeChair(ctx, gp, YawFromDir(-inward), "GuestChair");
+        }
+
+        // Filing cabinets along a side wall that is clear of doorways.
+        MakeFilingCabinets(ctx, ChooseSideWall(ctx, deskWall), "FilingCabinets");
+
+        // A shelf and a trash can tucked into opposite corners.
+        PlaceInCorner(ctx, 3, 1.0f, 0.4f, (pos, yaw) => MakeShelf(ctx, pos, yaw, "Shelf"));
+        PlaceInCorner(ctx, 0, 0.25f, 0.25f, (pos, yaw) => MakeTrashCan(ctx, pos, "TrashCan"));
+    }
+
+    /// <summary>
+    /// Builds an office desk+chair against <paramref name="wall"/> with a monitor on the
+    /// room-facing edge. Returns the desk's world centre if it fit, otherwise null.
+    /// </summary>
+    private static Vector3? TryOfficeDesk(RoomContext ctx, Wall wall)
+    {
+        Vector3? placed = null;
+        Vector3 inward = InwardNormal(wall);
+        PlaceWallDesk(ctx, wall, "Desk", "Chair", center =>
+        {
+            placed = center;
+            MakeMonitor(ctx, center + Vector3.up * 0.75f + inward * 0.12f, "Monitor");
+        });
+        return placed;
+    }
+
+    /// <summary>
+    /// Picks the side wall (perpendicular to <paramref name="deskWall"/>) whose nearest
+    /// doorway is farthest away, so filing cabinets never sit in a doorway.
+    /// </summary>
+    private static Wall ChooseSideWall(RoomContext ctx, Wall deskWall)
+    {
+        bool deskAlongX = (deskWall == Wall.North || deskWall == Wall.South);
+        Wall[] candidates = deskAlongX ? new[] { Wall.East, Wall.West } : new[] { Wall.North, Wall.South };
+
+        Wall best = candidates[0];
+        float bestNearest = float.NegativeInfinity;
+        foreach (Wall w in candidates)
+        {
+            WallInfo(ctx, w, out float fx, out float fz, out bool alongX, out _);
+            float wallLine = alongX ? fz : fx;
+            float nearest = float.PositiveInfinity;
+            foreach (Vector3 d in ctx.Doorways)
+            {
+                float perp = alongX ? Mathf.Abs(d.z - wallLine) : Mathf.Abs(d.x - wallLine);
+                if (perp < nearest) nearest = perp;
+            }
+            if (float.IsPositiveInfinity(nearest)) nearest = 1000f;
+            if (nearest > bestNearest) { bestNearest = nearest; best = w; }
+        }
+        return best;
     }
 
     private static void FurnishSecurity(RoomContext ctx)

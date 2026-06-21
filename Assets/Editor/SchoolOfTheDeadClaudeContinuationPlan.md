@@ -90,12 +90,40 @@ NavMesh test), 2 floating BookCarts (missing wheel geometry), 6 secret-egg books
 > resolved by direct geometric verification. Re-run `Tools/School Of The Dead/Validate Prop Placement`
 > in Unity to refresh `SchoolOfTheDeadPropValidationResults.md` (expected: 0 errors, ~13 warnings).
 
+## Checkpoint 3 — DONE (classrooms & offices)
+
+**Classrooms:** already furnished and passing every validator check (16–17 props each: whiteboard,
+teacher desk/chair, student desks/chairs facing the board, shelf, trash). The audit marked them
+"No move indicated." With no Unity here to visually refine, re-laying-out passing rooms would only add
+risk, so classrooms are **left as-is** (correct per the "don't touch what passes" rule).
+
+**Offices:** the real gap. Root cause of `main_office` having ~1 prop: the old `FurnishOffice` hardcoded
+`Wall.North`/`Wall.West`, so when those walls held doorways every placement failed the door-clearance
+`Fits()` test. Fixed in code:
+
+- Rewrote `FurnishOffice` to be orientation-robust: main desk goes against the wall *farthest from any
+  doorway* (`ChooseFrontWall`), with a fallback that tries the other walls if the room is tight. Added a
+  desktop monitor, a guest chair facing the desk, filing cabinets on a door-clear side wall
+  (`ChooseSideWall`, new), a shelf, and a trash can — a believable, non-crowded office.
+- Added a **surgical** menu: `Tools/School Of The Dead/Furnish Offices (Safe, Offices Only)`
+  (`FurnishOfficesOnly`). Unlike "Furnish Rooms" (which rebuilds the entire `Generated_RoomProps` root
+  from scratch and would wipe the CP2 fixes), this rebuilds **only** `main_office` and `principal_office`
+  in place and leaves every other room and all hand-tuned positions untouched. `west_south_office` is
+  intentionally excluded (already usable, 6 props).
+
+> ACTION REQUIRED IN UNITY: this checkpoint changed **code only** — the scene is unchanged. To apply the
+> office furniture, open the project and click **Tools ▸ School Of The Dead ▸ Furnish Offices (Safe,
+> Offices Only)** once. It opens the scene, refurnishes the two sparse offices, and saves. (I can't run
+> Unity in this environment, so I can't apply it for you, and hand-authoring dozens of desk/chair
+> GameObjects into the scene YAML would risk corrupting it.)
+
 ## Suggested next checkpoint
 
-**Checkpoint 3 — classrooms & offices:** refine only (rows/aisles, restrained wall dressing). Under-furnished
-targets: `main_office` (1 prop), `west_south_office`, `principal_office`.
+**Checkpoint 4 — cafeteria & kitchen:** verify table/counter lanes; both already pass automated checks, so
+expect verification + at most small spacing tweaks via the same surgical approach.
 
 ## Working state
 
-- Branch: `claude/school-of-the-dead`. Only the scene file changed this checkpoint. Tools compile-clean.
+- Branch: `claude/school-of-the-dead`. CP3 changed `SchoolRoomFurnisher.cs` only (code; scene untouched).
+  Brace-balanced (225/225), all reused helpers verified present.
 - Safe to continue.
