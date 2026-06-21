@@ -32,6 +32,8 @@ public class RoundManager : MonoBehaviour
     public int baseZombieCount = 6;
     [Tooltip("Extra zombies added per round.")]
     public int zombiesPerRound = 2;
+    [Tooltip("Hard ceiling on how many zombies a single round can spawn (CoD caps at 24).")]
+    public int maxZombiesPerRound = 24;
     [Tooltip("Round 1 base health (default 150). Per-round scaling is handled by an " +
              "exponential formula (x1.1 per round through round 9, then x1.5 per round); " +
              "zombiesPerRound affects only the COUNT, not health.")]
@@ -149,12 +151,16 @@ public class RoundManager : MonoBehaviour
     {
         CurrentRound++;
 
-        int count = baseZombieCount + (CurrentRound - 1) * zombiesPerRound;
+        int count = Mathf.Min(maxZombiesPerRound, baseZombieCount + (CurrentRound - 1) * zombiesPerRound);
         int hp = CalculateZombieHealth(CurrentRound);
         float speed = Mathf.Min(maxZombieSpeed, baseZombieSpeed + (CurrentRound - 1) * speedPerRound);
 
         if (spawner != null)
         {
+            // Per-round simultaneous-alive cap scales with the round (round 1 -> 6,
+            // round 5 -> 14, round 10+ -> 24), applied before the round spawns.
+            int aliveCap = Mathf.Clamp(4 + CurrentRound * 2, 6, 24);
+            spawner.SetRoundAliveCap(aliveCap);
             spawner.BeginRound(count, hp, speed);
         }
         else

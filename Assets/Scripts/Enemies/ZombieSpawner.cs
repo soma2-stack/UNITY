@@ -20,7 +20,9 @@ public class ZombieSpawner : MonoBehaviour
     public Transform[] spawnPoints;
 
     [Header("Tuning")]
-    [Tooltip("Maximum number of zombies alive at the same time.")]
+    [Tooltip("Maximum zombies alive at once. Set per-round by RoundManager via " +
+             "SetRoundAliveCap() (scales with the round); this default applies only " +
+             "until the first round begins.")]
     public int maxAlive = 12;
     [Tooltip("Seconds between individual spawns.")]
     public float spawnInterval = 2f;
@@ -85,6 +87,15 @@ public class ZombieSpawner : MonoBehaviour
 
         nextSpawnTime = Time.time + spawnInterval;
         SpawnOne();
+    }
+
+    /// <summary>
+    /// Sets the simultaneous-alive cap for the upcoming round. Called by RoundManager
+    /// each round before <see cref="BeginRound"/> so the cap scales with the round.
+    /// </summary>
+    public void SetRoundAliveCap(int cap)
+    {
+        maxAlive = Mathf.Max(1, cap);
     }
 
     /// <summary>
