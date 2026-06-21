@@ -56,6 +56,14 @@ public class PerkMachine : MonoBehaviour
             return;
         }
 
+        // Power gate: the machine is completely inert until the map power is on
+        // (mirrors MysteryBox / PackAPunchMachine). No purchase while powered down;
+        // OnGUI shows a dimmed "(turn on power)" hint instead of the buy prompt.
+        if (!PowerState.IsOn)
+        {
+            return;
+        }
+
         // Already owned: nothing to buy.
         if (IsOwned())
         {
@@ -115,10 +123,22 @@ public class PerkMachine : MonoBehaviour
             return;
         }
 
-        bool owned = IsOwned();
-        string label = owned
-            ? PerkManager.PerkDisplayName(perk) + "  (owned)"
-            : "Press E   Buy " + PerkManager.PerkDisplayName(perk) + "   [" + cost + "]";
+        string label;
+        Color textColor;
+        if (!PowerState.IsOn)
+        {
+            // Power gate: dimmed hint, no purchase possible yet.
+            label = PerkManager.PerkDisplayName(perk) + "  (turn on power)";
+            textColor = new Color(0.55f, 0.55f, 0.55f, 1f); // dimmed grey
+        }
+        else
+        {
+            bool owned = IsOwned();
+            label = owned
+                ? PerkManager.PerkDisplayName(perk) + "  (owned)"
+                : "Press E   Buy " + PerkManager.PerkDisplayName(perk) + "   [" + cost + "]";
+            textColor = owned ? new Color(0.7f, 0.95f, 0.7f, 1f) : new Color(0.96f, 0.93f, 0.86f, 1f);
+        }
 
         GUIStyle style = new GUIStyle(GUI.skin.label)
         {
@@ -131,11 +151,11 @@ public class PerkMachine : MonoBehaviour
         float h = 34f;
         Rect rect = new Rect((Screen.width - w) * 0.5f, Screen.height * 0.62f, w, h);
 
-        // Drop shadow then a bright label for readability over any background.
+        // Drop shadow then the label in its state colour for readability over any background.
         Color prev = GUI.color;
         GUI.color = new Color(0f, 0f, 0f, 0.85f);
         GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), label, style);
-        GUI.color = owned ? new Color(0.7f, 0.95f, 0.7f, 1f) : new Color(0.96f, 0.93f, 0.86f, 1f);
+        GUI.color = textColor;
         GUI.Label(rect, label, style);
         GUI.color = prev;
     }
