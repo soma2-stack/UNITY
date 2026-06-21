@@ -64,6 +64,13 @@ public class PlayerHealth : MonoBehaviour
     /// <summary>True while the player is downed and awaiting revive / bleed-out.</summary>
     public bool IsDowned { get; private set; }
 
+    /// <summary>
+    /// True while the player is downed but not yet finally dead: in this state they may
+    /// use ONLY their reduced-damage downed pistol. WeaponController reads this to know
+    /// whether to apply the downed-gun damage penalty.
+    /// </summary>
+    public bool IsDownedGunActive => IsDowned && !IsDead;
+
     /// <summary>Seconds remaining before bleed-out while downed (0 when not downed).</summary>
     public float BleedOutRemaining { get; private set; }
 
@@ -195,7 +202,9 @@ public class PlayerHealth : MonoBehaviour
         lastDamageTime = Time.time;
         regenAccumulator = 0f;
 
-        int restored = Mathf.Max(1, Mathf.RoundToInt(maxHealth * Mathf.Clamp01(reviveHealthFraction)));
+        // Authentic CoD Zombies: a revive restores EXACTLY 25% of max health (the
+        // reviveHealthFraction field is intentionally ignored to match base-game feel).
+        int restored = Mathf.Max(1, Mathf.RoundToInt(maxHealth * 0.25f));
         CurrentHealth = Mathf.Clamp(restored, 1, maxHealth);
 
         Debug.Log("[PlayerHealth] Player revived (" + CurrentHealth + "/" + maxHealth + ")");

@@ -185,7 +185,12 @@ public class ZombieAgent : MonoBehaviour
         {
             animator.SetTrigger(attackParam);
         }
-        playerHealth.TakeDamage(attackDamage);
+
+        // Authentic CoD: hitting a DOWNED player only chips 1 damage (death comes from
+        // the bleed-out timer, so hits slow the drain rather than accelerating a kill),
+        // and no points are involved in a zombie striking the player.
+        int dealt = playerHealth.IsDowned ? 1 : attackDamage;
+        playerHealth.TakeDamage(dealt);
     }
 
     /// <summary>

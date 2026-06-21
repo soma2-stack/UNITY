@@ -231,11 +231,17 @@ public class WeaponController : MonoBehaviour
         }
     }
 
-    // Cancels any in-progress reload the instant the player goes down.
+    // Cancels any in-progress reload and drops to the pistol (slot 0) the instant the
+    // player goes down - downed players may use only their starting pistol.
     private void HandlePlayerDowned()
     {
         StopAllCoroutines();
         isReloading = false;
+        if (weapons != null && weapons.Count > 0)
+        {
+            currentIndex = 0;
+            EquipCurrent();
+        }
     }
 
     private void OnDestroy()
@@ -346,8 +352,9 @@ public class WeaponController : MonoBehaviour
 
     private void HandleFiring()
     {
-        // No firing while downed or dead.
-        if (playerHealth != null && (playerHealth.IsDowned || playerHealth.IsDead))
+        // Dead: no firing at all. Downed: firing is allowed but only the pistol
+        // (forced to slot 0 on the way down) and at reduced damage (applied in Fire()).
+        if (playerHealth != null && playerHealth.IsDead)
         {
             return;
         }
@@ -406,8 +413,22 @@ public class WeaponController : MonoBehaviour
             if (zombie != null)
             {
                 bool isHeadshot = hit.collider.CompareTag("Head");
-                // Insta-Kill power-up: any hit is lethal.
-                int damage = PowerupManager.InstaKillActive ? 99999 : w.damage;
+                // Insta-Kill power-up: any hit is lethal. Otherwise use the weapon's
+                // damage, cut to a quarter (min 1) while the player is downed - the
+                // CoD downed pistol does heavily reduced damage.
+                int damage;
+                if (PowerupManager.InstaKillActive)
+                {
+                    damage = 99999;
+                }
+                else
+                {
+                    damage = w.damage;
+                    if (playerHealth != null && playerHealth.IsDownedGunActive)
+                    {
+                        damage = Mathf.Max(1, damage / 4);
+                    }
+                }
                 bool wasAlive = !zombie.IsDead;
                 zombie.TakeDamage(damage, isHeadshot);
                 
