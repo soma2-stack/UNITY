@@ -34,6 +34,7 @@ public class WeaponController : MonoBehaviour
     private Transform cam;          // Resolved aim transform
     private float nextFireTime;     // Time.time when the next shot is allowed
     private bool isReloading;
+    private PlayerHealth playerHealth; // cached on the same GameObject/parent; gates firing while downed/dead
 
     private Weapon Current =>
         (weapons != null && currentIndex >= 0 && currentIndex < weapons.Count) ? weapons[currentIndex] : null;
@@ -169,6 +170,14 @@ public class WeaponController : MonoBehaviour
     {
         ResolveCamera();
 
+        // Cache the player's health (same GameObject or a parent) so we can block
+        // firing/switching while downed or dead, and cancel reloads on the way down.
+        playerHealth = GetComponentInParent<PlayerHealth>();
+        if (playerHealth != null)
+        {
+            playerHealth.OnPlayerDowned += HandlePlayerDowned;
+        }
+
         // Seed runtime ammo for every weapon so values persist across switches.
         if (weapons != null)
         {
@@ -222,8 +231,29 @@ public class WeaponController : MonoBehaviour
         }
     }
 
+    // Cancels any in-progress reload the instant the player goes down.
+    private void HandlePlayerDowned()
+    {
+        StopAllCoroutines();
+        isReloading = false;
+    }
+
+    private void OnDestroy()
+    {
+        if (playerHealth != null)
+        {
+            playerHealth.OnPlayerDowned -= HandlePlayerDowned;
+        }
+    }
+
     private void HandleWeaponSwitching()
     {
+        // No weapon switching while downed or dead.
+        if (playerHealth != null && (playerHealth.IsDowned || playerHealth.IsDead))
+        {
+            return;
+        }
+
         if (weapons == null || weapons.Count == 0)
         {
             return;
@@ -316,6 +346,12 @@ public class WeaponController : MonoBehaviour
 
     private void HandleFiring()
     {
+        // No firing while downed or dead.
+        if (playerHealth != null && (playerHealth.IsDowned || playerHealth.IsDead))
+        {
+            return;
+        }
+
         Weapon w = Current;
         if (w == null || isReloading || cam == null)
         {
