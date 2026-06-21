@@ -24,6 +24,12 @@ public class MysteryBox : InteractableBase
     [Tooltip("Weapons available from the Mystery Box. Assign weapon stats and the in-hand model for each entry. If left empty, a default pool is used as fallback.")]
     public List<Weapon> weaponPool = new List<Weapon>();
 
+    [Header("Teddy Bear")]
+    [Tooltip("Chance (0..1) a spin gives a Teddy Bear (no weapon) and relocates the box.")]
+    public float teddyBearChance = 0.1f;
+    [Tooltip("Possible world positions the box can relocate to on a Teddy Bear. Needs 2+ entries to actually move.")]
+    public Transform[] boxLocations;
+
     // Pre-fill the inspector pool with the default weapons when the component is first
     // added (or Reset in the inspector) so a designer only needs to drag in the models.
     private void Reset()
@@ -69,9 +75,18 @@ public class MysteryBox : InteractableBase
             return;
         }
 
+        // Charge first - in CoD the spin costs points even when it gives a Teddy Bear.
         if (!TryCharge(cost))
         {
             return;
+        }
+
+        // Teddy Bear: small chance the spin awards nothing and the box relocates.
+        if (Random.value < Mathf.Clamp01(teddyBearChance))
+        {
+            Debug.Log("[MysteryBox] Teddy Bear! Box is moving.");
+            RelocateBox();
+            return; // no weapon - the player still paid, exactly like CoD
         }
 
         // Use the inspector-configured pool when one is set; otherwise fall back to the
@@ -80,5 +95,29 @@ public class MysteryBox : InteractableBase
         Weapon prize = pool[Random.Range(0, pool.Count)];
         wc.GiveWeapon(prize);
         Debug.Log("[MysteryBox] Granted: " + prize.weaponName);
+    }
+
+    /// <summary>
+    /// Teleports the box to a random configured location that isn't its current spot.
+    /// Needs 2+ entries in <see cref="boxLocations"/>; otherwise it stays put and warns.
+    /// </summary>
+    private void RelocateBox()
+    {
+        if (boxLocations == null || boxLocations.Length < 2)
+        {
+            Debug.LogWarning("[MysteryBox] No alternate box locations configured; box stays in place.");
+            return;
+        }
+
+        for (int attempt = 0; attempt < 8; attempt++)
+        {
+            Transform dest = boxLocations[Random.Range(0, boxLocations.Length)];
+            if (dest != null && (dest.position - transform.position).sqrMagnitude > 0.01f)
+            {
+                transform.position = dest.position;
+                transform.rotation = dest.rotation;
+                return;
+            }
+        }
     }
 }
