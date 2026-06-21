@@ -92,6 +92,19 @@ public class ZombieSpawner : MonoBehaviour
     /// </summary>
     public void BeginRound(int totalToSpawn, int zombieHealth, float zombieSpeed)
     {
+        // Drop any stale references left over from the previous round. Without this,
+        // a lingering/destroyed entry could keep AliveCount above zero and either end
+        // the new round prematurely (miscount) or leave it never-ending. Unsubscribe
+        // each survivor first so we don't double-handle its later death event.
+        foreach (ZombieAgent z in aliveZombies)
+        {
+            if (z != null)
+            {
+                z.OnDeath -= HandleZombieDeath;
+            }
+        }
+        aliveZombies.Clear();
+
         remainingToSpawn = Mathf.Max(0, totalToSpawn);
         roundZombieHealth = Mathf.Max(1, zombieHealth);
         roundZombieSpeed = Mathf.Max(0.1f, zombieSpeed);
