@@ -17,6 +17,20 @@ public class MysteryBox : InteractableBase
     [Tooltip("Require the map power to be on before the box can be used.")]
     public bool requirePower = true;
 
+    // Drag your low poly gun model prefabs into the Weapon Model slot of each entry
+    // here. The weaponModel field on each Weapon entry is what shows in the player's
+    // hands when that weapon is equipped.
+    [Header("Weapon Pool")]
+    [Tooltip("Weapons available from the Mystery Box. Assign weapon stats and the in-hand model for each entry. If left empty, a default pool is used as fallback.")]
+    public List<Weapon> weaponPool = new List<Weapon>();
+
+    // Pre-fill the inspector pool with the default weapons when the component is first
+    // added (or Reset in the inspector) so a designer only needs to drag in the models.
+    private void Reset()
+    {
+        weaponPool = BuildPool();
+    }
+
     // Built-in weapon pool (weaponModel left null is fine; ammo is initialised on grant).
     private static List<Weapon> BuildPool()
     {
@@ -60,7 +74,9 @@ public class MysteryBox : InteractableBase
             return;
         }
 
-        List<Weapon> pool = BuildPool();
+        // Use the inspector-configured pool when one is set; otherwise fall back to the
+        // built-in pool so the box always works even before a designer wires it up.
+        List<Weapon> pool = (weaponPool != null && weaponPool.Count > 0) ? weaponPool : BuildPool();
         Weapon prize = pool[Random.Range(0, pool.Count)];
         wc.GiveWeapon(prize);
         Debug.Log("[MysteryBox] Granted: " + prize.weaponName);
