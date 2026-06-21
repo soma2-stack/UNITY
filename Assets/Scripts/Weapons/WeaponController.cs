@@ -150,14 +150,22 @@ public class WeaponController : MonoBehaviour
             return;
         }
 
+        // Already Pack-a-Punched: never upgrade twice. Uses a dedicated flag rather
+        // than a fragile name-suffix check.
+        if (w.isUpgraded)
+        {
+            return;
+        }
+
         if (!w.weaponName.EndsWith(" +"))
         {
-            w.weaponName += " +";
+            w.weaponName += " +"; // visual marker for the HUD only - not the upgrade gate
         }
         w.damage = Mathf.Max(1, w.damage * 2);
         w.reserveAmmo = Mathf.Max(w.reserveAmmo, w.magazineSize * 5);
         w.ammoInMag = Mathf.Max(0, w.magazineSize);
         w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
+        w.isUpgraded = true;
 
         Debug.Log("[WeaponController] Pack-a-Punched: " + w.weaponName + " (dmg " + w.damage + ")");
     }

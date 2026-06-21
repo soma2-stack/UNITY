@@ -26,6 +26,7 @@ public class Weapon
     // --- Runtime ammo state (not shown in inspector, set up at runtime) ---
     [System.NonSerialized] public int ammoInMag = -1;     // -1 = not yet initialized
     [System.NonSerialized] public int ammoInReserve = -1;
+    [System.NonSerialized] public bool isUpgraded = false; // true once Pack-a-Punched
 
     // Call once before the weapon is first used to seed runtime ammo from the inspector values.
     public void InitAmmo()
