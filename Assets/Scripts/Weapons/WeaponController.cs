@@ -24,6 +24,14 @@ public class WeaponController : MonoBehaviour
     [Tooltip("Optional layers the rays can hit. Leave as Everything to hit all.")]
     public LayerMask hitMask = ~0;
 
+    [Header("Melee / Knife")]
+    [Tooltip("Key to perform an instant-kill knife/melee attack.")]
+    public KeyCode meleeKey = KeyCode.V;
+    [Tooltip("Range of the knife attack in world units.")]
+    public float meleeRange = 2.5f;
+    [Tooltip("Cooldown between knife attacks in seconds.")]
+    public float meleeCooldown = 0.8f;
+
     [Header("Perk Multipliers")]
     [Tooltip("Fire-rate multiplier (Double Tap perk). Higher = faster firing. 1 = normal.")]
     public float fireRateMultiplier = 1f;
@@ -35,6 +43,11 @@ public class WeaponController : MonoBehaviour
     private float nextFireTime;     // Time.time when the next shot is allowed
     private bool isReloading;
     private PlayerHealth playerHealth; // cached on the same GameObject/parent; gates firing while downed/dead
+    private float nextMeleeTime;        // earliest Time.time the next knife is allowed
+    private float knifeSwingEndTime;    // IsKnifing stays true until this time after a swing
+
+    /// <summary>True for a short window while a knife swing is in progress (HUD/animator can react).</summary>
+    public bool IsKnifing { get; private set; }
 
     private Weapon Current =>
         (weapons != null && currentIndex >= 0 && currentIndex < weapons.Count) ? weapons[currentIndex] : null;
@@ -241,6 +254,7 @@ public class WeaponController : MonoBehaviour
 
         HandleWeaponSwitching();
         HandleReloadInput();
+        HandleMelee();
         HandleFiring();
     }
 
@@ -382,6 +396,38 @@ public class WeaponController : MonoBehaviour
         w.Reload();
         isReloading = false;
         Debug.Log("[WeaponController] Reloaded " + w.weaponName + " (" + w.ammoInMag + "/" + w.ammoInReserve + ")");
+    }
+
+    // Instant-kill knife on the melee key: a short raycast that kills any zombie it
+    // hits regardless of health (CoD knife). Rate-limited; blocked while downed/dead.
+    private void HandleMelee()
+    {
+        // Keep IsKnifing true for a brief swing window so the HUD/animator can react.
+        IsKnifing = Time.time < knifeSwingEndTime;
+
+        if (playerHealth != null && (playerHealth.IsDowned || playerHealth.IsDead))
+        {
+            return;
+        }
+
+        if (cam == null || Time.time < nextMeleeTime || !Input.GetKeyDown(meleeKey))
+        {
+            return;
+        }
+
+        nextMeleeTime = Time.time + Mathf.Max(0.05f, meleeCooldown);
+        knifeSwingEndTime = Time.time + 0.2f;
+        IsKnifing = true;
+
+        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, Mathf.Max(0.1f, meleeRange), hitMask, QueryTriggerInteraction.Ignore))
+        {
+            ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
+            if (zombie != null)
+            {
+                zombie.KillByMelee(); // instant kill; ZombieAgent.Die() awards the 130 melee reward
+            }
+        }
+        // Miss or non-zombie: silent (no effect), per spec.
     }
 
     private void HandleFiring()
