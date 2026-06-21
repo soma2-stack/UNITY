@@ -10,6 +10,7 @@ public enum PowerupType
     InstaKill,
     DoublePoints,
     Nuke,
+    Carpenter,
 }
 
 /// <summary>
@@ -42,6 +43,10 @@ public class PowerupManager : MonoBehaviour
     [Header("Nuke")]
     [Tooltip("Bonus points awarded to the player when a Nuke is collected.")]
     public int nukeBonusPoints = 400;
+
+    [Header("Carpenter")]
+    [Tooltip("Bonus points awarded when a Carpenter is collected (boards up barricades in classic CoD).")]
+    public int carpenterBonusPoints = 200;
 
     [Header("Pickup")]
     [Tooltip("Seconds a dropped pickup stays in the world before despawning.")]
@@ -175,6 +180,16 @@ public class PowerupManager : MonoBehaviour
         Powerup.Spawn(type, position, pickupLifetime);
     }
 
+    /// <summary>
+    /// Public entry point to drop a power-up pickup at a world position. Used by systems
+    /// like RoundManager for milestone round-end drops; mirrors the internal random-drop
+    /// path and uses the same <see cref="pickupLifetime"/>.
+    /// </summary>
+    public void SpawnPowerupAt(PowerupType type, Vector3 position)
+    {
+        SpawnPickup(type, position);
+    }
+
     /// <summary>Apply a power-up's effect. Called by a <see cref="Powerup"/> on collect.</summary>
     public void Apply(PowerupType type)
     {
@@ -217,6 +232,17 @@ public class PowerupManager : MonoBehaviour
                 }
                 break;
             }
+
+            case PowerupType.Carpenter:
+            {
+                // No boardable-window system in this project, so Carpenter awards its
+                // classic flat points bonus to the player.
+                if (PlayerPoints.Instance != null && carpenterBonusPoints > 0)
+                {
+                    PlayerPoints.Instance.Add(carpenterBonusPoints);
+                }
+                break;
+            }
         }
 
         Debug.Log("[PowerupManager] Collected power-up: " + type);
@@ -231,6 +257,7 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InstaKill: return "INSTA-KILL";
             case PowerupType.DoublePoints: return "DOUBLE POINTS";
             case PowerupType.Nuke: return "NUKE";
+            case PowerupType.Carpenter: return "CARPENTER";
             default: return type.ToString();
         }
     }
@@ -243,6 +270,7 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InstaKill: return new Color(1f, 0.85f, 0.2f);   // gold
             case PowerupType.DoublePoints: return new Color(1f, 0.3f, 0.3f); // red
             case PowerupType.Nuke: return new Color(0.4f, 1f, 0.4f);         // green
+            case PowerupType.Carpenter: return new Color(0.7f, 0.45f, 0.2f); // wood brown
             default: return Color.white;
         }
     }

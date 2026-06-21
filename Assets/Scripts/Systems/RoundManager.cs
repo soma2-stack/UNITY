@@ -15,6 +15,10 @@ public class RoundManager : MonoBehaviour
     [Tooltip("Spawner that produces this round's zombies. Auto-found if left empty.")]
     public ZombieSpawner spawner;
 
+    [Tooltip("World point where round-end milestone power-ups (Max Ammo / Carpenter) drop. " +
+             "If left unassigned, milestone drops are skipped with a warning.")]
+    public Transform powerupDropPoint;
+
     [Header("Round Pacing")]
     [Tooltip("Round to start on (usually 1).")]
     public int startRound = 1;
@@ -95,10 +99,50 @@ public class RoundManager : MonoBehaviour
                 stateTimer -= Time.deltaTime;
                 if (stateTimer <= 0f)
                 {
+                    // Drop a milestone power-up for the round about to begin, before it starts.
+                    TrySpawnMilestonePowerup(CurrentRound + 1);
                     BeginNextRound();
                 }
                 break;
         }
+    }
+
+    /// <summary>
+    /// Drops a milestone power-up at <see cref="powerupDropPoint"/> for the incoming round:
+    /// Max Ammo every 4th round, Carpenter every 3rd round. When a round satisfies both
+    /// (e.g. round 12) Max Ammo is preferred. Skips with a warning if no drop point or no
+    /// PowerupManager is available - never throws.
+    /// </summary>
+    private void TrySpawnMilestonePowerup(int incomingRound)
+    {
+        PowerupType type;
+        if (incomingRound % 4 == 0)
+        {
+            type = PowerupType.MaxAmmo;   // prefer Max Ammo when both conditions match
+        }
+        else if (incomingRound % 3 == 0)
+        {
+            type = PowerupType.Carpenter;
+        }
+        else
+        {
+            return; // not a milestone round
+        }
+
+        if (powerupDropPoint == null)
+        {
+            Debug.LogWarning("RoundManager: powerupDropPoint is not assigned; skipping round-end power-up drop.");
+            return;
+        }
+
+        if (PowerupManager.Instance == null)
+        {
+            Debug.LogWarning("RoundManager: no PowerupManager in the scene; skipping round-end power-up drop.");
+            return;
+        }
+
+        PowerupManager.Instance.SpawnPowerupAt(type, powerupDropPoint.position);
+        Debug.Log("RoundManager: dropped " + PowerupManager.DisplayName(type) + " for round " + incomingRound);
     }
 
     private void BeginNextRound()
