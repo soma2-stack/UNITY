@@ -17,6 +17,9 @@ public class WeaponController : MonoBehaviour
     [Tooltip("Maximum weapon slots (classic Zombies = 2). When full, GiveWeapon replaces the current slot.")]
     public int maxWeaponSlots = 2;
 
+    [Tooltip("If no weapons are configured, automatically give the classic M1911 starting pistol so the player is never unarmed. Disable to configure weapons manually.")]
+    public bool startWithPistol = true;
+
     [Header("Aiming")]
     [Tooltip("Optional. If left null, Camera.main (then any Camera) is used as the aim ray origin.")]
     public Transform aimCamera;
@@ -235,6 +238,32 @@ public class WeaponController : MonoBehaviour
                     w.InitAmmo();
                 }
             }
+        }
+
+        // Guaranteed starting weapon: if nothing was configured, give the classic
+        // M1911 starting pistol so the player never spawns unarmed.
+        if (startWithPistol && (weapons == null || weapons.Count == 0))
+        {
+            Debug.Log("[WeaponController] No weapons configured — giving default M1911 starting pistol.");
+            if (weapons == null)
+            {
+                weapons = new List<Weapon>();
+            }
+            Weapon m1911 = new Weapon
+            {
+                weaponName = "M1911",
+                damage = 40,
+                fireRate = 3f,
+                automatic = false,
+                range = 80f,
+                spread = 1f,
+                magazineSize = 8,
+                reserveAmmo = 48,
+                reloadTime = 1.8f,
+            };
+            m1911.InitAmmo();
+            weapons.Add(m1911);
+            currentIndex = 0;
         }
 
         // Clamp the starting index and show only the equipped model.
