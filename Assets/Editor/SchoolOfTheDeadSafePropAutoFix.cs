@@ -95,8 +95,6 @@ public static class SchoolOfTheDeadSafePropAutoFix
                 return;
             }
 
-<<<<<<< HEAD
-=======
             Undo.IncrementCurrentGroup();
             int undoGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("Safe Auto Fix School Props");
@@ -273,30 +271,29 @@ public static class SchoolOfTheDeadSafePropAutoFix
             }
         }
 
-            foreach (PropRecord prop in props.Where(prop => !translated.Contains(prop.Root) && IsFloorStanding(prop.Root.name)))
+        foreach (PropRecord prop in props.Where(prop => !translated.Contains(prop.Root) && IsFloorStanding(prop.Root.name)))
+        {
+            // Snap by the gap between the prop's BASE (lowest rendered bound) and the
+            // floor top - NOT the root pivot. These props are centre-pivot primitives,
+            // so snapping the pivot to the floor would bury them half-way into it.
+            float baseGap = prop.VisualBounds.min.y - prop.Room.Floor.bounds.max.y;
+            if (baseGap >= FloorSnapMinimum && baseGap <= FloorSnapMaximum)
             {
-                // Snap by the gap between the prop's BASE (lowest rendered bound) and the
-                // floor top - NOT the root pivot. These props are centre-pivot primitives,
-                // so snapping the pivot to the floor would bury them half-way into it.
-                float baseGap = prop.VisualBounds.min.y - prop.Room.Floor.bounds.max.y;
-                if (baseGap >= FloorSnapMinimum && baseGap <= FloorSnapMaximum)
+                Vector3 delta = Vector3.down * baseGap;
+                Vector3 target = prop.Root.position + delta;
+                Bounds moved = MoveBounds(prop.PhysicalBounds, delta);
+                if (IsInsideRoom(MoveBounds(prop.VisualBounds, delta), prop.Room) && !IntersectsAnyDoor(moved, doorZones))
                 {
-                    Vector3 delta = Vector3.down * baseGap;
-                    Vector3 target = prop.Root.position + delta;
-                    Bounds moved = MoveBounds(prop.PhysicalBounds, delta);
-                    if (IsInsideRoom(MoveBounds(prop.VisualBounds, delta), prop.Room) && !IntersectsAnyDoor(moved, doorZones))
+                    proposals.Add(new FixProposal
                     {
-                        proposals.Add(new FixProposal
-                        {
-                            Kind = FixKind.FloorSnap,
-                            Prop = prop,
-                            Position = target,
-                            Reason = $"Snapped base down {baseGap:0.00} m onto `{prop.Room.Floor.name}`."
-                        });
-                        translated.Add(prop.Root);
-                        prop.PhysicalBounds = MoveBounds(prop.PhysicalBounds, delta);
-                        prop.VisualBounds = MoveBounds(prop.VisualBounds, delta);
-                    }
+                        Kind = FixKind.FloorSnap,
+                        Prop = prop,
+                        Position = target,
+                        Reason = $"Snapped base down {baseGap:0.00} m onto `{prop.Room.Floor.name}`."
+                    });
+                    translated.Add(prop.Root);
+                    prop.PhysicalBounds = MoveBounds(prop.PhysicalBounds, delta);
+                    prop.VisualBounds = MoveBounds(prop.VisualBounds, delta);
                 }
             }
         }
