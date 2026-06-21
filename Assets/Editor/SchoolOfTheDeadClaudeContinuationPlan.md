@@ -63,12 +63,39 @@ This plan records exactly where Codex stopped and what is safe to do next.
 - Do NOT merge anything from the opencode/nemotron scene (it is gutted).
 - Do NOT mass-rerun the furnisher (it rebuilds layouts from scratch and would discard hand-tuning).
 
+## Checkpoint 2 — DONE (obvious prop placement fixes)
+
+Resolved all **4 door-clearance errors** with minimal in-room nudges. Root cause: the courtyard
+"buyable doors" are 24 m-long panels spanning the whole courtyard edge, so their 0.9 m clearance zone
+reaches deep into the courtyard where the bench/planter sat. The janitor crates flanked a narrow closet door.
+
+Moves applied (only `Generated_RoomProps` transforms changed; nothing else touched):
+
+| Prop | Room | Old local pos | New local pos | Move |
+|---|---|---|---|---|
+| `Bench1` | courtyard_east | (-22.75, 0, 38.08) | (-21.0, 0, 38.08) | +1.75 m east into courtyard |
+| `Planter1` | courtyard_west | (-41.3, 0, 37.83) | (-42.5, 0, 37.83) | -1.2 m west into courtyard |
+| `Crate_0` | janitors_closet_2 | (-74.9, 0, -18.37) | (-73.4, 0, -18.37) | +1.5 m east into closet |
+| `Crate_2` | janitors_closet_2 | (-74.9, 0, -12.97) | (-73.4, 0, -12.97) | +1.5 m east into closet |
+
+Verified by re-parsing the scene: every moved prop's full world AABB now clears its door's 0.9 m zone by
+>0.9 m, stays inside its room floor, and stays on the ground (Y unchanged). Scene integrity intact
+(3758 GameObjects, unchanged). The crates land in an empty gap between the west-wall door and the
+east-side shelves/mop bucket — no prop-prop clipping.
+
+**Not touched (still documented warnings, intentionally left):** 5 underground_tunnel props (need a real
+NavMesh test), 2 floating BookCarts (missing wheel geometry), 6 secret-egg books (intentional staging).
+
+> Note: the validator could not be re-run here (no Unity in this environment). The 4 door errors were
+> resolved by direct geometric verification. Re-run `Tools/School Of The Dead/Validate Prop Placement`
+> in Unity to refresh `SchoolOfTheDeadPropValidationResults.md` (expected: 0 errors, ~13 warnings).
+
 ## Suggested next checkpoint
 
-**Checkpoint 2 — obvious prop placement fixes:** resolve the 4 door-clearance errors with minimal in-room
-nudges, re-validate, and report. Everything else stays as-is until later checkpoints.
+**Checkpoint 3 — classrooms & offices:** refine only (rows/aisles, restrained wall dressing). Under-furnished
+targets: `main_office` (1 prop), `west_south_office`, `principal_office`.
 
 ## Working state
 
-- Branch: `claude/school-of-the-dead`. Working tree clean. Project compiles (tools brace-balanced, no markers).
+- Branch: `claude/school-of-the-dead`. Only the scene file changed this checkpoint. Tools compile-clean.
 - Safe to continue.
