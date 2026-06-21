@@ -17,6 +17,8 @@ public class PlayerMovement : MonoBehaviour
     public float gravity = -19.62f; // Snappy, heavy gravity
     public float jumpHeight = 1.2f;
     public float airControl = 0.35f;
+    [Tooltip("Speed multiplier applied while downed (crawl). 0.4 = 40% of walk speed.")]
+    public float downedSpeedMultiplier = 0.4f;
 
     [Header("Crouch Settings")]
     public KeyCode crouchKey = KeyCode.LeftControl;
@@ -41,6 +43,8 @@ public class PlayerMovement : MonoBehaviour
     private float stepTimer;
     private bool isGrounded;
     private bool isCrouching;
+    private bool isDowned;
+    private PlayerHealth playerHealth;
 
     public bool IsGrounded => isGrounded;
     public bool IsCrouching => isCrouching;
@@ -63,6 +67,42 @@ public class PlayerMovement : MonoBehaviour
             standingCameraLocalPosition = playerCamera.localPosition;
             crouchingCameraLocalPosition = standingCameraLocalPosition;
             crouchingCameraLocalPosition.y -= (standingHeight - crouchHeight) * 0.5f;
+        }
+
+        // Cache player health (same GameObject) and react to down/revive so we can
+        // apply CoD-authentic crawl movement and restricted view while downed.
+        playerHealth = GetComponent<PlayerHealth>();
+        if (playerHealth != null)
+        {
+            playerHealth.OnPlayerDowned += HandleDowned;
+            playerHealth.OnPlayerRevived += HandleRevived;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (playerHealth != null)
+        {
+            playerHealth.OnPlayerDowned -= HandleDowned;
+            playerHealth.OnPlayerRevived -= HandleRevived;
+        }
+    }
+
+    private void HandleDowned()
+    {
+        isDowned = true;
+        if (codCamera != null)
+        {
+            codCamera.SetDownedView(true);
+        }
+    }
+
+    private void HandleRevived()
+    {
+        isDowned = false;
+        if (codCamera != null)
+        {
+            codCamera.SetDownedView(false);
         }
     }
 
@@ -91,7 +131,9 @@ public class PlayerMovement : MonoBehaviour
 
         // Rotate the camera up and down (Pitch)
         cameraPitch -= mouseY;
-        cameraPitch = Mathf.Clamp(cameraPitch, -90f, 90f); // Stops you from breaking your neck
+        // While downed the view pitch is restricted to +/-20 degrees (crawl view).
+        float pitchLimit = isDowned ? 20f : 90f;
+        cameraPitch = Mathf.Clamp(cameraPitch, -pitchLimit, pitchLimit);
         playerCamera.localEulerAngles = Vector3.right * cameraPitch;
 
         // Rotate the player body left and right (Yaw)
@@ -115,10 +157,15 @@ public class PlayerMovement : MonoBehaviour
         // Calculate direction relative to where the player is looking
         Vector3 move = transform.right * MoveInput.x + transform.forward * MoveInput.y;
 
-        bool wantsToSprint = Input.GetKey(KeyCode.LeftShift) && MoveInput.y > 0.1f && !isCrouching;
+        bool wantsToSprint = Input.GetKey(KeyCode.LeftShift) && MoveInput.y > 0.1f && !isCrouching && !isDowned;
         CurrentSpeed = isCrouching ? crouchSpeed : wantsToSprint ? sprintSpeed : walkSpeed;
         // Stamin-Up: scale the resulting speed (guard against negatives).
         CurrentSpeed *= Mathf.Max(0f, speedMultiplier);
+        // Downed: force a slow crawl - no sprint, ignore perks - at ~40% of walk speed.
+        if (isDowned)
+        {
+            CurrentSpeed = walkSpeed * Mathf.Max(0f, downedSpeedMultiplier);
+        }
 
         if (!isGrounded)
         {
@@ -129,7 +176,7 @@ public class PlayerMovement : MonoBehaviour
         controller.Move(move * CurrentSpeed * Time.deltaTime);
 
         // Handle Jumping
-        if (Input.GetButtonDown("Jump") && isGrounded && !isCrouching)
+        if (Input.GetButtonDown("Jump") && isGrounded && !isCrouching && !isDowned)
         {
             velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
         }

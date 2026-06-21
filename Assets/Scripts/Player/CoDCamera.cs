@@ -12,6 +12,8 @@ public class CoDCamera : MonoBehaviour
     public bool invertY = false;
     public float minimumPitch = -85f;
     public float maximumPitch = 85f;
+    [Tooltip("Pitch limit (+/- degrees) while the player is downed. CoD restricts the crawl view.")]
+    public float downedPitchLimit = 20f;
 
     [Header("Aim Down Sights (ADS)")]
     [Tooltip("Standard Field of View (CoD often uses 90+ for Zombies)")]
@@ -30,6 +32,7 @@ public class CoDCamera : MonoBehaviour
     private float xRotation = 0f;
     private Camera cam;
     private bool cursorLocked;
+    private bool downedView; // when true, pitch is clamped to +/-downedPitchLimit
 
     public bool IsAiming { get; private set; }
 
@@ -70,8 +73,11 @@ public class CoDCamera : MonoBehaviour
         // Calculate vertical rotation
         xRotation += invertY ? mouseY : -mouseY;
 
-        // Clamp the vertical looking angle so the player can't snap their neck
-        xRotation = Mathf.Clamp(xRotation, minimumPitch, maximumPitch);
+        // Clamp the vertical looking angle so the player can't snap their neck.
+        // While downed the view is restricted to a tight +/-downedPitchLimit crawl view.
+        float lo = downedView ? -downedPitchLimit : minimumPitch;
+        float hi = downedView ? downedPitchLimit : maximumPitch;
+        xRotation = Mathf.Clamp(xRotation, lo, hi);
 
         // Apply vertical rotation to the camera itself
         transform.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
@@ -104,6 +110,16 @@ public class CoDCamera : MonoBehaviour
     public void SetSensitivity(float sensitivity)
     {
         mouseSensitivity = Mathf.Max(1f, sensitivity);
+    }
+
+    /// <summary>
+    /// Toggle the restricted downed (crawl) view. While enabled the camera pitch is
+    /// clamped to +/-downedPitchLimit; disabling restores the normal pitch range.
+    /// Driven by PlayerMovement on PlayerHealth down/revive.
+    /// </summary>
+    public void SetDownedView(bool downed)
+    {
+        downedView = downed;
     }
 
     private void SetCursorLocked(bool locked)
