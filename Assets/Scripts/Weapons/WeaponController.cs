@@ -96,7 +96,9 @@ public class WeaponController : MonoBehaviour
         StopAllCoroutines();
         isReloading = false;
 
-        int slotCap = Mathf.Max(1, maxWeaponSlots);
+        // Mule Kick raises the carry cap by ExtraWeaponSlots (read dynamically).
+        int extra = PerkManager.Instance != null ? PerkManager.Instance.ExtraWeaponSlots : 0;
+        int slotCap = Mathf.Max(1, maxWeaponSlots + extra);
         if (weapons.Count < slotCap)
         {
             weapons.Add(weapon);
@@ -142,6 +144,38 @@ public class WeaponController : MonoBehaviour
         w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
 
         Debug.Log("[WeaponController] Pack-a-Punched: " + w.weaponName + " (dmg " + w.damage + ")");
+    }
+
+    /// <summary>
+    /// Called when the player loses Mule Kick. If they are over the base slot cap
+    /// (i.e. carrying the extra Mule Kick weapon), drop the most recently acquired
+    /// weapon (the last slot): hide its model, null it, and trim the list back down
+    /// to maxWeaponSlots. Re-clamps the equipped index afterwards.
+    /// </summary>
+    public void RemoveExtraWeaponSlot()
+    {
+        if (weapons == null)
+        {
+            return;
+        }
+
+        int baseCap = Mathf.Max(1, maxWeaponSlots);
+        while (weapons.Count > baseCap)
+        {
+            int last = weapons.Count - 1;
+            Weapon w = weapons[last];
+            if (w != null && w.weaponModel != null)
+            {
+                w.weaponModel.SetActive(false);
+            }
+            weapons[last] = null;
+            weapons.RemoveAt(last);
+        }
+
+        currentIndex = weapons.Count > 0 ? Mathf.Clamp(currentIndex, 0, weapons.Count - 1) : 0;
+        StopAllCoroutines();
+        isReloading = false;
+        EquipCurrent();
     }
 
     /// <summary>Refill magazine and reserve ammo for every weapon (Max Ammo power-up).</summary>

@@ -212,11 +212,10 @@ public class PerkManager : MonoBehaviour
                 break;
 
             case PerkType.MuleKick:
-                // Allow one extra weapon slot. Stored as a flag others can read.
+                // Allow one extra weapon slot. WeaponController.GiveWeapon reads
+                // ExtraWeaponSlots to raise the carry cap; RemoveExtraWeaponSlot()
+                // trims it back down if the perk is later lost.
                 ExtraWeaponSlots = 1;
-                // TODO: a full weapon-pickup / loadout system should read
-                // ExtraWeaponSlots to let the player carry one additional weapon
-                // (WeaponController.weapons currently has no purchase/pickup flow).
                 break;
         }
     }
