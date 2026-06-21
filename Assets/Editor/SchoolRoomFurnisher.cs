@@ -71,6 +71,7 @@ public static class SchoolRoomFurnisher
         Janitor,
         Utility,
         Courtyard,
+        Hallway,
     }
 
     // Authoritative room -> type table (stairs / parking_lot deliberately excluded).
@@ -138,6 +139,19 @@ public static class SchoolRoomFurnisher
         ("courtyard_east", RoomType.Courtyard),
         ("courtyard_west", RoomType.Courtyard),
         ("courtyard_fountain", RoomType.Courtyard),
+
+        // HALLWAYS (wall-biased dressing only; center lanes kept clear)
+        ("cafeteria_west_hallway", RoomType.Hallway),
+        ("hallway", RoomType.Hallway),
+        ("lower_hallway_east", RoomType.Hallway),
+        ("lower_hallway_south", RoomType.Hallway),
+        ("south_end_hallway", RoomType.Hallway),
+        ("south_office_hallway", RoomType.Hallway),
+        ("upper_hallway_north", RoomType.Hallway),
+        ("gym_north_hallway", RoomType.Hallway),
+        ("upper_hallway", RoomType.Hallway),
+        ("upper_hallway_2", RoomType.Hallway),
+        ("upper_hallway_3", RoomType.Hallway),
     };
 
     // --- Shared materials (created once per run) ----------------------------
@@ -241,6 +255,21 @@ public static class SchoolRoomFurnisher
     public static void FurnishCafeteriaOnly()
     {
         RefreshRoomsInPlace(new[] { "cafeteria" }, "Cafeteria");
+    }
+
+    // Refurnishes the gym (adds floor mats/cones to the existing bleachers/lockers,
+    // center kept open for combat) and dresses every hallway with wall-biased lockers.
+    // Stairwells are intentionally excluded and never touched.
+    [MenuItem("Tools/School Of The Dead/Furnish Gym & Hallways (Safe)")]
+    public static void FurnishGymAndHallwaysOnly()
+    {
+        RefreshRoomsInPlace(new[]
+        {
+            "gym",
+            "cafeteria_west_hallway", "hallway", "lower_hallway_east", "lower_hallway_south",
+            "south_end_hallway", "south_office_hallway", "upper_hallway_north", "gym_north_hallway",
+            "upper_hallway", "upper_hallway_2", "upper_hallway_3",
+        }, "Gym & Hallways");
     }
 
     /// <summary>
@@ -421,6 +450,7 @@ public static class SchoolRoomFurnisher
             case RoomType.Janitor: FurnishStorage(ctx, janitor: true); break;
             case RoomType.Utility: FurnishUtility(ctx); break;
             case RoomType.Courtyard: FurnishCourtyard(ctx); break;
+            case RoomType.Hallway: FurnishHallway(ctx); break;
         }
     }
 
@@ -694,6 +724,50 @@ public static class SchoolRoomFurnisher
                 PlaceAt(ctx, x, z, 0.9f, 0.6f, p => MakeMat(ctx, p, "Mat" + i));
             else
                 PlaceAt(ctx, x, z, 0.18f, 0.18f, p => MakeCone(ctx, p, "Cone" + i));
+        }
+    }
+
+    /// <summary>
+    /// Wall-biased hallway dressing: a row of lockers (with the occasional trash can)
+    /// tucked tight against BOTH long walls, leaving the center lane completely clear.
+    /// Every placement is Fits()-checked, so props never sit in a doorway or outside the
+    /// room, and the compact footprints keep the walkway open for the player and zombies.
+    /// Stairwells are deliberately NOT in the room table, so they are never furnished.
+    /// </summary>
+    private static void FurnishHallway(RoomContext ctx)
+    {
+        bool longX = ctx.SizeX >= ctx.SizeZ;
+        float longMin = longX ? ctx.MinX : ctx.MinZ;
+        float longMax = longX ? ctx.MaxX : ctx.MaxZ;
+
+        // The two long walls (extremes of the SHORT axis) and the yaw that faces a
+        // prop's front into the hallway from each.
+        float wallA = longX ? ctx.MinZ : ctx.MinX; // south / west
+        float wallB = longX ? ctx.MaxZ : ctx.MaxX; // north / east
+        float yawA = YawFromDir(InwardNormal(longX ? Wall.South : Wall.West));
+        float yawB = YawFromDir(InwardNormal(longX ? Wall.North : Wall.East));
+
+        // Don't dress a hallway so narrow that wall lockers would pinch the lane.
+        // Inner short size must leave >= 1.5 m of clear center between two 0.3 m props.
+        float innerShort = longX ? ctx.SizeZ : ctx.SizeX;
+        if (innerShort - 2f * 0.6f < 1.5f) return;
+
+        const float step = 2.6f;
+        int i = 0;
+        for (float t = longMin + 1.0f; t <= longMax - 1.0f; t += step)
+        {
+            for (int side = 0; side < 2; side++)
+            {
+                float wallCoord = side == 0 ? wallA : wallB;
+                float yaw = side == 0 ? yawA : yawB;
+                float x = longX ? t : wallCoord;
+                float z = longX ? wallCoord : t;
+
+                bool placed = (i % 6 == 5)
+                    ? PlaceAt(ctx, x, z, 0.25f, 0.25f, p => MakeTrashCan(ctx, p, $"TrashCan_{i}"))
+                    : PlaceAt(ctx, x, z, 0.30f, 0.30f, p => MakeLocker(ctx, p, yaw, $"Locker_{i}"));
+                if (placed) i++;
+            }
         }
     }
 

@@ -142,13 +142,41 @@ Code changes:
 > Cafeteria (Safe, Cafeteria Only)** once to add the dining tables/benches/trash to the cafeteria in
 > place. (Kitchen needs nothing.)
 
+## Checkpoint 5 — DONE (gym, hallways, stairs)
+
+**Stairs:** stairwells (`east_stairwell`, `stairwell`, `stairwell_2`) are deliberately NOT in the furnisher's
+room table, so nothing is ever placed on or near them. Left completely untouched — correct.
+
+**Gym (32 × 24 m):** the current `FurnishGym` already builds bleachers + locker bank + 2 benches + floor
+mats/cones; the live scene only had the first 4 (older pass), so refurnishing in place adds the missing
+edge mats/cones while keeping the large center open for combat. No gym code change needed.
+
+**Hallways:** measured all 11 — they are 5.6–8.0 m wide. Added wall-biased dressing that keeps the lane open:
+- New `RoomType.Hallway` + `FurnishHallway`: a row of lockers (with the occasional trash can) tucked tight
+  against BOTH long walls. Locker centers sit 0.8 m off the wall with a 0.3 m half-footprint, so a 5.6 m
+  hallway keeps a ~3.4 m clear center lane. Every placement is `Fits()`-checked (auto-skips doorways and
+  stays in-room), and a width guard refuses to dress any hallway too narrow to keep ≥1.5 m of lane.
+- Registered all 11 hallways in the room table and added a `Hallway` case to `Dispatch`.
+- New menu `Tools ▸ School Of The Dead ▸ Furnish Gym & Hallways (Safe)` refurnishes the gym + all
+  hallways in place, leaving every other room untouched.
+
+> ACTION REQUIRED IN UNITY: code-only again. Click **Tools ▸ School Of The Dead ▸ Furnish Gym & Hallways
+> (Safe)** once to dress the gym and hallways in place.
+
 ## Suggested next checkpoint
 
-**Checkpoint 5 — gym, hallways, stairs:** gym has only 4 props (under-dressed); hallways are empty and need
-wall-biased dressing (lockers/signs/benches) without blocking center lanes; stairs must stay clear.
+**Checkpoint 6 — full validation + final summary.** After running the three safe furnish menus (Offices,
+Cafeteria, Gym & Hallways) in Unity, run `Validate Prop Placement` and write the final summary.
 
 ## Working state
 
-- Branch: `claude/school-of-the-dead`. CP4 changed `SchoolRoomFurnisher.cs` only (code; scene untouched).
-  Brace-balanced (233/233), new menus verified.
+- Branch: `claude/school-of-the-dead`. CP5 changed `SchoolRoomFurnisher.cs` only (code; scene untouched).
+  Brace-balanced (240/240); all new pieces and reused builders verified present.
 - Safe to continue.
+
+## Pending in-Unity actions (run once each, any order)
+
+1. `Furnish Offices (Safe, Offices Only)` — furnishes main_office + principal_office
+2. `Furnish Cafeteria (Safe, Cafeteria Only)` — adds cafeteria dining tables/benches/trash
+3. `Furnish Gym & Hallways (Safe)` — dresses gym edges + all hallway walls
+4. `Validate Prop Placement` — refresh the results file (expect 0 errors)
