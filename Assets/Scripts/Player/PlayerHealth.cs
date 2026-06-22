@@ -300,7 +300,8 @@ public class PlayerHealth : MonoBehaviour
             label = "Health: " + CurrentHealth + " / " + maxHealth;
         }
 
-        // Drawn slightly lower so it sits under a points display (PlayerPoints).
-        GUI.Label(new Rect(10, 30, 320, 24), label);
+        // Bottom-left, clear of GameHud's top-left player-point rows and the
+        // bottom-right weapon/ammo readout.
+        GUI.Label(new Rect(10, Screen.height - 30f, 320, 24), label);
     }
 }

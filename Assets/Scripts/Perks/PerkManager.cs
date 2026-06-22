@@ -49,6 +49,10 @@ public class PerkManager : MonoBehaviour
              "(it drives the solo self-revive). Turn off for co-op so any perk can be lost.")]
     public bool SoloMode = true;
 
+    [Header("Limits")]
+    [Tooltip("Max simultaneous perks (classic base Zombies = 4). Set 0 for unlimited.")]
+    public int maxPerks = 4;
+
     /// <summary>Raised whenever the owned-perk set changes.</summary>
     public event Action OnPerksChanged;
 
@@ -150,6 +154,14 @@ public class PerkManager : MonoBehaviour
     {
         if (ownedPerks.Contains(perk))
         {
+            return false;
+        }
+
+        // Classic Zombies caps how many perks you can hold at once (4 in the base
+        // game). maxPerks <= 0 means unlimited. PerkMachine refunds when this fails.
+        if (maxPerks > 0 && ownedPerks.Count >= maxPerks)
+        {
+            Debug.Log("[PerkManager] Perk limit reached (" + maxPerks + "); cannot buy " + perk + ".");
             return false;
         }
 
