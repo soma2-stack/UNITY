@@ -14,7 +14,7 @@ public class PlayerMovement : MonoBehaviour
     public float crouchSpeed = 2.5f;
     [Tooltip("Speed multiplier applied to all movement (Stamin-Up perk). 1 = normal.")]
     public float speedMultiplier = 1f;
-    public float gravity = -19.62f; // Snappy, heavy gravity
+    public float gravity = -19.62f;
     public float jumpHeight = 1.2f;
     public float airControl = 0.35f;
     [Tooltip("Speed multiplier applied while downed (crawl). 0.4 = 40% of walk speed.")]
@@ -32,6 +32,11 @@ public class PlayerMovement : MonoBehaviour
     public float sprintStepInterval = 0.35f;
     public float crouchStepInterval = 0.75f;
     [Range(0f, 1f)] public float footstepVolume = 0.45f;
+
+    // ── NEW ──────────────────────────────────────────────────────────────────
+    [Header("Animation")]
+    public Animator animator;
+    // ─────────────────────────────────────────────────────────────────────────
 
     private CharacterController controller;
     private CoDCamera codCamera;
@@ -53,10 +58,9 @@ public class PlayerMovement : MonoBehaviour
 
     void Start()
     {
-        // Lock the mouse cursor to the center of the screen and hide it
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
-        
+
         controller = GetComponent<CharacterController>();
         standingHeight = controller.height;
         originalControllerCenter = controller.center;
@@ -69,8 +73,6 @@ public class PlayerMovement : MonoBehaviour
             crouchingCameraLocalPosition.y -= (standingHeight - crouchHeight) * 0.5f;
         }
 
-        // Cache player health (same GameObject) and react to down/revive so we can
-        // apply CoD-authentic crawl movement and restricted view while downed.
         playerHealth = GetComponent<PlayerHealth>();
         if (playerHealth != null)
         {
@@ -91,27 +93,19 @@ public class PlayerMovement : MonoBehaviour
     private void HandleDowned()
     {
         isDowned = true;
-        if (codCamera != null)
-        {
-            codCamera.SetDownedView(true);
-        }
+        if (codCamera != null) codCamera.SetDownedView(true);
     }
 
     private void HandleRevived()
     {
         isDowned = false;
-        if (codCamera != null)
-        {
-            codCamera.SetDownedView(false);
-        }
+        if (codCamera != null) codCamera.SetDownedView(false);
     }
 
     void Update()
     {
         if (codCamera == null || !codCamera.enabled)
-        {
             HandleMouseLook();
-        }
 
         HandleCrouch();
         HandleMovement();
@@ -120,70 +114,55 @@ public class PlayerMovement : MonoBehaviour
 
     void HandleMouseLook()
     {
-        if (playerCamera == null)
-        {
-            return;
-        }
+        if (playerCamera == null) return;
 
-        // Get raw mouse input
         float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
         float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
 
-        // Rotate the camera up and down (Pitch)
         cameraPitch -= mouseY;
-        // While downed the view pitch is restricted to +/-20 degrees (crawl view).
         float pitchLimit = isDowned ? 20f : 90f;
         cameraPitch = Mathf.Clamp(cameraPitch, -pitchLimit, pitchLimit);
         playerCamera.localEulerAngles = Vector3.right * cameraPitch;
 
-        // Rotate the player body left and right (Yaw)
         transform.Rotate(Vector3.up * mouseX);
     }
 
     void HandleMovement()
     {
-        // Check if touching the floor
         isGrounded = controller.isGrounded;
         if (isGrounded && velocity.y < 0)
-        {
-            velocity.y = -2f; // Force player flush against the ground
-        }
+            velocity.y = -2f;
 
-        // Get WASD input
         float x = Input.GetAxis("Horizontal");
         float z = Input.GetAxis("Vertical");
         MoveInput = Vector2.ClampMagnitude(new Vector2(x, z), 1f);
 
-        // Calculate direction relative to where the player is looking
         Vector3 move = transform.right * MoveInput.x + transform.forward * MoveInput.y;
 
         bool wantsToSprint = Input.GetKey(KeyCode.LeftShift) && MoveInput.y > 0.1f && !isCrouching && !isDowned;
         CurrentSpeed = isCrouching ? crouchSpeed : wantsToSprint ? sprintSpeed : walkSpeed;
-        // Stamin-Up: scale the resulting speed (guard against negatives).
         CurrentSpeed *= Mathf.Max(0f, speedMultiplier);
-        // Downed: force a slow crawl - no sprint, ignore perks - at ~40% of walk speed.
         if (isDowned)
-        {
             CurrentSpeed = walkSpeed * Mathf.Max(0f, downedSpeedMultiplier);
-        }
 
         if (!isGrounded)
-        {
             move *= airControl;
-        }
 
-        // Move the player
         controller.Move(move * CurrentSpeed * Time.deltaTime);
 
-        // Handle Jumping
         if (Input.GetButtonDown("Jump") && isGrounded && !isCrouching && !isDowned)
-        {
             velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
-        }
 
-        // Apply gravity
         velocity.y += gravity * Time.deltaTime;
         controller.Move(velocity * Time.deltaTime);
+
+        // ── NEW ──────────────────────────────────────────────────────────────
+        if (animator != null)
+        {
+            animator.SetFloat("MoveX", MoveInput.x);
+            animator.SetFloat("MoveZ", MoveInput.y);
+        }
+        // ─────────────────────────────────────────────────────────────────────
     }
 
     private void HandleCrouch()
@@ -207,10 +186,7 @@ public class PlayerMovement : MonoBehaviour
 
     private void HandleFootsteps()
     {
-        if (footstepSource == null || footstepClips == null || footstepClips.Length == 0)
-        {
-            return;
-        }
+        if (footstepSource == null || footstepClips == null || footstepClips.Length == 0) return;
 
         bool isMoving = MoveInput.sqrMagnitude > 0.01f;
         if (!isGrounded || !isMoving)
@@ -219,16 +195,11 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        // Compare against the multiplier-scaled sprint speed so Stamin-Up doesn't
-        // make every step register as a sprint step.
         float sprintThreshold = sprintSpeed * Mathf.Max(0f, speedMultiplier) - 0.1f;
         float interval = isCrouching ? crouchStepInterval : CurrentSpeed >= sprintThreshold ? sprintStepInterval : walkStepInterval;
         stepTimer += Time.deltaTime;
 
-        if (stepTimer < interval)
-        {
-            return;
-        }
+        if (stepTimer < interval) return;
 
         stepTimer = 0f;
         AudioClip clip = footstepClips[Random.Range(0, footstepClips.Length)];
