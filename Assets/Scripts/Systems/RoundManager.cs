@@ -34,14 +34,15 @@ public class RoundManager : MonoBehaviour
     public int zombiesPerRound = 2;
     [Tooltip("Hard ceiling on how many zombies a single round can spawn (CoD caps at 24).")]
     public int maxZombiesPerRound = 24;
-    [Tooltip("Round 1 base health (default 150). Per-round scaling is handled by an " +
-             "exponential formula (x1.1 per round through round 9, then x1.5 per round); " +
-             "zombiesPerRound affects only the COUNT, not health.")]
+    [Tooltip("Round 1 base health (default 150). Rounds 1-9 add healthPerRound each; " +
+             "round 10+ ramps multiplicatively so late rounds stay hard.")]
     public int baseZombieHealth = 150;
+    [Tooltip("Health added per round during rounds 1-9 (R1=150, R2=200, ...).")]
+    public int healthPerRound = 50;
     [Tooltip("Base zombie speed in round 1.")]
     public float baseZombieSpeed = 3.0f;
     [Tooltip("Speed added per round, up to maxZombieSpeed.")]
-    public float speedPerRound = 0.15f;
+    public float speedPerRound = 0.1f;
     [Tooltip("Hard cap on zombie speed so late rounds stay fair.")]
     public float maxZombieSpeed = 6.0f;
 
@@ -187,20 +188,22 @@ public class RoundManager : MonoBehaviour
     }
 
     /// <summary>
-    /// CoD-authentic exponential zombie health for the given round:
-    ///   rounds 1-9: baseZombieHealth * 1.1^(round-1)
-    ///   rounds 10+: baseZombieHealth * 1.1^9 * 1.5^(round-9)  (steeper post-9 ramp)
-    /// Rounded to the nearest integer and clamped to a sane range.
+    /// Zombie health for the given round:
+    ///   rounds 1-9 : baseZombieHealth + (round-1) * healthPerRound   (R1=150, R2=200, ...)
+    ///   rounds 10+ : the round-9 value ramped x1.1 per round          (keeps late rounds hard)
+    /// Rounded to the nearest integer and clamped so it can't overflow int.
     /// </summary>
     private int CalculateZombieHealth(int round)
     {
         round = Mathf.Max(1, round);
 
-        double health = round <= 9
-            ? baseZombieHealth * System.Math.Pow(1.1, round - 1)
-            : baseZombieHealth * System.Math.Pow(1.1, 9) * System.Math.Pow(1.5, round - 9);
+        if (round <= 9)
+        {
+            return Mathf.Max(1, baseZombieHealth + (round - 1) * healthPerRound);
+        }
 
-        // Round to nearest int; clamp so extreme late rounds can't overflow int.
+        int round9Health = baseZombieHealth + 8 * healthPerRound;
+        double health = round9Health * System.Math.Pow(1.1, round - 9);
         double rounded = System.Math.Round(System.Math.Min(health, int.MaxValue));
         return Mathf.Max(1, (int)rounded);
     }
