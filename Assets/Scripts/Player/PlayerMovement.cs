@@ -33,10 +33,8 @@ public class PlayerMovement : MonoBehaviour
     public float crouchStepInterval = 0.75f;
     [Range(0f, 1f)] public float footstepVolume = 0.45f;
 
-    // ── NEW ──────────────────────────────────────────────────────────────────
     [Header("Animation")]
     public Animator animator;
-    // ─────────────────────────────────────────────────────────────────────────
 
     private CharacterController controller;
     private CoDCamera codCamera;
@@ -56,6 +54,12 @@ public class PlayerMovement : MonoBehaviour
     public Vector2 MoveInput { get; private set; }
     public float CurrentSpeed { get; private set; }
 
+    private static readonly int MoveXHash = Animator.StringToHash("MoveX");
+    private static readonly int MoveZHash = Animator.StringToHash("MoveZ");
+    private static readonly int IsMovingHash = Animator.StringToHash("IsMoving");
+    private static readonly int IsSprintingHash = Animator.StringToHash("IsSprinting");
+    private static readonly int JumpHash = Animator.StringToHash("Jump");
+
     void Start()
     {
         Cursor.lockState = CursorLockMode.Locked;
@@ -64,6 +68,9 @@ public class PlayerMovement : MonoBehaviour
         controller = GetComponent<CharacterController>();
         standingHeight = controller.height;
         originalControllerCenter = controller.center;
+
+        if (animator == null)
+            animator = GetComponentInChildren<Animator>();
 
         if (playerCamera != null)
         {
@@ -130,18 +137,23 @@ public class PlayerMovement : MonoBehaviour
     void HandleMovement()
     {
         isGrounded = controller.isGrounded;
+
         if (isGrounded && velocity.y < 0)
             velocity.y = -2f;
 
         float x = Input.GetAxis("Horizontal");
         float z = Input.GetAxis("Vertical");
+
         MoveInput = Vector2.ClampMagnitude(new Vector2(x, z), 1f);
 
         Vector3 move = transform.right * MoveInput.x + transform.forward * MoveInput.y;
 
+        bool isMoving = MoveInput.sqrMagnitude > 0.01f;
         bool wantsToSprint = Input.GetKey(KeyCode.LeftShift) && MoveInput.y > 0.1f && !isCrouching && !isDowned;
+
         CurrentSpeed = isCrouching ? crouchSpeed : wantsToSprint ? sprintSpeed : walkSpeed;
         CurrentSpeed *= Mathf.Max(0f, speedMultiplier);
+
         if (isDowned)
             CurrentSpeed = walkSpeed * Mathf.Max(0f, downedSpeedMultiplier);
 
@@ -150,19 +162,32 @@ public class PlayerMovement : MonoBehaviour
 
         controller.Move(move * CurrentSpeed * Time.deltaTime);
 
+        bool jumpedThisFrame = false;
+
         if (Input.GetButtonDown("Jump") && isGrounded && !isCrouching && !isDowned)
+        {
             velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
+            jumpedThisFrame = true;
+        }
 
         velocity.y += gravity * Time.deltaTime;
         controller.Move(velocity * Time.deltaTime);
 
-        // ── NEW ──────────────────────────────────────────────────────────────
-        if (animator != null)
-        {
-            animator.SetFloat("MoveX", MoveInput.x);
-            animator.SetFloat("MoveZ", MoveInput.y);
-        }
-        // ─────────────────────────────────────────────────────────────────────
+        UpdateAnimator(isMoving, wantsToSprint, jumpedThisFrame);
+    }
+
+    private void UpdateAnimator(bool isMoving, bool isSprinting, bool jumpedThisFrame)
+    {
+        if (animator == null)
+            return;
+
+        animator.SetFloat(MoveXHash, MoveInput.x);
+        animator.SetFloat(MoveZHash, MoveInput.y);
+        animator.SetBool(IsMovingHash, isMoving);
+        animator.SetBool(IsSprintingHash, isSprinting);
+
+        if (jumpedThisFrame)
+            animator.SetTrigger(JumpHash);
     }
 
     private void HandleCrouch()
@@ -189,6 +214,7 @@ public class PlayerMovement : MonoBehaviour
         if (footstepSource == null || footstepClips == null || footstepClips.Length == 0) return;
 
         bool isMoving = MoveInput.sqrMagnitude > 0.01f;
+
         if (!isGrounded || !isMoving)
         {
             stepTimer = 0f;
@@ -197,11 +223,13 @@ public class PlayerMovement : MonoBehaviour
 
         float sprintThreshold = sprintSpeed * Mathf.Max(0f, speedMultiplier) - 0.1f;
         float interval = isCrouching ? crouchStepInterval : CurrentSpeed >= sprintThreshold ? sprintStepInterval : walkStepInterval;
+
         stepTimer += Time.deltaTime;
 
         if (stepTimer < interval) return;
 
         stepTimer = 0f;
+
         AudioClip clip = footstepClips[Random.Range(0, footstepClips.Length)];
         footstepSource.PlayOneShot(clip, footstepVolume);
     }
