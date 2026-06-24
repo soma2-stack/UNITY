@@ -34,6 +34,17 @@ public class CoDMovement : MonoBehaviour
         controller = GetComponent<CharacterController>();
     }
 
+    void Awake()
+    {
+        // PlayerMovement is the real controller used by the game. If both end up on
+        // the same player they would fight over CharacterController.Move every frame,
+        // so this legacy mover defers and disables itself when PlayerMovement is present.
+        if (GetComponent<PlayerMovement>() != null)
+        {
+            enabled = false;
+        }
+    }
+
     void Update()
     {
         HandleMovement();
@@ -58,8 +69,12 @@ public class CoDMovement : MonoBehaviour
 
     private void HandleJumpAndGravity()
     {
-        // Creates a tiny invisible sphere at the feet to check for the Ground layer
-        isGrounded = Physics.CheckSphere(groundCheck.position, groundDistance, groundMask);
+        // Creates a tiny invisible sphere at the feet to check for the Ground layer.
+        // Falls back to the controller's own grounded check if no groundCheck is wired
+        // (prevents a NullReferenceException on an unconfigured prefab).
+        isGrounded = groundCheck != null
+            ? Physics.CheckSphere(groundCheck.position, groundDistance, groundMask)
+            : controller.isGrounded;
 
         // Reset gravity accumulation if we are standing on the floor
         if (isGrounded && velocity.y < 0)
