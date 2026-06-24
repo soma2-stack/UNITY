@@ -551,6 +551,7 @@ public class WeaponController : MonoBehaviour
             ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
             if (zombie != null)
             {
+                HitMarkerHud.Show(); // flash the center hit marker on a confirmed zombie hit
                 bool isHeadshot = hit.collider.CompareTag("Head");
                 // Insta-Kill power-up: any hit is lethal. Otherwise use the weapon's
                 // damage, cut to a quarter (min 1) while the player is downed - the
