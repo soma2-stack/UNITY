@@ -434,6 +434,18 @@ public class WeaponController : MonoBehaviour
                 w.weaponModel.SetActive(i == currentIndex);
             }
         }
+
+        // Re-bind the recoil/muzzle/sound script to the now-equipped weapon so kickback,
+        // muzzle flash and gunshot audio follow weapon switches. Prefer the equipped
+        // weapon's own model; fall back to a shared rig elsewhere on the player.
+        Weapon cur = Current;
+        gunRecoil = (cur != null && cur.weaponModel != null)
+            ? cur.weaponModel.GetComponentInChildren<SimpleGunRecoil>(true)
+            : null;
+        if (gunRecoil == null)
+        {
+            gunRecoil = GetComponentInChildren<SimpleGunRecoil>(true);
+        }
     }
 
     private void HandleReloadInput()
