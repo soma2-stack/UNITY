@@ -35,6 +35,12 @@ public class WeaponController : MonoBehaviour
     [Tooltip("Cooldown between knife attacks in seconds.")]
     public float meleeCooldown = 0.8f;
 
+    [Header("Hit Feedback")]
+    [Tooltip("Optional blood/hit particle prefab, spawned at the impact point only when a ZombieAgent is shot. Leave empty for no blood.")]
+    public GameObject bloodHitEffect;
+    [Tooltip("Seconds before a spawned blood effect is destroyed (1-2 is typical).")]
+    public float bloodEffectLifetime = 1.5f;
+
     [Header("Perk Multipliers")]
     [Tooltip("Fire-rate multiplier (Double Tap perk). Higher = faster firing. 1 = normal.")]
     public float fireRateMultiplier = 1f;
@@ -559,6 +565,19 @@ public class WeaponController : MonoBehaviour
             if (zombie != null)
             {
                 HitMarkerHud.Show(); // flash the center hit marker on a confirmed zombie hit
+
+                // Optional blood/hit effect at the impact point, oriented to the surface
+                // normal. Only spawned on a zombie hit (walls/floors/props fall to the
+                // else branch below). No-op when no prefab is assigned.
+                if (bloodHitEffect != null)
+                {
+                    Quaternion fxRot = hit.normal.sqrMagnitude > 0.0001f
+                        ? Quaternion.LookRotation(hit.normal)
+                        : Quaternion.identity;
+                    GameObject fx = Instantiate(bloodHitEffect, hit.point, fxRot);
+                    Destroy(fx, Mathf.Max(0.1f, bloodEffectLifetime));
+                }
+
                 bool isHeadshot = hit.collider.CompareTag("Head");
                 // Insta-Kill power-up: any hit is lethal. Otherwise use the weapon's
                 // damage, cut to a quarter (min 1) while the player is downed - the
