@@ -245,7 +245,7 @@ public class PlayerHealth : MonoBehaviour
         BleedOutRemaining = Mathf.Max(0f, BleedOutRemaining - Time.deltaTime);
 
         // Quick Revive: solo self-revive after a short delay (null-safe if no PerkManager).
-        if (PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.QuickRevive))
+        if (PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RescueRush))
         {
             float downedFor = Time.time - downedAtTime;
             if (downedFor >= Mathf.Max(0f, quickReviveSelfReviveDelay))
@@ -290,7 +290,7 @@ public class PlayerHealth : MonoBehaviour
         }
         else if (IsDowned)
         {
-            bool quickRevive = PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.QuickRevive);
+            bool quickRevive = PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RescueRush);
             label = quickRevive
                 ? "DOWNED - reviving... (" + BleedOutRemaining.ToString("0") + "s)"
                 : "DOWNED - bleeding out: " + BleedOutRemaining.ToString("0") + "s";

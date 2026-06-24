@@ -602,6 +602,11 @@ public class WeaponController : MonoBehaviour
                 else
                 {
                     damage = w.damage;
+                    if (PerkManager.Instance != null &&
+                        PerkManager.Instance.HasPerk(PerkType.RapidRuin))
+                    {
+                        damage = Mathf.RoundToInt(damage * 2f);
+                    }
                     if (playerHealth != null && playerHealth.IsDownedGunActive)
                     {
                         damage = Mathf.Max(1, damage / 4);

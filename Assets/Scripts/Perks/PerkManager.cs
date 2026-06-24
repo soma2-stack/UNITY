@@ -194,7 +194,7 @@ public class PerkManager : MonoBehaviour
 
         switch (perk)
         {
-            case PerkType.Juggernog:
+            case PerkType.VitalBoost:
                 // Raise max health and heal to full.
                 if (playerHealth != null)
                 {
@@ -202,33 +202,33 @@ public class PerkManager : MonoBehaviour
                 }
                 break;
 
-            case PerkType.SpeedCola:
+            case PerkType.ClipKick:
                 if (weaponController != null)
                 {
                     weaponController.reloadSpeedMultiplier = Mathf.Max(0.01f, speedColaReloadMultiplier);
                 }
                 break;
 
-            case PerkType.DoubleTap:
+            case PerkType.RapidRuin:
                 if (weaponController != null)
                 {
                     weaponController.fireRateMultiplier = Mathf.Max(0.01f, doubleTapFireRateMultiplier);
                 }
                 break;
 
-            case PerkType.StaminUp:
+            case PerkType.SprintSurge:
                 if (playerMovement != null)
                 {
                     playerMovement.speedMultiplier = Mathf.Max(0.01f, staminUpSpeedMultiplier);
                 }
                 break;
 
-            case PerkType.QuickRevive:
+            case PerkType.RescueRush:
                 // No stat to set here - PlayerHealth queries HasPerk(QuickRevive)
                 // each frame while downed to allow a solo self-revive.
                 break;
 
-            case PerkType.MuleKick:
+            case PerkType.ArmoryAmp:
                 // Allow one extra weapon slot. WeaponController.GiveWeapon reads
                 // ExtraWeaponSlots to raise the carry cap; RemoveExtraWeaponSlot()
                 // trims it back down if the perk is later lost.
@@ -254,7 +254,7 @@ public class PerkManager : MonoBehaviour
         List<PerkType> pool = new List<PerkType>();
         foreach (PerkType p in ownedPerks)
         {
-            if (SoloMode && p == PerkType.QuickRevive)
+            if (SoloMode && p == PerkType.RescueRush)
             {
                 continue;
             }
@@ -280,39 +280,39 @@ public class PerkManager : MonoBehaviour
 
         switch (perk)
         {
-            case PerkType.Juggernog:
+            case PerkType.VitalBoost:
                 if (playerHealth != null)
                 {
                     playerHealth.SetMaxHealth(100, false); // back to base max, don't heal
                 }
                 break;
 
-            case PerkType.SpeedCola:
+            case PerkType.ClipKick:
                 if (weaponController != null)
                 {
                     weaponController.reloadSpeedMultiplier = 1f;
                 }
                 break;
 
-            case PerkType.DoubleTap:
+            case PerkType.RapidRuin:
                 if (weaponController != null)
                 {
                     weaponController.fireRateMultiplier = 1f;
                 }
                 break;
 
-            case PerkType.StaminUp:
+            case PerkType.SprintSurge:
                 if (playerMovement != null)
                 {
                     playerMovement.speedMultiplier = 1f;
                 }
                 break;
 
-            case PerkType.QuickRevive:
+            case PerkType.RescueRush:
                 // No stat to revert.
                 break;
 
-            case PerkType.MuleKick:
+            case PerkType.ArmoryAmp:
                 ExtraWeaponSlots = 0;
                 if (weaponController != null)
                 {
@@ -379,12 +379,12 @@ public class PerkManager : MonoBehaviour
     {
         switch (perk)
         {
-            case PerkType.Juggernog:   return new Color(0.85f, 0.15f, 0.15f); // red
-            case PerkType.SpeedCola:   return new Color(0.20f, 0.70f, 0.25f); // green
-            case PerkType.DoubleTap:   return new Color(0.95f, 0.75f, 0.15f); // amber
-            case PerkType.QuickRevive: return new Color(0.20f, 0.55f, 0.95f); // blue
-            case PerkType.StaminUp:    return new Color(0.95f, 0.50f, 0.10f); // orange
-            case PerkType.MuleKick:    return new Color(0.55f, 0.30f, 0.75f); // purple
+            case PerkType.VitalBoost:   return new Color(0.85f, 0.15f, 0.15f); // red
+            case PerkType.ClipKick:   return new Color(0.20f, 0.70f, 0.25f); // green
+            case PerkType.RapidRuin:   return new Color(0.95f, 0.75f, 0.15f); // amber
+            case PerkType.RescueRush: return new Color(0.20f, 0.55f, 0.95f); // blue
+            case PerkType.SprintSurge:    return new Color(0.95f, 0.50f, 0.10f); // orange
+            case PerkType.ArmoryAmp:    return new Color(0.55f, 0.30f, 0.75f); // purple
             default:                   return Color.gray;
         }
     }
@@ -394,12 +394,12 @@ public class PerkManager : MonoBehaviour
     {
         switch (perk)
         {
-            case PerkType.Juggernog:   return "Jugg";
-            case PerkType.SpeedCola:   return "Speed";
-            case PerkType.DoubleTap:   return "2Tap";
-            case PerkType.QuickRevive: return "Revive";
-            case PerkType.StaminUp:    return "Stamin";
-            case PerkType.MuleKick:    return "Mule";
+            case PerkType.VitalBoost:   return "Vital";
+            case PerkType.ClipKick:   return "Clip";
+            case PerkType.RapidRuin:   return "Rapid";
+            case PerkType.RescueRush: return "Rescue";
+            case PerkType.SprintSurge:    return "Sprint";
+            case PerkType.ArmoryAmp:    return "Armory";
             default:                   return perk.ToString();
         }
     }
@@ -409,12 +409,12 @@ public class PerkManager : MonoBehaviour
     {
         switch (perk)
         {
-            case PerkType.Juggernog:   return "Juggernog";
-            case PerkType.SpeedCola:   return "Speed Cola";
-            case PerkType.DoubleTap:   return "Double Tap";
-            case PerkType.QuickRevive: return "Quick Revive";
-            case PerkType.StaminUp:    return "Stamin-Up";
-            case PerkType.MuleKick:    return "Mule Kick";
+            case PerkType.VitalBoost:   return "Vital Boost";
+            case PerkType.ClipKick:   return "Clip Kick";
+            case PerkType.RapidRuin:   return "Rapid Ruin";
+            case PerkType.RescueRush: return "Rescue Rush";
+            case PerkType.SprintSurge:    return "Sprint Surge";
+            case PerkType.ArmoryAmp:    return "Armory Amp";
             default:                   return perk.ToString();
         }
     }
@@ -424,12 +424,12 @@ public class PerkManager : MonoBehaviour
     {
         switch (perk)
         {
-            case PerkType.QuickRevive: return 500;
-            case PerkType.DoubleTap:   return 2000;
-            case PerkType.StaminUp:    return 2000;
-            case PerkType.Juggernog:   return 2500;
-            case PerkType.SpeedCola:   return 3000;
-            case PerkType.MuleKick:    return 4000;
+            case PerkType.RescueRush: return 500;
+            case PerkType.RapidRuin:   return 2000;
+            case PerkType.SprintSurge:    return 2000;
+            case PerkType.VitalBoost:   return 2500;
+            case PerkType.ClipKick:   return 3000;
+            case PerkType.ArmoryAmp:    return 4000;
             default:                   return 2000;
         }
     }

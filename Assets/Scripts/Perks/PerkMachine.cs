@@ -18,7 +18,7 @@ public class PerkMachine : MonoBehaviour
 {
     [Header("Perk")]
     [Tooltip("Which perk this machine sells.")]
-    public PerkType perk = PerkType.Juggernog;
+    public PerkType perk = PerkType.VitalBoost;
     [Tooltip("Cost in points. Defaults follow the classic prices (see PerkManager.DefaultCost).")]
     public int cost = 2500;
 
