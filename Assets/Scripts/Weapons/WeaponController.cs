@@ -48,6 +48,7 @@ public class WeaponController : MonoBehaviour
     private PlayerHealth playerHealth; // cached on the same GameObject/parent; gates firing while downed/dead
     private float nextMeleeTime;        // earliest Time.time the next knife is allowed
     private float knifeSwingEndTime;    // IsKnifing stays true until this time after a swing
+    private SimpleGunRecoil gunRecoil;  // Optional FPS gun kickback script found on child weapon model
 
     /// <summary>True for a short window while a knife swing is in progress (HUD/animator can react).</summary>
     public bool IsKnifing { get; private set; }
@@ -249,6 +250,7 @@ public class WeaponController : MonoBehaviour
     void Start()
     {
         ResolveCamera();
+        gunRecoil = GetComponentInChildren<SimpleGunRecoil>();
 
         // Cache the player's health (same GameObject or a parent) so we can block
         // firing/switching while downed or dead, and cancel reloads on the way down.
@@ -534,6 +536,11 @@ public class WeaponController : MonoBehaviour
         if (!w.ConsumeRound())
         {
             return;
+        }
+
+        if (gunRecoil != null)
+        {
+            gunRecoil.Kick();
         }
 
         // Apply random spread inside a cone around the camera forward direction.
