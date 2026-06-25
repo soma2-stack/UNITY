@@ -28,6 +28,49 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     private Action backAction;
     private MultiplayerSessionController session;
 
+    // Minimum connected players required before the host can start the match.
+    private const int MinimumPlayersToStart = 2;
+    private const string WaitingMessage = "WAITING FOR 1 MORE SURVIVOR";
+
+#if UNITY_EDITOR
+    // Editor-only manual override for solo testing. Leave false; it is compiled out of
+    // real builds entirely, so a shipped game can never start a one-player match.
+    private bool editorAllowSoloStart = false;
+#endif
+
+    // Count of connected survivors currently in the roster.
+    private int ConnectedPlayerCount()
+    {
+        if (session == null)
+        {
+            return 0;
+        }
+
+        int connected = 0;
+        foreach (RosterEntry entry in session.Roster)
+        {
+            if (entry.connected)
+            {
+                connected++;
+            }
+        }
+        return connected;
+    }
+
+    // True only when enough connected players are present to start (>= 2),
+    // with an editor-only solo override for local testing.
+    private bool HasEnoughPlayersToStart()
+    {
+        int connected = ConnectedPlayerCount();
+#if UNITY_EDITOR
+        if (editorAllowSoloStart && connected >= 1)
+        {
+            return true;
+        }
+#endif
+        return connected >= MinimumPlayersToStart;
+    }
+
     public static GameObject Create(Transform parent, Action onBack)
     {
         GameObject root = CreateUiObject("Online Co-op Overlay", parent);
@@ -93,6 +136,19 @@ public sealed class MultiplayerMenuController : MonoBehaviour
 
     private async void StartMatch()
     {
+        // Safety net: never let the host start a match without enough survivors,
+        // even if the button somehow gets clicked while it should be disabled.
+        if (!HasEnoughPlayersToStart())
+        {
+            Debug.Log("Match start blocked: not enough players");
+            if (statusText != null)
+            {
+                statusText.text = WaitingMessage;
+                statusText.color = WarmColor;
+            }
+            return;
+        }
+
         await session.StartMatchAsync();
     }
 
@@ -296,13 +352,30 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         bool inLobby = state == MultiplayerSessionState.Lobby;
         bool offline = state == MultiplayerSessionState.Offline || state == MultiplayerSessionState.Failed;
 
-        statusText.text = state.ToString().ToUpperInvariant();
         statusText.color = state == MultiplayerSessionState.Failed ? ErrorColor : WarmColor;
         hostButton.interactable = offline && !busy;
         joinButton.interactable = offline && !busy;
         displayNameInput.interactable = offline && !busy;
         joinCodeInput.interactable = offline && !busy;
-        startButton.gameObject.SetActive(inLobby && session != null && session.IsHost);
+
+        // START MATCH: visible to the host in the lobby, but only clickable once there
+        // are at least MinimumPlayersToStart connected survivors. While the host waits
+        // alone, surface the "WAITING FOR 1 MORE SURVIVOR" hint in the status line.
+        bool hostInLobby = inLobby && session != null && session.IsHost;
+        bool enoughPlayers = HasEnoughPlayersToStart();
+        startButton.gameObject.SetActive(hostInLobby);
+        startButton.interactable = hostInLobby && enoughPlayers;
+
+        if (hostInLobby && !enoughPlayers)
+        {
+            statusText.text = WaitingMessage;
+            statusText.color = WarmColor;
+        }
+        else
+        {
+            statusText.text = state.ToString().ToUpperInvariant();
+        }
+
         copyButton.gameObject.SetActive(inLobby && session != null && session.IsHost);
         leaveButton.gameObject.SetActive(inLobby);
         reconnectButton.gameObject.SetActive(state == MultiplayerSessionState.Failed && session != null && session.CanReconnect);
@@ -311,6 +384,19 @@ public sealed class MultiplayerMenuController : MonoBehaviour
 
     private void HandleRosterChanged(System.Collections.Generic.IReadOnlyList<RosterEntry> entries)
     {
+        int connected = 0;
+        if (entries != null)
+        {
+            foreach (RosterEntry entry in entries)
+            {
+                if (entry.connected)
+                {
+                    connected++;
+                }
+            }
+        }
+        Debug.Log("Roster count changed: " + connected + " connected players");
+
         for (int index = 0; index < rosterTexts.Length; index++)
         {
             if (index < entries.Count)
@@ -325,6 +411,13 @@ public sealed class MultiplayerMenuController : MonoBehaviour
                 rosterTexts[index].text = $"{index + 1}. EMPTY";
                 rosterTexts[index].color = new Color(TextColor.r, TextColor.g, TextColor.b, 0.45f);
             }
+        }
+
+        // Re-evaluate the START MATCH gate now that the connected count may have changed
+        // (e.g. enable it the moment a second survivor joins).
+        if (session != null)
+        {
+            Refresh(session.State);
         }
     }
 
