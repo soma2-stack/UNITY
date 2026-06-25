@@ -1,3 +1,4 @@
+// ✅ WEAPONS AUDIT FIXES
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -19,6 +20,23 @@ public class WeaponController : MonoBehaviour
 
     [Tooltip("If no weapons are configured, automatically give the classic M1911 starting pistol so the player is never unarmed. Disable to configure weapons manually.")]
     public bool startWithPistol = true;
+
+    [Header("Default Starting Weapon")]
+    [Tooltip("Stats for the pistol handed out when startWithPistol is true and no weapons are " +
+             "configured. Editable here instead of being hardcoded. Use the component's Reset to " +
+             "restore the classic M1911 values.")]
+    public Weapon defaultPistol = new Weapon
+    {
+        weaponName = "M1911",
+        damage = 40,
+        fireRate = 3f,
+        automatic = false,
+        range = 80f,
+        spread = 1f,
+        magazineSize = 8,
+        reserveAmmo = 48,
+        reloadTime = 1.8f,
+    };
 
     [Header("Aiming")]
     [Tooltip("Optional. If left null, Camera.main (then any Camera) is used as the aim ray origin.")]
@@ -55,6 +73,13 @@ public class WeaponController : MonoBehaviour
     private float nextMeleeTime;        // earliest Time.time the next knife is allowed
     private float knifeSwingEndTime;    // IsKnifing stays true until this time after a swing
     private SimpleGunRecoil gunRecoil;  // Optional FPS gun kickback script found on child weapon model
+    private int _cameraResolveAttempts;  // capped retries so we stop searching for a missing camera
+    private readonly Queue<GameObject> _bloodPool = new Queue<GameObject>(); // pooled blood-effect instances
+
+    // Pack-a-Punch upgrade multipliers — adjust here rather than hunting magic numbers.
+    private const float PAPDamageMultiplier = 2f;
+    private const float PAPFireRateMultiplier = 1.5f;
+    private const int PAPReserveMinMagazines = 5;
 
     /// <summary>True for a short window while a knife swing is in progress (HUD/animator can react).</summary>
     public bool IsKnifing { get; private set; }
@@ -144,7 +169,9 @@ public class WeaponController : MonoBehaviour
         }
 
         EquipCurrent();
+#if UNITY_EDITOR
         Debug.Log("[WeaponController] Gave weapon: " + weapon.weaponName);
+#endif
     }
 
     /// <summary>
@@ -171,14 +198,16 @@ public class WeaponController : MonoBehaviour
         {
             w.weaponName += " +"; // visual marker for the HUD only - not the upgrade gate
         }
-        w.damage = Mathf.Max(1, w.damage * 2);
-        w.fireRate = w.fireRate * 1.33f;
-        w.reserveAmmo = Mathf.Max(w.reserveAmmo, w.magazineSize * 5);
+        w.damage = Mathf.Max(1, Mathf.RoundToInt(w.damage * PAPDamageMultiplier));
+        w.fireRate = w.fireRate * PAPFireRateMultiplier;
+        w.reserveAmmo = Mathf.Max(w.reserveAmmo, w.magazineSize * PAPReserveMinMagazines);
         w.ammoInMag = Mathf.Max(0, w.magazineSize);
         w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
         w.isUpgraded = true;
 
+#if UNITY_EDITOR
         Debug.Log("[WeaponController] Pack-a-Punched: " + w.weaponName + " (dmg " + w.damage + ")");
+#endif
     }
 
     /// <summary>
@@ -254,7 +283,9 @@ public class WeaponController : MonoBehaviour
             w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
         }
 
+#if UNITY_EDITOR
         Debug.Log("[WeaponController] Max Ammo: all weapons refilled.");
+#endif
     }
 
     void Start()
@@ -282,16 +313,21 @@ public class WeaponController : MonoBehaviour
             }
         }
 
-        // Guaranteed starting weapon: if nothing was configured, give the classic
-        // M1911 starting pistol so the player never spawns unarmed.
+        // Guaranteed starting weapon: if nothing was configured, give the inspector-
+        // configurable default pistol so the player never spawns unarmed.
         if (startWithPistol && (weapons == null || weapons.Count == 0))
         {
-            Debug.Log("[WeaponController] No weapons configured — giving default M1911 starting pistol.");
+#if UNITY_EDITOR
+            Debug.Log("[WeaponController] No weapons configured — giving default starting pistol.");
+#endif
             if (weapons == null)
             {
                 weapons = new List<Weapon>();
             }
-            Weapon m1911 = new Weapon
+
+            // Use the serialized defaultPistol; fall back to a hardcoded M1911 only if
+            // it was cleared in the inspector so the player is never unarmed.
+            Weapon pistol = defaultPistol ?? new Weapon
             {
                 weaponName = "M1911",
                 damage = 40,
@@ -303,8 +339,8 @@ public class WeaponController : MonoBehaviour
                 reserveAmmo = 48,
                 reloadTime = 1.8f,
             };
-            m1911.InitAmmo();
-            weapons.Add(m1911);
+            pistol.InitAmmo();
+            weapons.Add(pistol);
             currentIndex = 0;
         }
 
@@ -314,11 +350,42 @@ public class WeaponController : MonoBehaviour
             currentIndex = Mathf.Clamp(currentIndex, 0, weapons.Count - 1);
         }
         EquipCurrent();
+
+        // Pre-warm the blood-effect pool so the first hits don't hitch on Instantiate.
+        if (bloodHitEffect != null)
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                GameObject fx = Instantiate(bloodHitEffect);
+                fx.SetActive(false);
+                _bloodPool.Enqueue(fx);
+            }
+        }
+    }
+
+    // Editor-only: give a freshly added (or reset) component the classic M1911
+    // starting-pistol defaults so scenes get the correct starting gun automatically.
+    private void Reset()
+    {
+        defaultPistol = new Weapon
+        {
+            weaponName = "M1911",
+            damage = 40,
+            fireRate = 3f,
+            automatic = false,
+            range = 80f,
+            spread = 1f,
+            magazineSize = 8,
+            reserveAmmo = 48,
+            reloadTime = 1.8f,
+        };
     }
 
     void Update()
     {
-        if (cam == null)
+        // Retry resolving the camera only a capped number of times so a permanently
+        // missing camera doesn't trigger an expensive scene search every frame.
+        if (cam == null && _cameraResolveAttempts < 10)
         {
             ResolveCamera();
         }
@@ -335,6 +402,7 @@ public class WeaponController : MonoBehaviour
         if (aimCamera != null)
         {
             cam = aimCamera;
+            _cameraResolveAttempts = 0;
             return;
         }
 
@@ -347,6 +415,16 @@ public class WeaponController : MonoBehaviour
         if (main != null)
         {
             cam = main.transform;
+            _cameraResolveAttempts = 0;
+            return;
+        }
+
+        // No camera this attempt: count it, and after 10 tries warn once and stop
+        // retrying (Update gates further calls on this counter).
+        _cameraResolveAttempts++;
+        if (_cameraResolveAttempts >= 10)
+        {
+            Debug.LogWarning("WeaponController: No camera found after 10 attempts — firing disabled.");
         }
     }
 
@@ -469,7 +547,9 @@ public class WeaponController : MonoBehaviour
     private IEnumerator ReloadRoutine(Weapon w)
     {
         isReloading = true;
+#if UNITY_EDITOR
         Debug.Log("[WeaponController] Reloading " + w.weaponName + "...");
+#endif
 
         // Speed Cola: shorten the reload wait (guard against zero/negative multiplier).
         float reloadMul = Mathf.Max(0.01f, reloadSpeedMultiplier);
@@ -478,7 +558,9 @@ public class WeaponController : MonoBehaviour
         // Only refill if this is still the equipped weapon (switch cancels via StopAllCoroutines).
         w.Reload();
         isReloading = false;
+#if UNITY_EDITOR
         Debug.Log("[WeaponController] Reloaded " + w.weaponName + " (" + w.ammoInMag + "/" + w.ammoInReserve + ")");
+#endif
     }
 
     // Instant-kill knife on the melee key: a short raycast that kills any zombie it
@@ -558,6 +640,44 @@ public class WeaponController : MonoBehaviour
         Fire(w);
     }
 
+    // Reuse a pooled blood-effect instance (re-activating it) or instantiate a fresh
+    // one when the pool is empty. Caller positions it before use.
+    private GameObject GetBloodEffect()
+    {
+        GameObject fx = null;
+        while (_bloodPool.Count > 0 && fx == null)
+        {
+            // Skip any pooled entry destroyed externally (e.g. scene teardown).
+            fx = _bloodPool.Dequeue();
+        }
+
+        if (fx == null)
+        {
+            fx = Instantiate(bloodHitEffect);
+        }
+
+        fx.SetActive(true);
+        return fx;
+    }
+
+    // Deactivate a finished blood effect and return it to the pool for reuse.
+    private void ReturnBloodEffect(GameObject fx)
+    {
+        if (fx == null)
+        {
+            return;
+        }
+        fx.SetActive(false);
+        _bloodPool.Enqueue(fx);
+    }
+
+    // Returns the effect to the pool after bloodEffectLifetime instead of destroying it.
+    private IEnumerator ReturnBloodEffectAfterDelay(GameObject fx)
+    {
+        yield return new WaitForSeconds(Mathf.Max(0.1f, bloodEffectLifetime));
+        ReturnBloodEffect(fx);
+    }
+
     private void Fire(Weapon w)
     {
         if (!w.ConsumeRound())
@@ -569,6 +689,10 @@ public class WeaponController : MonoBehaviour
         {
             gunRecoil.Kick();
         }
+
+        // TODO: add a pelletsPerShot loop here to support shotgun multi-pellet firing.
+        // Each pellet should use independent spread and its own raycast, awarding hit
+        // points per pellet. Extract single-pellet logic into FirePellet(Weapon w) helper.
 
         // Apply random spread inside a cone around the camera forward direction.
         Vector3 dir = cam.forward;
@@ -595,8 +719,9 @@ public class WeaponController : MonoBehaviour
                     Quaternion fxRot = hit.normal.sqrMagnitude > 0.0001f
                         ? Quaternion.LookRotation(hit.normal)
                         : Quaternion.identity;
-                    GameObject fx = Instantiate(bloodHitEffect, hit.point, fxRot);
-                    Destroy(fx, Mathf.Max(0.1f, bloodEffectLifetime));
+                    GameObject fx = GetBloodEffect();
+                    fx.transform.SetPositionAndRotation(hit.point, fxRot);
+                    StartCoroutine(ReturnBloodEffectAfterDelay(fx));
                 }
 
                 bool isHeadshot = hit.collider.CompareTag("Head");
@@ -629,6 +754,7 @@ public class WeaponController : MonoBehaviour
                     // POINTS OWNERSHIP: ZombieAgent owns the entire economy now -
                     // TakeDamage() awards the +10 hit and Die() awards the kill
                     // bonus. WeaponController only logs so points never double-count.
+#if UNITY_EDITOR
                     if (zombie.IsDead)
                     {
                         Debug.Log($"[WeaponController] Killed zombie '{hit.collider.name}' {(isHeadshot ? "(HEADSHOT)" : "")} for {damage} damage.");
@@ -637,16 +763,21 @@ public class WeaponController : MonoBehaviour
                     {
                         Debug.Log($"[WeaponController] Hit zombie '{hit.collider.name}' for {damage} damage.");
                     }
+#endif
                 }
             }
             else
             {
+#if UNITY_EDITOR
                 Debug.Log("[WeaponController] Hit '" + hit.collider.name + "' at " + hit.point + ".");
+#endif
             }
         }
         else
         {
+#if UNITY_EDITOR
             Debug.Log("[WeaponController] Shot missed (no hit within " + w.range + "m).");
+#endif
         }
     }
 
