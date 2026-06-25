@@ -41,6 +41,8 @@ public class PlayerHealth : MonoBehaviour
     [Range(0f, 1f)] public float reviveHealthFraction = 1f;
     [Tooltip("Delay (seconds) before a Quick Revive solo self-revive completes once downed.")]
     public float quickReviveSelfReviveDelay = 3f;
+    [Tooltip("If true the player is in solo mode and RescueRush self-revives. In multiplayer this is handled by the revive interaction script.")]
+    public bool isSoloMode = true;
 
     [Header("UI")]
     [Tooltip("Draw a lightweight OnGUI health label/bar in the top-left corner.")]
@@ -245,7 +247,10 @@ public class PlayerHealth : MonoBehaviour
         BleedOutRemaining = Mathf.Max(0f, BleedOutRemaining - Time.deltaTime);
 
         // Quick Revive: solo self-revive after a short delay (null-safe if no PerkManager).
-        if (PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RescueRush))
+        // Multiplayer: revive speed bonus is handled in the
+        // revive interaction script, not here.
+        if (isSoloMode && PerkManager.Instance != null &&
+            PerkManager.Instance.HasPerk(PerkType.RescueRush))
         {
             float downedFor = Time.time - downedAtTime;
             if (downedFor >= Mathf.Max(0f, quickReviveSelfReviveDelay))
