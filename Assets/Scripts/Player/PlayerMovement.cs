@@ -193,6 +193,22 @@ public class PlayerMovement : MonoBehaviour
     private void HandleCrouch()
     {
         bool wantsToCrouch = Input.GetKey(crouchKey) || Input.GetKey(KeyCode.C);
+
+        // Releasing crouch: don't stand up if there's something directly above.
+        if (!wantsToCrouch && isCrouching)
+        {
+            bool ceilingBlocked = Physics.SphereCast(
+                transform.position + controller.center,
+                controller.radius * 0.9f,
+                Vector3.up,
+                out _,
+                (standingHeight - crouchHeight) * 0.5f + 0.05f,
+                ~0,
+                QueryTriggerInteraction.Ignore);
+
+            if (ceilingBlocked) wantsToCrouch = true;
+        }
+
         isCrouching = wantsToCrouch;
 
         float targetHeight = isCrouching ? crouchHeight : standingHeight;
