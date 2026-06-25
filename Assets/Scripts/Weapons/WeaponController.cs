@@ -678,6 +678,26 @@ public class WeaponController : MonoBehaviour
         ReturnBloodEffect(fx);
     }
 
+    // Routes zombie damage to the correct authority: solo or the server apply it
+    // directly; a client in a networked session forwards the hit to the server via its
+    // owned NetworkPlayerAvatar so health/points stay server-authoritative.
+    private void ApplyZombieDamage(ZombieAgent zombie, int damage, bool isHeadshot)
+    {
+        Unity.Netcode.NetworkManager nm = Unity.Netcode.NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || nm.IsServer)
+        {
+            zombie.TakeDamage(damage, isHeadshot);
+            return;
+        }
+
+        Unity.Netcode.NetworkObject netObj = zombie.GetComponent<Unity.Netcode.NetworkObject>();
+        NetworkPlayerAvatar avatar = GetComponentInParent<NetworkPlayerAvatar>();
+        if (netObj != null && netObj.IsSpawned && avatar != null)
+        {
+            avatar.RequestZombieDamage(netObj.NetworkObjectId, damage, isHeadshot);
+        }
+    }
+
     private void Fire(Weapon w)
     {
         if (!w.ConsumeRound())
@@ -747,7 +767,7 @@ public class WeaponController : MonoBehaviour
                     }
                 }
                 bool wasAlive = !zombie.IsDead;
-                zombie.TakeDamage(damage, isHeadshot);
+                ApplyZombieDamage(zombie, damage, isHeadshot);
                 
                 if (wasAlive)
                 {

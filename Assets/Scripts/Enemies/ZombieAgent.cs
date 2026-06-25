@@ -1,3 +1,5 @@
+using System.Collections;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -100,8 +102,28 @@ public class ZombieAgent : MonoBehaviour
         CacheAnimatorParams();
     }
 
+    // --- Authority (multiplayer) ---
+    private static bool NetworkActive =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+    private static bool IsServerRole =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer;
+    /// <summary>True in solo, or on the server in a networked session.</summary>
+    private bool HasAuthority => !NetworkActive || IsServerRole;
+
     private void Start()
     {
+        // In a networked session only the SERVER runs zombie AI. Clients let the
+        // NetworkTransform drive the body and disable the agent/AI so it doesn't fight.
+        if (NetworkActive && !IsServerRole)
+        {
+            if (agent != null)
+            {
+                agent.enabled = false;
+            }
+            enabled = false;
+            return;
+        }
+
         ApplyAgentSpeed();
         AcquirePlayer();
     }
@@ -263,7 +285,9 @@ public class ZombieAgent : MonoBehaviour
     /// </summary>
     public void TakeDamage(int amount, bool isHeadshot = false)
     {
-        if (isDead || amount <= 0)
+        // Server-authoritative: in a session, clients route damage to the server
+        // (see WeaponController) so only the authority mutates health/awards points.
+        if (!HasAuthority || isDead || amount <= 0)
         {
             return;
         }
@@ -365,7 +389,27 @@ public class ZombieAgent : MonoBehaviour
             c.enabled = false;
         }
 
-        Destroy(gameObject, Mathf.Max(0f, deathDestroyDelay));
+        float despawnDelay = Mathf.Max(0f, deathDestroyDelay);
+        NetworkObject netObj = NetworkActive ? GetComponent<NetworkObject>() : null;
+        if (netObj != null && netObj.IsSpawned)
+        {
+            // Networked: keep the body briefly for the death anim, then despawn across
+            // the network (only the server ever reaches Die()).
+            StartCoroutine(DespawnAfter(netObj, despawnDelay));
+        }
+        else
+        {
+            Destroy(gameObject, despawnDelay);
+        }
+    }
+
+    private IEnumerator DespawnAfter(NetworkObject netObj, float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (netObj != null && netObj.IsSpawned)
+        {
+            netObj.Despawn(true);
+        }
     }
 
     private void ApplyAgentSpeed()

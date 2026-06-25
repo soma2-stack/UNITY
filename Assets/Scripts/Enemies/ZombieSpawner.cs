@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -73,6 +74,14 @@ public class ZombieSpawner : MonoBehaviour
 
     private void Update()
     {
+        // Server-authoritative spawning: clients never spawn zombies locally
+        // (the replicated NetworkObjects arrive from the server instead).
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening &&
+            !NetworkManager.Singleton.IsServer)
+        {
+            return;
+        }
+
         if (!roundActive)
         {
             return;
@@ -170,6 +179,18 @@ public class ZombieSpawner : MonoBehaviour
         zombie.Configure(roundZombieHealth, roundZombieSpeed);
         zombie.OnDeath += HandleZombieDeath;
         aliveZombies.Add(zombie);
+
+        // Networked session: replicate the zombie to all clients (only the server
+        // reaches here). The prefab must have a NetworkObject + be a registered
+        // network prefab. No-op in solo.
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            NetworkObject netObj = obj.GetComponent<NetworkObject>();
+            if (netObj != null && !netObj.IsSpawned)
+            {
+                netObj.Spawn(true);
+            }
+        }
 
         remainingToSpawn--;
     }

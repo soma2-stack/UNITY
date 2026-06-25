@@ -321,6 +321,16 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         config.ConnectionApproval = true;
         config.EnableSceneManagement = true;
         config.PlayerPrefab = Resources.Load<GameObject>("NetworkPlayer");
+
+        // Register the networked zombie so the server can spawn it and clients can
+        // replicate it. Put the networked zombie at Assets/Resources/NetworkZombie.prefab
+        // (NetworkObject + NetworkTransform + ZombieAgent). No-op if it isn't present.
+        GameObject networkZombie = Resources.Load<GameObject>("NetworkZombie");
+        if (networkZombie != null && networkZombie.GetComponent<NetworkObject>() != null)
+        {
+            networkManager.AddNetworkPrefab(networkZombie);
+        }
+
         networkManager.ConnectionApprovalCallback = ApproveConnection;
     }
 

@@ -59,6 +59,30 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
     public string DisplayName => displayName.Value.ToString();
 
+    // Server-authoritative zombie damage: an owner client calls this so the server
+    // applies its shot's damage to the zombie identified by NetworkObjectId.
+    public void RequestZombieDamage(ulong zombieNetworkObjectId, int amount, bool headshot)
+    {
+        if (IsOwner)
+        {
+            DamageZombieServerRpc(zombieNetworkObjectId, amount, headshot);
+        }
+    }
+
+    [ServerRpc]
+    private void DamageZombieServerRpc(ulong zombieNetworkObjectId, int amount, bool headshot)
+    {
+        if (NetworkManager.Singleton != null &&
+            NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(zombieNetworkObjectId, out NetworkObject netObj))
+        {
+            ZombieAgent zombie = netObj.GetComponent<ZombieAgent>();
+            if (zombie != null)
+            {
+                zombie.TakeDamage(amount, headshot);
+            }
+        }
+    }
+
     public override void OnNetworkSpawn()
     {
         SelectModelVariant();
