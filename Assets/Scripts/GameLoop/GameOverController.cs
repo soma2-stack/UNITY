@@ -21,7 +21,6 @@ public class GameOverController : MonoBehaviour
     // All players in the scene (co-op aware). The game ends only when EVERY one is dead.
     private readonly List<PlayerHealth> trackedPlayers = new List<PlayerHealth>();
     private readonly HashSet<PlayerHealth> deadPlayers = new HashSet<PlayerHealth>();
-    private bool subscribed;
     private bool showScreen;
     private int finalRound;
     private int finalScore;
@@ -84,23 +83,22 @@ public class GameOverController : MonoBehaviour
 
     private void Update()
     {
-        // Resolve and subscribe to EVERY player once they exist (co-op aware).
-        if (!subscribed)
+        // ✅ CHECKPOINT 1 — late-spawning player tracking fixed
+        // Scan EVERY frame and subscribe to any PlayerHealth we aren't already
+        // tracking. The old code set a one-shot `subscribed` flag on the first
+        // frame players were found, so any co-op player that spawned later was
+        // never tracked and couldn't contribute to game over. Tracking is now
+        // idempotent (trackedPlayers.Contains guards against double-subscribing),
+        // so late joiners are always picked up.
+        PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        foreach (PlayerHealth ph in players)
         {
-            PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
-            if (players.Length > 0)
+            if (ph == null || trackedPlayers.Contains(ph))
             {
-                foreach (PlayerHealth ph in players)
-                {
-                    if (ph == null || trackedPlayers.Contains(ph))
-                    {
-                        continue;
-                    }
-                    trackedPlayers.Add(ph);
-                    ph.OnPlayerDied += HandlePlayerDied;
-                }
-                subscribed = true;
+                continue;
             }
+            trackedPlayers.Add(ph);
+            ph.OnPlayerDied += HandlePlayerDied;
         }
     }
 
@@ -116,7 +114,6 @@ public class GameOverController : MonoBehaviour
         }
         trackedPlayers.Clear();
         deadPlayers.Clear();
-        subscribed = false;
     }
 
     private void HandlePlayerDied()
