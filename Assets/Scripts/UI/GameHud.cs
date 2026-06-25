@@ -65,6 +65,7 @@ public class GameHud : MonoBehaviour
     private GUIStyle smallStyle;
     private GUIStyle smallRightStyle;
     private GUIStyle centerStyle;
+    private GUIStyle centerSmallStyle;
     private Texture2D whiteTex;
 
     // Gameplay scene the HUD should appear in.
@@ -209,6 +210,15 @@ public class GameHud : MonoBehaviour
                 alignment = TextAnchor.MiddleCenter,
             };
         }
+
+        if (centerSmallStyle == null)
+        {
+            centerSmallStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = smallFontSize,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
     }
 
     private void ResolveReferences()
@@ -275,8 +285,7 @@ public class GameHud : MonoBehaviour
         if (spawner != null)
         {
             int left = Mathf.Max(0, spawner.AliveCount + spawner.RemainingToSpawn);
-            GUIStyle centerSmall = new GUIStyle(smallStyle) { alignment = TextAnchor.MiddleCenter };
-            GUI.Label(new Rect(x, top, width, 24f), "Zombies: " + left, centerSmall);
+            GUI.Label(new Rect(x, top, width, 24f), "Zombies: " + left, centerSmallStyle);
         }
     }
 
