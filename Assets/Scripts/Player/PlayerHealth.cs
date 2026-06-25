@@ -57,6 +57,9 @@ public class PlayerHealth : MonoBehaviour
     /// <summary>Raised when the player is revived (downed -> alive again).</summary>
     public event System.Action OnPlayerRevived;
 
+    /// <summary>Raised when the player takes damage (passes the damage amount). For HUD vignette etc.</summary>
+    public event System.Action<int> OnDamageTaken;
+
     /// <summary>Current health (read-only externally).</summary>
     public int CurrentHealth { get; private set; }
 
@@ -150,6 +153,8 @@ public class PlayerHealth : MonoBehaviour
         }
 
         CurrentHealth = Mathf.Max(0, CurrentHealth - amount);
+
+        OnDamageTaken?.Invoke(amount);
 
         if (CurrentHealth <= 0)
         {
