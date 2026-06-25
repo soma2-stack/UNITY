@@ -312,41 +312,64 @@ public class GameHud : MonoBehaviour
 
     private void DrawPlayerPoints()
     {
-        float x = 10f;
-        float y = 10f;
-        const float rowH = 26f;
-        const float boxSize = 18f;
-        const float gap = 6f;
+        float x      = 10f;
+        float y      = 10f;
+        float rowH   = 28f;
+        float boxW   = 28f;
+        float boxH   = 28f;
+        float panelW = 160f;
+        float gap    = 6f;
 
-        // Pack only the rows we actually draw so there are no empty gaps; "drawn"
-        // tracks the on-screen row index while "i" stays the real player slot.
+        GUIStyle pLabelStyle = new GUIStyle(GUI.skin.label)
+        {
+            fontSize  = smallFontSize,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleCenter,
+            normal    = { textColor = Color.white },
+        };
+
+        GUIStyle pointsStyle = new GUIStyle(GUI.skin.label)
+        {
+            fontSize  = smallFontSize,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleLeft,
+            normal    = { textColor = Color.white },
+        };
+
         int drawn = 0;
         for (int i = 0; i < MaxPlayers; i++)
         {
-            // Resolve this slot's points source. Slot 0 falls back to the live singleton.
             PlayerPoints source = GetPlayerSource(i);
+            if (source == null && !alwaysShowAllSlots) continue;
 
-            // Skip empty slots unless we're forcing the full layout (e.g. MP testing).
-            if (source == null && !alwaysShowAllSlots)
-            {
-                continue;
-            }
+            float rowY = y + drawn * (rowH + 5f);
 
-            float rowY = y + drawn * (rowH + 4f);
-
-            // Colored icon box for the player slot.
-            Color slotColor = (playerColors != null && i < playerColors.Length) ? playerColors[i] : Color.gray;
+            // Dark panel behind the row
             Color prev = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.55f);
+            GUI.DrawTexture(new Rect(x - 2f, rowY - 2f, panelW, rowH + 4f), whiteTex);
+
+            // Dark border behind the color box
+            GUI.color = new Color(0f, 0f, 0f, 0.8f);
+            GUI.DrawTexture(new Rect(x, rowY, boxW, boxH), whiteTex);
+
+            // Player color box (inset 1px from border)
+            Color slotColor = (playerColors != null && i < playerColors.Length)
+                ? playerColors[i] : Color.gray;
             GUI.color = slotColor;
-            GUI.DrawTexture(new Rect(x, rowY + (rowH - boxSize) * 0.5f, boxSize, boxSize), whiteTex);
+            GUI.DrawTexture(new Rect(x + 1f, rowY + 1f, boxW - 2f, boxH - 2f), whiteTex);
             GUI.color = prev;
 
-            string pointsText = source != null
-                ? source.Points.ToString("N0")   // "12,500" with locale commas
-                : "—";
-            string label = "P" + (i + 1) + "  " + pointsText;
+            // "P1" label inside the box
+            GUI.Label(new Rect(x, rowY, boxW, boxH),
+                "P" + (i + 1), pLabelStyle);
 
-            GUI.Label(new Rect(x + boxSize + gap, rowY, 200f, rowH), label, smallStyle);
+            // Points value to the right of the box
+            string pointsText = source != null
+                ? source.Points.ToString("N0") : "—";
+            GUI.Label(new Rect(x + boxW + gap, rowY, panelW - boxW - gap, rowH),
+                pointsText, pointsStyle);
+
             drawn++;
         }
     }
