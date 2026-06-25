@@ -169,6 +169,7 @@ public class WeaponController : MonoBehaviour
             w.weaponName += " +"; // visual marker for the HUD only - not the upgrade gate
         }
         w.damage = Mathf.Max(1, w.damage * 2);
+        w.fireRate = w.fireRate * 1.33f;
         w.reserveAmmo = Mathf.Max(w.reserveAmmo, w.magazineSize * 5);
         w.ammoInMag = Mathf.Max(0, w.magazineSize);
         w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
