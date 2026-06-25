@@ -333,6 +333,21 @@ public class PerkManager : MonoBehaviour
 
     private GUIStyle perkLabelStyle;
 
+    private Texture2D GetPerkIcon(PerkType perk)
+    {
+        if (perkIcons == null) return null;
+        switch (perk)
+        {
+            case PerkType.VitalBoost:  return perkIcons.Length > 0 ? perkIcons[0] : null;
+            case PerkType.ClipKick:    return perkIcons.Length > 1 ? perkIcons[1] : null;
+            case PerkType.RapidRuin:   return perkIcons.Length > 2 ? perkIcons[2] : null;
+            case PerkType.RescueRush:  return perkIcons.Length > 3 ? perkIcons[3] : null;
+            case PerkType.SprintSurge: return perkIcons.Length > 4 ? perkIcons[4] : null;
+            case PerkType.ArmoryAmp:   return perkIcons.Length > 5 ? perkIcons[5] : null;
+            default: return null;
+        }
+    }
+
     private void OnGUI()
     {
         if (ownedPerks.Count == 0)
