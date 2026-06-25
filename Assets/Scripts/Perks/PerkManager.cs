@@ -49,6 +49,13 @@ public class PerkManager : MonoBehaviour
              "(it drives the solo self-revive). Turn off for co-op so any perk can be lost.")]
     public bool SoloMode = true;
 
+    [Header("Perk Icons (assign in Inspector)")]
+    [Tooltip("Custom icon textures shown in the bottom HUD strip. " +
+             "Slots: [0] VitalBoost, [1] ClipKick, [2] RapidRuin, " +
+             "[3] RescueRush, [4] SprintSurge, [5] ArmoryAmp. " +
+             "Leave a slot empty to fall back to the colored square.")]
+    public Texture2D[] perkIcons = new Texture2D[6];
+
     [Header("Limits")]
     [Tooltip("Max simultaneous perks (classic base Zombies = 4). Set 0 for unlimited.")]
     public int maxPerks = 4;
