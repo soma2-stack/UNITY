@@ -364,6 +364,9 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         }
 
         SpawnPlayerObject(clientId);
+
+        // Catch this just-loaded client up to the authoritative round number.
+        RoundManager.Instance?.SendRoundToClient(clientId);
     }
 
     private void SpawnPlayerObject(ulong clientId)

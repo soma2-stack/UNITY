@@ -3,6 +3,7 @@
 // guards a missing/empty ZombieSpawner so CurrentRound advances even before any
 // enemies / NavMesh are wired up. Power-ups now drop randomly on kills
 // (PowerupManager), so the old round-end milestone drop was removed.
+using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -161,6 +162,7 @@ public class RoundManager : MonoBehaviour
 
     private void OnDestroy()
     {
+        UnregisterRoundSync();
         if (Instance == this)
         {
             Instance = null;
@@ -177,6 +179,9 @@ public class RoundManager : MonoBehaviour
         IntermissionActive = false; // fresh run starts with no intermission banner
         stateTimer = startDelay;
         state = State.Starting;
+
+        // Clients listen for authoritative round updates from the server.
+        RegisterRoundSync();
     }
 
     /// <summary>
@@ -216,6 +221,82 @@ public class RoundManager : MonoBehaviour
 
         CurrentRound = round;
         OnRoundChanged?.Invoke(CurrentRound);
+    }
+
+    // Named-message channel used to push the authoritative round number to clients.
+    private const string RoundSyncMessage = "SOTD_ROUND";
+
+    // Clients register to RECEIVE round updates; the server only sends.
+    private void RegisterRoundSync()
+    {
+        if (!NetworkSessionActive || IsServerRole)
+        {
+            return;
+        }
+
+        CustomMessagingManager messaging = NetworkManager.Singleton.CustomMessagingManager;
+        if (messaging == null)
+        {
+            return;
+        }
+
+        messaging.UnregisterNamedMessageHandler(RoundSyncMessage);
+        messaging.RegisterNamedMessageHandler(RoundSyncMessage, OnRoundSyncMessage);
+    }
+
+    private void UnregisterRoundSync()
+    {
+        CustomMessagingManager messaging = NetworkManager.Singleton != null
+            ? NetworkManager.Singleton.CustomMessagingManager
+            : null;
+        messaging?.UnregisterNamedMessageHandler(RoundSyncMessage);
+    }
+
+    private void OnRoundSyncMessage(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out int round);
+        ApplyNetworkRound(round);
+    }
+
+    // Server: push the current round to every client (called on each advance).
+    private void BroadcastRound()
+    {
+        if (!NetworkSessionActive || !IsServerRole)
+        {
+            return;
+        }
+
+        CustomMessagingManager messaging = NetworkManager.Singleton.CustomMessagingManager;
+        if (messaging == null)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int), Allocator.Temp);
+        writer.WriteValueSafe(CurrentRound);
+        messaging.SendNamedMessageToAll(RoundSyncMessage, writer, NetworkDelivery.ReliableSequenced);
+    }
+
+    /// <summary>
+    /// Server: push the current round to a single just-loaded client so late arrivals
+    /// catch up immediately. Called by MultiplayerSessionController per client on scene load.
+    /// </summary>
+    public void SendRoundToClient(ulong clientId)
+    {
+        if (!NetworkSessionActive || !IsServerRole || CurrentRound <= 0)
+        {
+            return;
+        }
+
+        CustomMessagingManager messaging = NetworkManager.Singleton.CustomMessagingManager;
+        if (messaging == null)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int), Allocator.Temp);
+        writer.WriteValueSafe(CurrentRound);
+        messaging.SendNamedMessage(RoundSyncMessage, clientId, writer, NetworkDelivery.ReliableSequenced);
     }
 
     private void Update()
@@ -310,6 +391,9 @@ public class RoundManager : MonoBehaviour
         state = State.InProgress;
         Debug.Log("Round " + CurrentRound + " started (" + count + " zombies, " + hp + " hp, " + speed.ToString("0.0") + " speed)");
         OnRoundChanged?.Invoke(CurrentRound);
+
+        // Server: replicate the new round number to all connected clients.
+        BroadcastRound();
     }
 
     /// <summary>
