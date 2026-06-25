@@ -375,8 +375,9 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
         SpawnPlayerObject(clientId);
 
-        // Catch this just-loaded client up to the authoritative round number.
+        // Catch this just-loaded client up to the authoritative round + team points.
         RoundManager.Instance?.SendRoundToClient(clientId);
+        PlayerPoints.Instance?.SendPointsToClient(clientId);
     }
 
     private void SpawnPlayerObject(ulong clientId)

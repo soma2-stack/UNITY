@@ -1,3 +1,5 @@
+using Unity.Collections;
+using Unity.Netcode;
 using UnityEngine;
 
 /// <summary>
@@ -46,10 +48,100 @@ public class PlayerPoints : MonoBehaviour
         PointsMultiplier = 1;
     }
 
+    // --- Multiplayer authority -------------------------------------------
+    private const string PointsSyncMessage = "SOTD_POINTS";
+
+    private static bool NetworkActive =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+    private static bool IsServerRole =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer;
+
+    private void Start()
+    {
+        // Clients listen for the authoritative team-points total from the server.
+        if (NetworkActive && !IsServerRole)
+        {
+            CustomMessagingManager messaging = NetworkManager.Singleton.CustomMessagingManager;
+            if (messaging != null)
+            {
+                messaging.UnregisterNamedMessageHandler(PointsSyncMessage);
+                messaging.RegisterNamedMessageHandler(PointsSyncMessage, OnPointsSyncMessage);
+            }
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.CustomMessagingManager != null)
+        {
+            NetworkManager.Singleton.CustomMessagingManager.UnregisterNamedMessageHandler(PointsSyncMessage);
+        }
+        if (Instance == this)
+        {
+            Instance = null;
+        }
+    }
+
+    /// <summary>Clients only: apply the authoritative total pushed from the server.</summary>
+    public void ApplyNetworkPoints(int total)
+    {
+        if (!NetworkActive || IsServerRole)
+        {
+            return;
+        }
+        Points = Mathf.Max(0, total);
+        OnPointsChanged?.Invoke(Points);
+    }
+
+    private void OnPointsSyncMessage(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out int total);
+        ApplyNetworkPoints(total);
+    }
+
+    private void BroadcastPoints()
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+        CustomMessagingManager messaging = NetworkManager.Singleton.CustomMessagingManager;
+        if (messaging == null)
+        {
+            return;
+        }
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int), Allocator.Temp);
+        writer.WriteValueSafe(Points);
+        messaging.SendNamedMessageToAll(PointsSyncMessage, writer, NetworkDelivery.ReliableSequenced);
+    }
+
+    /// <summary>Server: push the current total to one just-loaded client (catch-up).</summary>
+    public void SendPointsToClient(ulong clientId)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+        CustomMessagingManager messaging = NetworkManager.Singleton.CustomMessagingManager;
+        if (messaging == null)
+        {
+            return;
+        }
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int), Allocator.Temp);
+        writer.WriteValueSafe(Points);
+        messaging.SendNamedMessage(PointsSyncMessage, clientId, writer, NetworkDelivery.ReliableSequenced);
+    }
+
     /// <summary>Adds points to the player's total. Ignores non-positive amounts.</summary>
     public void AddPoints(int amount)
     {
         if (amount <= 0)
+        {
+            return;
+        }
+
+        // Server-authoritative in a session: clients only display the replicated total.
+        if (NetworkActive && !IsServerRole)
         {
             return;
         }
@@ -63,6 +155,7 @@ public class PlayerPoints : MonoBehaviour
         Points = Mathf.Max(0, Points);
         Debug.Log($"Added {amount} points (total: {Points})");
         OnPointsChanged?.Invoke(Points);
+        BroadcastPoints();
     }
 
     /// <summary>Alias for AddPoints for backward compatibility.</summary>
@@ -85,12 +178,20 @@ public class PlayerPoints : MonoBehaviour
             return true;
         }
 
+        // Server-authoritative in a session: client-initiated spends are not networked
+        // yet, so they safely fail rather than diverging from the server total.
+        if (NetworkActive && !IsServerRole)
+        {
+            return false;
+        }
+
         if (Points >= cost)
         {
             Points -= cost;
             Points = Mathf.Max(0, Points);
             Debug.Log($"Spent {cost} points (total: {Points})");
             OnPointsChanged?.Invoke(Points);
+            BroadcastPoints();
             return true;
         }
 
