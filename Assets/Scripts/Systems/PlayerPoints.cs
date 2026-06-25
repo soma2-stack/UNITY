@@ -35,6 +35,15 @@ public class PlayerPoints : MonoBehaviour
 
         Instance = this;
         Points = startingPoints;
+
+        // ✅ CHECKPOINT 2 — PointsMultiplier reset guaranteed
+        // PointsMultiplier is static, so it survives scene reloads for the whole
+        // process lifetime. Resetting it here — in the points singleton's own
+        // startup — guarantees every fresh run begins at 1x regardless of
+        // bootstrap order. PowerupManager.ClearEffects() still resets it too, but
+        // that can run before this object exists; this line makes the reset
+        // unconditional so a stale Double Points multiplier can never carry over.
+        PointsMultiplier = 1;
     }
 
     /// <summary>Adds points to the player's total. Ignores non-positive amounts.</summary>
