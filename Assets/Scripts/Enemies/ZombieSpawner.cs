@@ -26,6 +26,8 @@ public class ZombieSpawner : MonoBehaviour
     public int maxAlive = 12;
     [Tooltip("Seconds between individual spawns.")]
     public float spawnInterval = 2f;
+    [Tooltip("Lower bound for the (round-scaled) spawn interval.")]
+    public float spawnIntervalMin = 0.4f;
 
     [Header("Reachability")]
     [Tooltip("Only spawn at points the player can currently reach by NavMesh path " +
@@ -53,6 +55,12 @@ public class ZombieSpawner : MonoBehaviour
     private float roundZombieSpeed;     // speed applied to each spawned zombie
     private float nextSpawnTime;
     private bool roundActive;
+    private float baseSpawnInterval;
+
+    private void Awake()
+    {
+        baseSpawnInterval = spawnInterval;
+    }
 
     /// <summary>Number of zombies currently alive.</summary>
     public int AliveCount => aliveZombies.Count;
@@ -120,6 +128,8 @@ public class ZombieSpawner : MonoBehaviour
         roundZombieHealth = Mathf.Max(1, zombieHealth);
         roundZombieSpeed = Mathf.Max(0.1f, zombieSpeed);
         roundActive = true;
+        spawnInterval = Mathf.Max(spawnIntervalMin,
+            baseSpawnInterval / (1f + totalToSpawn * 0.05f));
         // Spawn the first zombie almost immediately.
         nextSpawnTime = Time.time;
     }
