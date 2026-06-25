@@ -3,6 +3,7 @@
 // guards a missing/empty ZombieSpawner so CurrentRound advances even before any
 // enemies / NavMesh are wired up. Power-ups now drop randomly on kills
 // (PowerupManager), so the old round-end milestone drop was removed.
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -187,8 +188,45 @@ public class RoundManager : MonoBehaviour
         spawner != null && spawner.zombiePrefab != null &&
         spawner.spawnPoints != null && spawner.spawnPoints.Length > 0;
 
+    // --- Multiplayer authority -------------------------------------------
+    // A live NGO session means the SERVER owns the round loop; clients receive the
+    // round number over the network (see Step 2) and never advance it themselves.
+    // With no active session (solo / single-player) the loop runs locally as before.
+    private static bool NetworkSessionActive =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+
+    private static bool IsServerRole =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer;
+
+    /// <summary>True in solo, or on the server in a networked session.</summary>
+    public bool IsRoundAuthority => !NetworkSessionActive || IsServerRole;
+
+    /// <summary>
+    /// Apply a round number pushed from the server (clients only). Updates
+    /// <see cref="CurrentRound"/> and fires <see cref="OnRoundChanged"/> so the HUD and
+    /// other listeners react exactly as they do for a locally-advanced round. No-op on
+    /// the authority or for stale/duplicate values.
+    /// </summary>
+    public void ApplyNetworkRound(int round)
+    {
+        if (IsRoundAuthority || round <= 0 || round == CurrentRound)
+        {
+            return;
+        }
+
+        CurrentRound = round;
+        OnRoundChanged?.Invoke(CurrentRound);
+    }
+
     private void Update()
     {
+        // Clients in a networked session do not run the authoritative round loop; their
+        // round number is driven by ApplyNetworkRound() from server messages.
+        if (!IsRoundAuthority)
+        {
+            return;
+        }
+
         switch (state)
         {
             case State.Starting:
