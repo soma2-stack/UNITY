@@ -341,7 +341,9 @@ public class GameHud : MonoBehaviour
             GUI.DrawTexture(new Rect(x, rowY + (rowH - boxSize) * 0.5f, boxSize, boxSize), whiteTex);
             GUI.color = prev;
 
-            string pointsText = source != null ? source.Points.ToString() : "—";
+            string pointsText = source != null
+                ? source.Points.ToString("N0")   // "12,500" with locale commas
+                : "—";
             string label = "P" + (i + 1) + "  " + pointsText;
 
             GUI.Label(new Rect(x + boxSize + gap, rowY, 200f, rowH), label, smallStyle);
