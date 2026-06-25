@@ -59,6 +59,9 @@ public class WeaponController : MonoBehaviour
     /// <summary>True for a short window while a knife swing is in progress (HUD/animator can react).</summary>
     public bool IsKnifing { get; private set; }
 
+    /// <summary>Raised when the player tries to fire a truly empty gun (no mag ammo and no reserve to reload).</summary>
+    public event System.Action OnDryFire;
+
     private Weapon Current =>
         (weapons != null && currentIndex >= 0 && currentIndex < weapons.Count) ? weapons[currentIndex] : null;
 
@@ -532,12 +535,17 @@ public class WeaponController : MonoBehaviour
             return;
         }
 
-        // Out of ammo in the magazine: auto-reload if possible, otherwise do nothing.
+        // Out of ammo in the magazine: auto-reload if possible, otherwise dry-fire.
         if (!w.HasAmmoInMag)
         {
             if (w.CanReload)
             {
                 StartCoroutine(ReloadRoutine(w));
+            }
+            else
+            {
+                // Truly empty: nothing in the mag and nothing in reserve to reload.
+                OnDryFire?.Invoke();
             }
             return;
         }
