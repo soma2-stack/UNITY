@@ -350,7 +350,9 @@ public static class SchoolDoorPlacer
         // Keep the BoxCollider that comes with the primitive so the door blocks the player.
         Door doorComponent = door.AddComponent<Door>();
         doorComponent.doorId = transom.gameObject.name;
-        doorComponent.cost = 0; // placeholder only - no buy system yet
+        // Buyable: cost points to open (COD-zombies style). Stairwells cost a bit more.
+        string id = transom.gameObject.name.ToLowerInvariant();
+        doorComponent.cost = (id.Contains("stair") || id.Contains("library_staircase")) ? 1250 : 750;
         // Slide the door straight down into the floor when opened, fully clearing the gap.
         doorComponent.openMoveOffset = new Vector3(0f, -(height + 0.1f), 0f);
 

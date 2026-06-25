@@ -5,21 +5,21 @@
 /// </summary>
 public enum PerkType
 {
-    /// <summary>Juggernog: raises maximum health and heals to full.</summary>
-    Juggernog,
+    /// <summary>Vital Boost: raises maximum health and heals to full.</summary>
+    VitalBoost,
 
-    /// <summary>Speed Cola: faster weapon reloads.</summary>
-    SpeedCola,
+    /// <summary>Clip Kick: faster weapon reloads.</summary>
+    ClipKick,
 
-    /// <summary>Double Tap: faster weapon fire rate.</summary>
-    DoubleTap,
+    /// <summary>Rapid Ruin: faster weapon fire rate.</summary>
+    RapidRuin,
 
-    /// <summary>Quick Revive: faster revive / enables a solo self-revive.</summary>
-    QuickRevive,
+    /// <summary>Rescue Rush: faster revive / enables a solo self-revive.</summary>
+    RescueRush,
 
-    /// <summary>Stamin-Up: faster movement.</summary>
-    StaminUp,
+    /// <summary>Sprint Surge: faster movement.</summary>
+    SprintSurge,
 
-    /// <summary>Mule Kick: allows carrying one extra weapon.</summary>
-    MuleKick,
+    /// <summary>Armory Amp: allows carrying one extra weapon.</summary>
+    ArmoryAmp,
 }

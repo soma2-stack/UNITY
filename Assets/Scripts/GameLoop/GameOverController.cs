@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -17,11 +18,16 @@ public class GameOverController : MonoBehaviour
     private const string MainMenuScene = "MainMenu";
     private static GameOverController _runtimeInstance;
 
-    private PlayerHealth playerHealth;
+    // All players in the scene (co-op aware). The game ends only when EVERY one is dead.
+    private readonly List<PlayerHealth> trackedPlayers = new List<PlayerHealth>();
+    private readonly HashSet<PlayerHealth> deadPlayers = new HashSet<PlayerHealth>();
     private bool subscribed;
     private bool showScreen;
     private int finalRound;
     private int finalScore;
+    private int finalKills;
+    private int bestRound;
+    private int bestScore;
 
     private GUIStyle titleStyle;
     private GUIStyle infoStyle;
@@ -55,6 +61,9 @@ public class GameOverController : MonoBehaviour
         // Make sure time is running for a fresh run (in case we left it paused).
         Time.timeScale = 1f;
 
+        // Fresh run: reset the run kill counter so the game-over screen starts at zero.
+        ZombieAgent.ResetKillCount();
+
         if (_runtimeInstance != null || FindFirstObjectByType<GameOverController>() != null)
         {
             return;
@@ -75,16 +84,21 @@ public class GameOverController : MonoBehaviour
 
     private void Update()
     {
-        // Resolve and subscribe to the player health once it exists.
+        // Resolve and subscribe to EVERY player once they exist (co-op aware).
         if (!subscribed)
         {
-            if (playerHealth == null)
+            PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+            if (players.Length > 0)
             {
-                playerHealth = FindFirstObjectByType<PlayerHealth>();
-            }
-            if (playerHealth != null)
-            {
-                playerHealth.OnPlayerDied += HandlePlayerDied;
+                foreach (PlayerHealth ph in players)
+                {
+                    if (ph == null || trackedPlayers.Contains(ph))
+                    {
+                        continue;
+                    }
+                    trackedPlayers.Add(ph);
+                    ph.OnPlayerDied += HandlePlayerDied;
+                }
                 subscribed = true;
             }
         }
@@ -92,10 +106,16 @@ public class GameOverController : MonoBehaviour
 
     private void Unsubscribe()
     {
-        if (subscribed && playerHealth != null)
+        // Unsubscribe from every tracked player so nothing leaks across scene loads.
+        foreach (PlayerHealth ph in trackedPlayers)
         {
-            playerHealth.OnPlayerDied -= HandlePlayerDied;
+            if (ph != null)
+            {
+                ph.OnPlayerDied -= HandlePlayerDied;
+            }
         }
+        trackedPlayers.Clear();
+        deadPlayers.Clear();
         subscribed = false;
     }
 
@@ -106,9 +126,52 @@ public class GameOverController : MonoBehaviour
             return;
         }
 
+        // Co-op: one player going down must NOT end the game. Record dead players
+        // and only show GAME OVER once EVERY tracked player has finally died.
+        int trackedTotal = 0;
+        int aliveCount = 0;
+        foreach (PlayerHealth ph in trackedPlayers)
+        {
+            if (ph == null)
+            {
+                continue;
+            }
+            trackedTotal++;
+            if (ph.IsDead)
+            {
+                deadPlayers.Add(ph);
+            }
+            else
+            {
+                aliveCount++;
+            }
+        }
+
+        if (trackedTotal == 0 || aliveCount > 0)
+        {
+            return; // at least one player is still alive
+        }
+
         RoundManager rm = FindFirstObjectByType<RoundManager>();
         finalRound = rm != null ? rm.CurrentRound : 0;
         finalScore = PlayerPoints.Instance != null ? PlayerPoints.Instance.Points : 0;
+        finalKills = ZombieAgent.TotalKillsThisRun;
+
+        // Best round / best score persistence (PlayerPrefs). Update the local copies so
+        // a new record is reflected immediately on the game-over screen.
+        bestRound = PlayerPrefs.GetInt("BestRound", 0);
+        bestScore = PlayerPrefs.GetInt("BestScore", 0);
+        if (finalRound > bestRound)
+        {
+            bestRound = finalRound;
+            PlayerPrefs.SetInt("BestRound", bestRound);
+        }
+        if (finalScore > bestScore)
+        {
+            bestScore = finalScore;
+            PlayerPrefs.SetInt("BestScore", bestScore);
+        }
+        PlayerPrefs.Save();
 
         showScreen = true;
         Time.timeScale = 0f;
@@ -122,6 +185,7 @@ public class GameOverController : MonoBehaviour
     {
         Time.timeScale = 1f;
         showScreen = false;
+        ZombieAgent.ResetKillCount(); // fresh run starts at zero kills
         SceneManager.LoadScene(GameplayScene);
     }
 
@@ -129,6 +193,7 @@ public class GameOverController : MonoBehaviour
     {
         Time.timeScale = 1f;
         showScreen = false;
+        ZombieAgent.ResetKillCount(); // clear the run kill count when leaving to the menu
         SceneManager.LoadScene(MainMenuScene);
     }
 
@@ -156,6 +221,10 @@ public class GameOverController : MonoBehaviour
         DrawCentered("You survived to Round " + finalRound, infoStyle, cx, y, 560f, 34f);
         y += 40f;
         DrawCentered("Final Score: " + finalScore, infoStyle, cx, y, 560f, 34f);
+        y += 40f;
+        DrawCentered("Zombies Killed: " + finalKills, infoStyle, cx, y, 560f, 34f);
+        y += 40f;
+        DrawCentered("Best Round: " + bestRound + "   Best Score: " + bestScore, infoStyle, cx, y, 560f, 34f);
         y += 70f;
 
         float bw = 240f;

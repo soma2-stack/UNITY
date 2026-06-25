@@ -169,41 +169,18 @@ public class Teleporter : MonoBehaviour
     }
 
     /// <summary>
-    /// Tries to spend points through an optional PlayerPoints singleton
-    /// (public static PlayerPoints Instance { get; } with bool TrySpend(int)).
-    /// Resolved via reflection so this script never hard-depends on that type.
-    /// Returns true (free) when no such system is present.
+    /// Tries to spend points via the <see cref="PlayerPoints"/> singleton. Returns
+    /// true (free) when no economy is present, so the teleporter still works in a
+    /// scene without a PlayerPoints instance.
     /// </summary>
     private static bool TrySpendPoints(int amount)
     {
-        System.Type pointsType = System.Type.GetType("PlayerPoints");
-        if (pointsType == null)
+        if (PlayerPoints.Instance == null)
         {
-            return true; // No points system in the project: teleport is free.
+            return true; // No economy present: teleport is free.
         }
 
-        System.Reflection.PropertyInfo instanceProp = pointsType.GetProperty(
-            "Instance",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        if (instanceProp == null)
-        {
-            return true;
-        }
-
-        object instance = instanceProp.GetValue(null);
-        if (instance == null)
-        {
-            return true; // System type exists but no live instance: stay free.
-        }
-
-        System.Reflection.MethodInfo trySpend = pointsType.GetMethod("TrySpend", new[] { typeof(int) });
-        if (trySpend == null)
-        {
-            return true;
-        }
-
-        object result = trySpend.Invoke(instance, new object[] { amount });
-        return result is bool && (bool)result;
+        return PlayerPoints.Instance.TrySpend(amount);
     }
 
     private void FindPlayer()

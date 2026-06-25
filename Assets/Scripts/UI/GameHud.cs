@@ -40,6 +40,11 @@ public class GameHud : MonoBehaviour
         new Color(1.00f, 0.80f, 0.25f), // P4 yellow
     };
 
+    [Tooltip("Force all 4 player slots to always draw (P1..P4), even empty ones. " +
+             "Useful for testing the multiplayer HUD layout. Off = only slots with an " +
+             "active points source are shown (so solo shows just one row).")]
+    public bool alwaysShowAllSlots = false;
+
     [Header("Style")]
     [Tooltip("Base font size for the larger HUD labels (round / weapon).")]
     [SerializeField] private int largeFontSize = 22;
@@ -304,9 +309,21 @@ public class GameHud : MonoBehaviour
         const float boxSize = 18f;
         const float gap = 6f;
 
+        // Pack only the rows we actually draw so there are no empty gaps; "drawn"
+        // tracks the on-screen row index while "i" stays the real player slot.
+        int drawn = 0;
         for (int i = 0; i < MaxPlayers; i++)
         {
-            float rowY = y + i * (rowH + 4f);
+            // Resolve this slot's points source. Slot 0 falls back to the live singleton.
+            PlayerPoints source = GetPlayerSource(i);
+
+            // Skip empty slots unless we're forcing the full layout (e.g. MP testing).
+            if (source == null && !alwaysShowAllSlots)
+            {
+                continue;
+            }
+
+            float rowY = y + drawn * (rowH + 4f);
 
             // Colored icon box for the player slot.
             Color slotColor = (playerColors != null && i < playerColors.Length) ? playerColors[i] : Color.gray;
@@ -315,13 +332,11 @@ public class GameHud : MonoBehaviour
             GUI.DrawTexture(new Rect(x, rowY + (rowH - boxSize) * 0.5f, boxSize, boxSize), whiteTex);
             GUI.color = prev;
 
-            // Resolve this slot's points source. Slot 0 falls back to the live singleton.
-            PlayerPoints source = GetPlayerSource(i);
-
             string pointsText = source != null ? source.Points.ToString() : "—";
             string label = "P" + (i + 1) + "  " + pointsText;
 
             GUI.Label(new Rect(x + boxSize + gap, rowY, 200f, rowH), label, smallStyle);
+            drawn++;
         }
     }
 

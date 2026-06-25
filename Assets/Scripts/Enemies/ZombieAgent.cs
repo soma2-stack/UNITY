@@ -30,8 +30,14 @@ public class ZombieAgent : MonoBehaviour
     public float attackInterval = 1.2f;
 
     [Header("Rewards")]
-    [Tooltip("Points awarded to the player when this zombie is killed.")]
+    [Tooltip("Total points for a body gun-kill, including the killing hit's +10 (e.g. 60 = +10 hit + +50 kill bonus).")]
     public int killReward = 60;
+    [Tooltip("Award +10 points per bullet hit (CoD economy). Disable for zombie types that shouldn't pay out per hit.")]
+    public bool awardHitPoints = true;
+
+    // Points awarded per bullet hit (CoD: +10). The kill bonus is computed so the
+    // killing shot's hit + bonus total the intended body/headshot reward.
+    private const int HitPoints = 10;
 
     [Header("Pathing")]
     [Tooltip("How often (seconds) to recompute the path to the player. Throttled for performance.")]
@@ -57,6 +63,21 @@ public class ZombieAgent : MonoBehaviour
     /// <summary>Raised (static) at the world position where ANY zombie dies. Used by power-up drops.</summary>
     public static event System.Action<Vector3> OnAnyZombieKilled;
 
+    /// <summary>True if the zombie is dead.</summary>
+    public bool IsDead => isDead;
+
+    /// <summary>True if the agent currently exists and is on the baked NavMesh.</summary>
+    public bool IsOnNavMesh => agent != null && agent.isOnNavMesh;
+
+    /// <summary>Total zombies killed this run (reset on a fresh run via ResetKillCount).</summary>
+    public static int TotalKillsThisRun { get; private set; }
+
+    /// <summary>Reset the run kill counter so a fresh run starts at zero.</summary>
+    public static void ResetKillCount()
+    {
+        TotalKillsThisRun = 0;
+    }
+
     private NavMeshAgent agent;
     private Transform player;
     private PlayerHealth playerHealth;
@@ -68,7 +89,9 @@ public class ZombieAgent : MonoBehaviour
     private float nextRepathTime;
     private float nextAttackTime;
     private float nextHitReactTime;
+    private float nextRecoveryTime; // throttles off-mesh recovery attempts
     private bool isDead;
+    private bool pointsAwarded; // guard: the kill reward may be granted at most once
 
     private void Awake()
     {
@@ -101,6 +124,17 @@ public class ZombieAgent : MonoBehaviour
             return;
         }
 
+        // FIX C: if the agent has fallen off the NavMesh, sample a nearby point and
+        // warp back onto the surface. Throttled so it can't run every frame.
+        if (agent != null && !isDead && !agent.isOnNavMesh && Time.time >= nextRecoveryTime)
+        {
+            nextRecoveryTime = Time.time + 0.5f;
+            if (NavMesh.SamplePosition(transform.position, out NavMeshHit recoverHit, 2f, NavMesh.AllAreas))
+            {
+                agent.Warp(recoverHit.position);
+            }
+        }
+
         // Throttled path recompute toward the player.
         if (Time.time >= nextRepathTime)
         {
@@ -108,6 +142,16 @@ public class ZombieAgent : MonoBehaviour
             if (agent != null && agent.isOnNavMesh)
             {
                 agent.SetDestination(player.position);
+
+                // FIX B: a partial/invalid path means the target is currently
+                // unreachable (e.g. a door state just changed) - drop the stale path
+                // and retry quickly instead of freezing on it.
+                if (agent.pathStatus == NavMeshPathStatus.PathPartial ||
+                    agent.pathStatus == NavMeshPathStatus.PathInvalid)
+                {
+                    agent.ResetPath();
+                    nextRepathTime = Time.time + 0.1f;
+                }
             }
         }
 
@@ -154,12 +198,39 @@ public class ZombieAgent : MonoBehaviour
             return;
         }
 
+        // Line-of-sight: don't attack through walls/floors/ceilings/closed doors.
+        // Ray from chest height toward the player; if a non-player collider is in the
+        // way, the player isn't actually reachable for a melee hit.
+        Vector3 origin = transform.position + Vector3.up * 1f;
+        Vector3 target = player.position + Vector3.up * 1f;
+        Vector3 to = target - origin;
+        float dist = to.magnitude;
+        if (dist > 0.01f)
+        {
+            // Start just past our own body so we don't hit ourselves.
+            Vector3 dir = to / dist;
+            Vector3 rayStart = origin + dir * 0.15f;
+            if (Physics.Raycast(rayStart, dir, out RaycastHit hit, dist, ~0, QueryTriggerInteraction.Ignore))
+            {
+                // Blocked unless the first thing we hit is the player.
+                if (hit.collider.GetComponentInParent<CharacterController>() == null)
+                {
+                    return;
+                }
+            }
+        }
+
         nextAttackTime = Time.time + attackInterval;
         if (animator != null && hasAttackParam)
         {
             animator.SetTrigger(attackParam);
         }
-        playerHealth.TakeDamage(attackDamage);
+
+        // Authentic CoD: hitting a DOWNED player only chips 1 damage (death comes from
+        // the bleed-out timer, so hits slow the drain rather than accelerating a kill),
+        // and no points are involved in a zombie striking the player.
+        int dealt = playerHealth.IsDowned ? 1 : attackDamage;
+        playerHealth.TakeDamage(dealt);
     }
 
     /// <summary>
@@ -173,19 +244,42 @@ public class ZombieAgent : MonoBehaviour
     }
 
     /// <summary>
+    /// Immediately recompute the path to the player. Called when a door opens so
+    /// zombies don't sit on a now-stale, blocked route. Also clears the repath timer
+    /// so the next regular repath fires right away.
+    /// </summary>
+    public void ForceRepath()
+    {
+        nextRepathTime = 0f;
+        if (player != null && agent != null && agent.isOnNavMesh)
+        {
+            agent.ResetPath();
+            agent.SetDestination(player.position);
+        }
+    }
+
+    /// <summary>
     /// Damage this zombie. When health reaches zero the zombie dies.
     /// </summary>
-    public void TakeDamage(int amount)
+    public void TakeDamage(int amount, bool isHeadshot = false)
     {
         if (isDead || amount <= 0)
         {
             return;
         }
 
+        // +10 per bullet hit (CoD economy), awarded for EVERY hit regardless of
+        // whether it kills. Melee (KillByMelee) bypasses TakeDamage, so it never
+        // receives this hit award - only its full kill reward in Die().
+        if (awardHitPoints)
+        {
+            PlayerPoints.Instance?.AddPoints(HitPoints);
+        }
+
         health -= amount;
         if (health <= 0)
         {
-            Die();
+            Die(isHeadshot);
             return;
         }
 
@@ -197,7 +291,20 @@ public class ZombieAgent : MonoBehaviour
         }
     }
 
-    private void Die()
+    /// <summary>
+    /// Kill this zombie via melee/knife. Awards bonus points.
+    /// </summary>
+    public void KillByMelee()
+    {
+        if (isDead)
+        {
+            return;
+        }
+        health = 0;
+        Die(false, true);
+    }
+
+    private void Die(bool isHeadshot = false, bool isMelee = false)
     {
         if (isDead)
         {
@@ -205,9 +312,35 @@ public class ZombieAgent : MonoBehaviour
         }
 
         isDead = true;
+        TotalKillsThisRun++; // count this kill toward the run total (shown on game over)
 
-        // Award points + notify the spawner/round system immediately (this kill counts now).
-        PlayerPoints.Instance?.Add(killReward);
+        // ---------------------------------------------------------------------
+        // POINTS OWNERSHIP: ZombieAgent owns the whole point economy. TakeDamage()
+        // awards +10 per bullet hit; Die() awards the KILL BONUS below so the
+        // killing bullet totals +60 body / +100 headshot (its +10 hit + the bonus),
+        // never +70. A melee kill bypasses TakeDamage, so it awards the full +130
+        // here. The pointsAwarded guard ensures the bonus is granted at most once.
+        // ---------------------------------------------------------------------
+        if (!pointsAwarded)
+        {
+            pointsAwarded = true;
+
+            int reward;
+            if (isMelee)
+            {
+                reward = 130; // melee kill: full reward, no separate hit award
+            }
+            else if (isHeadshot)
+            {
+                reward = Mathf.Max(0, 100 - HitPoints); // +90 -> 100 total headshot kill
+            }
+            else
+            {
+                reward = Mathf.Max(0, killReward - HitPoints); // +50 -> 60 total body kill
+            }
+            PlayerPoints.Instance?.AddPoints(reward);
+        }
+
         OnDeath?.Invoke(this);
         OnAnyZombieKilled?.Invoke(transform.position); // power-up drops, kill feeds, etc.
 

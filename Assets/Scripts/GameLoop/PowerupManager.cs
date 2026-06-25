@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -10,6 +11,7 @@ public enum PowerupType
     InstaKill,
     DoublePoints,
     Nuke,
+    Carpenter,
 }
 
 /// <summary>
@@ -42,6 +44,12 @@ public class PowerupManager : MonoBehaviour
     [Header("Nuke")]
     [Tooltip("Bonus points awarded to the player when a Nuke is collected.")]
     public int nukeBonusPoints = 400;
+    [Tooltip("Flash the screen white when a Nuke fires (CoD-style). Disable to skip the flash.")]
+    public bool nukeFlashEnabled = true;
+
+    [Header("Carpenter")]
+    [Tooltip("Bonus points awarded when a Carpenter is collected (boards up barricades in classic CoD).")]
+    public int carpenterBonusPoints = 200;
 
     [Header("Pickup")]
     [Tooltip("Seconds a dropped pickup stays in the world before despawning.")]
@@ -58,8 +66,20 @@ public class PowerupManager : MonoBehaviour
     private static float instaKillEndTime;
     private static float doublePointsEndTime;
 
+    private bool nukeFlashActive;   // true while the nuke white flash is on screen
+    private float nukeFlashEndTime;
+
+    // Single source of truth for the Double Points multiplier value.
+    private const int DoublePointsMultiplier = 2;
+
     private const string GameplayScene = "SchoolOfTheDead";
     private static PowerupManager _runtimeInstance;
+
+    // Weighted drop table (CoD-style: common drops far more frequent than rare ones).
+    // Index order MUST match the PowerupType enum: MaxAmmo=0, InstaKill=1,
+    // DoublePoints=2, Nuke=3, Carpenter=4. Total is 100 so each weight is ~its %:
+    //   MaxAmmo 35%, InstaKill 20%, DoublePoints 30%, Nuke 10%, Carpenter 5%.
+    private static readonly float[] DropWeights = { 35f, 20f, 30f, 10f, 5f };
 
     private GUIStyle hudStyle;
 
@@ -106,7 +126,7 @@ public class PowerupManager : MonoBehaviour
         DoublePointsActive = false;
         instaKillEndTime = 0f;
         doublePointsEndTime = 0f;
-        PlayerPoints.PointsMultiplier = 1;
+        PlayerPoints.PointsMultiplier = 1; // clear any DoublePointsMultiplier back to normal
     }
 
     private void Awake()
@@ -157,6 +177,39 @@ public class PowerupManager : MonoBehaviour
             DoublePointsActive = false;
             PlayerPoints.PointsMultiplier = 1;
         }
+        if (nukeFlashActive && Time.time >= nukeFlashEndTime)
+        {
+            nukeFlashActive = false;
+        }
+    }
+
+    /// <summary>
+    /// Nuke: flash the screen white (0.3s), then kill every living zombie with a small
+    /// stagger (~0.05s each) so they drop over roughly a second, then award the bonus.
+    /// </summary>
+    private IEnumerator NukeRoutine()
+    {
+        if (nukeFlashEnabled)
+        {
+            nukeFlashActive = true;
+            nukeFlashEndTime = Time.time + 0.3f;
+            yield return new WaitForSeconds(0.3f);
+        }
+
+        ZombieAgent[] zombies = FindObjectsByType<ZombieAgent>(FindObjectsSortMode.None);
+        foreach (ZombieAgent z in zombies)
+        {
+            if (z != null && !z.IsDead)
+            {
+                z.TakeDamage(99999);
+                yield return new WaitForSeconds(0.05f);
+            }
+        }
+
+        if (PlayerPoints.Instance != null && nukeBonusPoints > 0)
+        {
+            PlayerPoints.Instance.Add(nukeBonusPoints);
+        }
     }
 
     private void HandleZombieKilled(Vector3 position)
@@ -166,13 +219,49 @@ public class PowerupManager : MonoBehaviour
             return;
         }
 
-        PowerupType type = (PowerupType)Random.Range(0, System.Enum.GetValues(typeof(PowerupType)).Length);
+        PowerupType type = PickWeightedRandom();
         SpawnPickup(type, position + Vector3.up * 0.5f);
+    }
+
+    /// <summary>
+    /// Picks a power-up type using <see cref="DropWeights"/>: sums the weights, rolls a
+    /// random value in [0, total), then walks the table to find the selected type.
+    /// </summary>
+    private PowerupType PickWeightedRandom()
+    {
+        float total = 0f;
+        for (int i = 0; i < DropWeights.Length; i++)
+        {
+            total += DropWeights[i];
+        }
+
+        float roll = Random.value * total;
+        float cumulative = 0f;
+        for (int i = 0; i < DropWeights.Length; i++)
+        {
+            cumulative += DropWeights[i];
+            if (roll < cumulative)
+            {
+                return (PowerupType)i;
+            }
+        }
+
+        return PowerupType.MaxAmmo; // fallback (only if weights are empty/zero)
     }
 
     private void SpawnPickup(PowerupType type, Vector3 position)
     {
         Powerup.Spawn(type, position, pickupLifetime);
+    }
+
+    /// <summary>
+    /// Public entry point to drop a power-up pickup at a world position. Used by systems
+    /// like RoundManager for milestone round-end drops; mirrors the internal random-drop
+    /// path and uses the same <see cref="pickupLifetime"/>.
+    /// </summary>
+    public void SpawnPowerupAt(PowerupType type, Vector3 position)
+    {
+        SpawnPickup(type, position);
     }
 
     /// <summary>Apply a power-up's effect. Called by a <see cref="Powerup"/> on collect.</summary>
@@ -196,24 +285,32 @@ public class PowerupManager : MonoBehaviour
                 break;
 
             case PowerupType.DoublePoints:
+                if (DoublePointsActive)
+                {
+                    // Already active: just refresh the timer, never re-stack the multiplier.
+                    doublePointsEndTime = Time.time + Mathf.Max(0f, doublePointsDuration);
+                    Debug.Log("[PowerupManager] Double Points timer refreshed.");
+                    return;
+                }
                 DoublePointsActive = true;
                 doublePointsEndTime = Time.time + Mathf.Max(0f, doublePointsDuration);
-                PlayerPoints.PointsMultiplier = 2;
+                PlayerPoints.PointsMultiplier = DoublePointsMultiplier;
+                Debug.Log("[PowerupManager] Double Points activated.");
                 break;
 
             case PowerupType.Nuke:
+                // Flash the screen, then kill all zombies staggered over ~1s, then
+                // award the bonus (handled in the coroutine).
+                StartCoroutine(NukeRoutine());
+                break;
+
+            case PowerupType.Carpenter:
             {
-                ZombieAgent[] zombies = FindObjectsByType<ZombieAgent>(FindObjectsSortMode.None);
-                foreach (ZombieAgent z in zombies)
+                // No boardable-window system in this project, so Carpenter awards its
+                // classic flat points bonus to the player.
+                if (PlayerPoints.Instance != null && carpenterBonusPoints > 0)
                 {
-                    if (z != null)
-                    {
-                        z.TakeDamage(99999);
-                    }
-                }
-                if (PlayerPoints.Instance != null && nukeBonusPoints > 0)
-                {
-                    PlayerPoints.Instance.Add(nukeBonusPoints);
+                    PlayerPoints.Instance.Add(carpenterBonusPoints);
                 }
                 break;
             }
@@ -231,6 +328,7 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InstaKill: return "INSTA-KILL";
             case PowerupType.DoublePoints: return "DOUBLE POINTS";
             case PowerupType.Nuke: return "NUKE";
+            case PowerupType.Carpenter: return "CARPENTER";
             default: return type.ToString();
         }
     }
@@ -243,12 +341,23 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InstaKill: return new Color(1f, 0.85f, 0.2f);   // gold
             case PowerupType.DoublePoints: return new Color(1f, 0.3f, 0.3f); // red
             case PowerupType.Nuke: return new Color(0.4f, 1f, 0.4f);         // green
+            case PowerupType.Carpenter: return new Color(0.7f, 0.45f, 0.2f); // wood brown
             default: return Color.white;
         }
     }
 
     private void OnGUI()
     {
+        // Nuke white flash (fades out over its 0.3s window), drawn over everything.
+        if (nukeFlashActive)
+        {
+            float remaining = Mathf.Clamp01((nukeFlashEndTime - Time.time) / 0.3f);
+            Color prevC = GUI.color;
+            GUI.color = new Color(1f, 1f, 1f, 0.7f * remaining);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = prevC;
+        }
+
         if (!InstaKillActive && !DoublePointsActive)
         {
             return;

@@ -16,7 +16,7 @@ public class PlayerPoints : MonoBehaviour
     public int Points { get; private set; }
 
     /// <summary>
-    /// Global multiplier applied to every <see cref="Add"/> (Double Points power-up).
+    /// Global multiplier applied to every <see cref="AddPoints"/> (Double Points power-up).
     /// 1 = normal. Set/cleared by PowerupManager. Never below 1.
     /// </summary>
     public static int PointsMultiplier { get; set; } = 1;
@@ -38,7 +38,7 @@ public class PlayerPoints : MonoBehaviour
     }
 
     /// <summary>Adds points to the player's total. Ignores non-positive amounts.</summary>
-    public void Add(int amount)
+    public void AddPoints(int amount)
     {
         if (amount <= 0)
         {
@@ -51,30 +51,47 @@ public class PlayerPoints : MonoBehaviour
         amount *= mult;
 
         Points += amount;
+        Points = Mathf.Max(0, Points);
         Debug.Log($"Added {amount} points (total: {Points})");
         OnPointsChanged?.Invoke(Points);
     }
 
+    /// <summary>Alias for AddPoints for backward compatibility.</summary>
+    public void Add(int amount) => AddPoints(amount);
+
+    /// <summary>Returns the current points total.</summary>
+    public int GetPoints() => Points;
+
+    /// <summary>Returns true if the player can afford the given cost.</summary>
+    public bool CanAfford(int cost) => Points >= cost;
+
     /// <summary>
-    /// Attempts to spend points.
-    /// Treats a non-positive amount as free (returns true, no change).
-    /// Returns true and subtracts if the player can afford it; otherwise false.
+    /// Attempts to spend points. Returns true if successful (or cost <= 0).
+    /// Points never go below zero.
     /// </summary>
-    public bool TrySpend(int amount)
+    public bool SpendPoints(int cost)
     {
-        if (amount <= 0)
+        if (cost <= 0)
         {
             return true;
         }
 
-        if (Points >= amount)
+        if (Points >= cost)
         {
-            Points -= amount;
-            Debug.Log($"Spent {amount} points (total: {Points})");
+            Points -= cost;
+            Points = Mathf.Max(0, Points);
+            Debug.Log($"Spent {cost} points (total: {Points})");
             OnPointsChanged?.Invoke(Points);
             return true;
         }
 
         return false;
     }
+
+    /// <summary>
+    /// Attempts to spend points (legacy name).
+    /// Treats a non-positive amount as free (returns true, no change).
+    /// Returns true and subtracts if the player can afford it; otherwise false.
+    /// </summary>
+    public bool TrySpend(int amount) => SpendPoints(amount);
 }

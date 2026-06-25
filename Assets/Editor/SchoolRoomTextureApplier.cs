@@ -33,6 +33,9 @@ public static class SchoolRoomTextureApplier
             { SurfaceType.Trim, CreateTrimMaterial() },
         };
 
+        // The parking lot keeps its asphalt (NOT the indoor tile floor).
+        Material asphalt = CreateOrUpdateMaterial("Asphalt Parking Lot", "Asphalt.png", new Vector2(12f, 3f), 0.8f, 0.1f);
+
         Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
         int changedRenderers = 0;
 
@@ -45,7 +48,9 @@ public static class SchoolRoomTextureApplier
                     continue;
                 }
 
-                renderer.sharedMaterial = materials[surfaceType];
+                // Parking-lot ground gets asphalt, never the indoor tile.
+                bool isParking = renderer.gameObject.name.ToLowerInvariant().Contains("parking");
+                renderer.sharedMaterial = (isParking && surfaceType == SurfaceType.Floor) ? asphalt : materials[surfaceType];
                 changedRenderers++;
             }
         }

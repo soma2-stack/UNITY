@@ -64,6 +64,13 @@ public class PlayerHealth : MonoBehaviour
     /// <summary>True while the player is downed and awaiting revive / bleed-out.</summary>
     public bool IsDowned { get; private set; }
 
+    /// <summary>
+    /// True while the player is downed but not yet finally dead: in this state they may
+    /// use ONLY their reduced-damage downed pistol. WeaponController reads this to know
+    /// whether to apply the downed-gun damage penalty.
+    /// </summary>
+    public bool IsDownedGunActive => IsDowned && !IsDead;
+
     /// <summary>Seconds remaining before bleed-out while downed (0 when not downed).</summary>
     public float BleedOutRemaining { get; private set; }
 
@@ -74,6 +81,14 @@ public class PlayerHealth : MonoBehaviour
     private void Awake()
     {
         CurrentHealth = maxHealth;
+
+        // CoD Zombies: losing a random perk each time you are revived.
+        OnPlayerRevived += HandleRevivedLosePerk;
+    }
+
+    private void HandleRevivedLosePerk()
+    {
+        PerkManager.Instance?.LoseRandomPerk();
     }
 
     private void Update()
@@ -195,7 +210,9 @@ public class PlayerHealth : MonoBehaviour
         lastDamageTime = Time.time;
         regenAccumulator = 0f;
 
-        int restored = Mathf.Max(1, Mathf.RoundToInt(maxHealth * Mathf.Clamp01(reviveHealthFraction)));
+        // Authentic CoD Zombies: a revive restores EXACTLY 25% of max health (the
+        // reviveHealthFraction field is intentionally ignored to match base-game feel).
+        int restored = Mathf.Max(1, Mathf.RoundToInt(maxHealth * 0.25f));
         CurrentHealth = Mathf.Clamp(restored, 1, maxHealth);
 
         Debug.Log("[PlayerHealth] Player revived (" + CurrentHealth + "/" + maxHealth + ")");
@@ -228,7 +245,7 @@ public class PlayerHealth : MonoBehaviour
         BleedOutRemaining = Mathf.Max(0f, BleedOutRemaining - Time.deltaTime);
 
         // Quick Revive: solo self-revive after a short delay (null-safe if no PerkManager).
-        if (PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.QuickRevive))
+        if (PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RescueRush))
         {
             float downedFor = Time.time - downedAtTime;
             if (downedFor >= Mathf.Max(0f, quickReviveSelfReviveDelay))
@@ -273,7 +290,7 @@ public class PlayerHealth : MonoBehaviour
         }
         else if (IsDowned)
         {
-            bool quickRevive = PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.QuickRevive);
+            bool quickRevive = PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RescueRush);
             label = quickRevive
                 ? "DOWNED - reviving... (" + BleedOutRemaining.ToString("0") + "s)"
                 : "DOWNED - bleeding out: " + BleedOutRemaining.ToString("0") + "s";
@@ -283,7 +300,8 @@ public class PlayerHealth : MonoBehaviour
             label = "Health: " + CurrentHealth + " / " + maxHealth;
         }
 
-        // Drawn slightly lower so it sits under a points display (PlayerPoints).
-        GUI.Label(new Rect(10, 30, 320, 24), label);
+        // Bottom-left, clear of GameHud's top-left player-point rows and the
+        // bottom-right weapon/ammo readout.
+        GUI.Label(new Rect(10, Screen.height - 30f, 320, 24), label);
     }
 }

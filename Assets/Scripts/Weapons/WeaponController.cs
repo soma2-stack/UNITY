@@ -17,12 +17,29 @@ public class WeaponController : MonoBehaviour
     [Tooltip("Maximum weapon slots (classic Zombies = 2). When full, GiveWeapon replaces the current slot.")]
     public int maxWeaponSlots = 2;
 
+    [Tooltip("If no weapons are configured, automatically give the classic M1911 starting pistol so the player is never unarmed. Disable to configure weapons manually.")]
+    public bool startWithPistol = true;
+
     [Header("Aiming")]
     [Tooltip("Optional. If left null, Camera.main (then any Camera) is used as the aim ray origin.")]
     public Transform aimCamera;
 
     [Tooltip("Optional layers the rays can hit. Leave as Everything to hit all.")]
     public LayerMask hitMask = ~0;
+
+    [Header("Melee / Knife")]
+    [Tooltip("Key to perform an instant-kill knife/melee attack.")]
+    public KeyCode meleeKey = KeyCode.V;
+    [Tooltip("Range of the knife attack in world units.")]
+    public float meleeRange = 2.5f;
+    [Tooltip("Cooldown between knife attacks in seconds.")]
+    public float meleeCooldown = 0.8f;
+
+    [Header("Hit Feedback")]
+    [Tooltip("Optional blood/hit particle prefab, spawned at the impact point only when a ZombieAgent is shot. Leave empty for no blood.")]
+    public GameObject bloodHitEffect;
+    [Tooltip("Seconds before a spawned blood effect is destroyed (1-2 is typical).")]
+    public float bloodEffectLifetime = 1.5f;
 
     [Header("Perk Multipliers")]
     [Tooltip("Fire-rate multiplier (Double Tap perk). Higher = faster firing. 1 = normal.")]
@@ -34,6 +51,13 @@ public class WeaponController : MonoBehaviour
     private Transform cam;          // Resolved aim transform
     private float nextFireTime;     // Time.time when the next shot is allowed
     private bool isReloading;
+    private PlayerHealth playerHealth; // cached on the same GameObject/parent; gates firing while downed/dead
+    private float nextMeleeTime;        // earliest Time.time the next knife is allowed
+    private float knifeSwingEndTime;    // IsKnifing stays true until this time after a swing
+    private SimpleGunRecoil gunRecoil;  // Optional FPS gun kickback script found on child weapon model
+
+    /// <summary>True for a short window while a knife swing is in progress (HUD/animator can react).</summary>
+    public bool IsKnifing { get; private set; }
 
     private Weapon Current =>
         (weapons != null && currentIndex >= 0 && currentIndex < weapons.Count) ? weapons[currentIndex] : null;
@@ -95,7 +119,9 @@ public class WeaponController : MonoBehaviour
         StopAllCoroutines();
         isReloading = false;
 
-        int slotCap = Mathf.Max(1, maxWeaponSlots);
+        // Mule Kick raises the carry cap by ExtraWeaponSlots (read dynamically).
+        int extra = PerkManager.Instance != null ? PerkManager.Instance.ExtraWeaponSlots : 0;
+        int slotCap = Mathf.Max(1, maxWeaponSlots + extra);
         if (weapons.Count < slotCap)
         {
             weapons.Add(weapon);
@@ -131,16 +157,78 @@ public class WeaponController : MonoBehaviour
             return;
         }
 
+        // Already Pack-a-Punched: never upgrade twice. Uses a dedicated flag rather
+        // than a fragile name-suffix check.
+        if (w.isUpgraded)
+        {
+            return;
+        }
+
         if (!w.weaponName.EndsWith(" +"))
         {
-            w.weaponName += " +";
+            w.weaponName += " +"; // visual marker for the HUD only - not the upgrade gate
         }
         w.damage = Mathf.Max(1, w.damage * 2);
         w.reserveAmmo = Mathf.Max(w.reserveAmmo, w.magazineSize * 5);
         w.ammoInMag = Mathf.Max(0, w.magazineSize);
         w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
+        w.isUpgraded = true;
 
         Debug.Log("[WeaponController] Pack-a-Punched: " + w.weaponName + " (dmg " + w.damage + ")");
+    }
+
+    /// <summary>
+    /// Called when the player loses Mule Kick. If they are over the base slot cap
+    /// (i.e. carrying the extra Mule Kick weapon), drop the most recently acquired
+    /// weapon (the last slot): hide its model, null it, and trim the list back down
+    /// to maxWeaponSlots. Re-clamps the equipped index afterwards.
+    /// </summary>
+    public void RemoveExtraWeaponSlot()
+    {
+        if (weapons == null)
+        {
+            return;
+        }
+
+        int baseCap = Mathf.Max(1, maxWeaponSlots);
+        while (weapons.Count > baseCap)
+        {
+            int last = weapons.Count - 1;
+            Weapon w = weapons[last];
+            if (w != null && w.weaponModel != null)
+            {
+                w.weaponModel.SetActive(false);
+            }
+            weapons[last] = null;
+            weapons.RemoveAt(last);
+        }
+
+        currentIndex = weapons.Count > 0 ? Mathf.Clamp(currentIndex, 0, weapons.Count - 1) : 0;
+        StopAllCoroutines();
+        isReloading = false;
+        EquipCurrent();
+    }
+
+    /// <summary>
+    /// Refill ONLY the reserve ammo for the named weapon back to its configured
+    /// reserveAmmo (CoD wall-buy ammo). Never touches ammoInMag, so it does not
+    /// reload the current magazine. No-op if the weapon isn't owned.
+    /// </summary>
+    public void RefillReserveAmmo(string weaponName)
+    {
+        if (weapons == null)
+        {
+            return;
+        }
+
+        foreach (Weapon w in weapons)
+        {
+            if (w != null && w.weaponName == weaponName)
+            {
+                w.ammoInReserve = Mathf.Max(0, w.reserveAmmo);
+                return;
+            }
+        }
     }
 
     /// <summary>Refill magazine and reserve ammo for every weapon (Max Ammo power-up).</summary>
@@ -168,6 +256,15 @@ public class WeaponController : MonoBehaviour
     void Start()
     {
         ResolveCamera();
+        gunRecoil = GetComponentInChildren<SimpleGunRecoil>();
+
+        // Cache the player's health (same GameObject or a parent) so we can block
+        // firing/switching while downed or dead, and cancel reloads on the way down.
+        playerHealth = GetComponentInParent<PlayerHealth>();
+        if (playerHealth != null)
+        {
+            playerHealth.OnPlayerDowned += HandlePlayerDowned;
+        }
 
         // Seed runtime ammo for every weapon so values persist across switches.
         if (weapons != null)
@@ -179,6 +276,32 @@ public class WeaponController : MonoBehaviour
                     w.InitAmmo();
                 }
             }
+        }
+
+        // Guaranteed starting weapon: if nothing was configured, give the classic
+        // M1911 starting pistol so the player never spawns unarmed.
+        if (startWithPistol && (weapons == null || weapons.Count == 0))
+        {
+            Debug.Log("[WeaponController] No weapons configured — giving default M1911 starting pistol.");
+            if (weapons == null)
+            {
+                weapons = new List<Weapon>();
+            }
+            Weapon m1911 = new Weapon
+            {
+                weaponName = "M1911",
+                damage = 40,
+                fireRate = 3f,
+                automatic = false,
+                range = 80f,
+                spread = 1f,
+                magazineSize = 8,
+                reserveAmmo = 48,
+                reloadTime = 1.8f,
+            };
+            m1911.InitAmmo();
+            weapons.Add(m1911);
+            currentIndex = 0;
         }
 
         // Clamp the starting index and show only the equipped model.
@@ -198,6 +321,7 @@ public class WeaponController : MonoBehaviour
 
         HandleWeaponSwitching();
         HandleReloadInput();
+        HandleMelee();
         HandleFiring();
     }
 
@@ -222,8 +346,35 @@ public class WeaponController : MonoBehaviour
         }
     }
 
+    // Cancels any in-progress reload and drops to the pistol (slot 0) the instant the
+    // player goes down - downed players may use only their starting pistol.
+    private void HandlePlayerDowned()
+    {
+        StopAllCoroutines();
+        isReloading = false;
+        if (weapons != null && weapons.Count > 0)
+        {
+            currentIndex = 0;
+            EquipCurrent();
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (playerHealth != null)
+        {
+            playerHealth.OnPlayerDowned -= HandlePlayerDowned;
+        }
+    }
+
     private void HandleWeaponSwitching()
     {
+        // No weapon switching while downed or dead.
+        if (playerHealth != null && (playerHealth.IsDowned || playerHealth.IsDead))
+        {
+            return;
+        }
+
         if (weapons == null || weapons.Count == 0)
         {
             return;
@@ -283,6 +434,18 @@ public class WeaponController : MonoBehaviour
                 w.weaponModel.SetActive(i == currentIndex);
             }
         }
+
+        // Re-bind the recoil/muzzle/sound script to the now-equipped weapon so kickback,
+        // muzzle flash and gunshot audio follow weapon switches. Prefer the equipped
+        // weapon's own model; fall back to a shared rig elsewhere on the player.
+        Weapon cur = Current;
+        gunRecoil = (cur != null && cur.weaponModel != null)
+            ? cur.weaponModel.GetComponentInChildren<SimpleGunRecoil>(true)
+            : null;
+        if (gunRecoil == null)
+        {
+            gunRecoil = GetComponentInChildren<SimpleGunRecoil>(true);
+        }
     }
 
     private void HandleReloadInput()
@@ -314,8 +477,47 @@ public class WeaponController : MonoBehaviour
         Debug.Log("[WeaponController] Reloaded " + w.weaponName + " (" + w.ammoInMag + "/" + w.ammoInReserve + ")");
     }
 
+    // Instant-kill knife on the melee key: a short raycast that kills any zombie it
+    // hits regardless of health (CoD knife). Rate-limited; blocked while downed/dead.
+    private void HandleMelee()
+    {
+        // Keep IsKnifing true for a brief swing window so the HUD/animator can react.
+        IsKnifing = Time.time < knifeSwingEndTime;
+
+        if (playerHealth != null && (playerHealth.IsDowned || playerHealth.IsDead))
+        {
+            return;
+        }
+
+        if (cam == null || Time.time < nextMeleeTime || !Input.GetKeyDown(meleeKey))
+        {
+            return;
+        }
+
+        nextMeleeTime = Time.time + Mathf.Max(0.05f, meleeCooldown);
+        knifeSwingEndTime = Time.time + 0.2f;
+        IsKnifing = true;
+
+        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, Mathf.Max(0.1f, meleeRange), hitMask, QueryTriggerInteraction.Ignore))
+        {
+            ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
+            if (zombie != null)
+            {
+                zombie.KillByMelee(); // instant kill; ZombieAgent.Die() awards the 130 melee reward
+            }
+        }
+        // Miss or non-zombie: silent (no effect), per spec.
+    }
+
     private void HandleFiring()
     {
+        // Dead: no firing at all. Downed: firing is allowed but only the pistol
+        // (forced to slot 0 on the way down) and at reduced damage (applied in Fire()).
+        if (playerHealth != null && playerHealth.IsDead)
+        {
+            return;
+        }
+
         Weapon w = Current;
         if (w == null || isReloading || cam == null)
         {
@@ -354,6 +556,11 @@ public class WeaponController : MonoBehaviour
             return;
         }
 
+        if (gunRecoil != null)
+        {
+            gunRecoil.Kick();
+        }
+
         // Apply random spread inside a cone around the camera forward direction.
         Vector3 dir = cam.forward;
         if (w.spread > 0f)
@@ -369,10 +576,59 @@ public class WeaponController : MonoBehaviour
             ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
             if (zombie != null)
             {
-                // Insta-Kill power-up: any hit is lethal.
-                int damage = PowerupManager.InstaKillActive ? 99999 : w.damage;
-                zombie.TakeDamage(damage);
-                Debug.Log("[WeaponController] Hit zombie '" + hit.collider.name + "' for " + damage + " damage.");
+                HitMarkerHud.Show(); // flash the center hit marker on a confirmed zombie hit
+
+                // Optional blood/hit effect at the impact point, oriented to the surface
+                // normal. Only spawned on a zombie hit (walls/floors/props fall to the
+                // else branch below). No-op when no prefab is assigned.
+                if (bloodHitEffect != null)
+                {
+                    Quaternion fxRot = hit.normal.sqrMagnitude > 0.0001f
+                        ? Quaternion.LookRotation(hit.normal)
+                        : Quaternion.identity;
+                    GameObject fx = Instantiate(bloodHitEffect, hit.point, fxRot);
+                    Destroy(fx, Mathf.Max(0.1f, bloodEffectLifetime));
+                }
+
+                bool isHeadshot = hit.collider.CompareTag("Head");
+                // Insta-Kill power-up: any hit is lethal. Otherwise use the weapon's
+                // damage, cut to a quarter (min 1) while the player is downed - the
+                // CoD downed pistol does heavily reduced damage.
+                int damage;
+                if (PowerupManager.InstaKillActive)
+                {
+                    damage = 99999;
+                }
+                else
+                {
+                    damage = w.damage;
+                    if (PerkManager.Instance != null &&
+                        PerkManager.Instance.HasPerk(PerkType.RapidRuin))
+                    {
+                        damage = Mathf.RoundToInt(damage * 2f);
+                    }
+                    if (playerHealth != null && playerHealth.IsDownedGunActive)
+                    {
+                        damage = Mathf.Max(1, damage / 4);
+                    }
+                }
+                bool wasAlive = !zombie.IsDead;
+                zombie.TakeDamage(damage, isHeadshot);
+                
+                if (wasAlive)
+                {
+                    // POINTS OWNERSHIP: ZombieAgent owns the entire economy now -
+                    // TakeDamage() awards the +10 hit and Die() awards the kill
+                    // bonus. WeaponController only logs so points never double-count.
+                    if (zombie.IsDead)
+                    {
+                        Debug.Log($"[WeaponController] Killed zombie '{hit.collider.name}' {(isHeadshot ? "(HEADSHOT)" : "")} for {damage} damage.");
+                    }
+                    else
+                    {
+                        Debug.Log($"[WeaponController] Hit zombie '{hit.collider.name}' for {damage} damage.");
+                    }
+                }
             }
             else
             {
