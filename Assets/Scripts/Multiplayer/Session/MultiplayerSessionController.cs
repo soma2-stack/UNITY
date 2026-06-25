@@ -106,6 +106,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
             Allocation allocation = await RelayService.Instance.CreateAllocationAsync(MaximumPlayers - 1);
             JoinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
             lastJoinCode = JoinCode;
+            Debug.Log("[MP] Join code created: " + JoinCode);
             JoinCodeChanged?.Invoke(JoinCode);
             transport.SetRelayServerData(allocation.ToRelayServerData("dtls"));
 
@@ -114,6 +115,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
             {
                 throw new InvalidOperationException("Netcode could not start the host.");
             }
+            Debug.Log("[MP] Host started");
             RegisterMessageHandlers();
 
             roster.Clear();
@@ -226,6 +228,10 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         if (result != SceneEventProgressStatus.Started)
         {
             Fail("The network scene load could not start.");
+        }
+        else
+        {
+            Debug.Log("[MP] Network scene load started: " + GameplayScene);
         }
 
         return Task.CompletedTask;
@@ -383,6 +389,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
         netObj.SpawnAsPlayerObject(clientId, true);
         spawnedPlayers.Add(clientId);
+        Debug.Log("[MP] Player spawned for clientId=" + clientId);
     }
 
     private void ConfigureConnectionData()
@@ -440,11 +447,13 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
             disconnectedAt.Remove(payload.playerId);
             pendingPayloads.Remove(clientId);
+            Debug.Log("[MP] Client joined: clientId=" + clientId + " name=" + payload.displayName);
             BroadcastRoster();
         }
 
         if (!networkManager.IsServer && clientId == networkManager.LocalClientId)
         {
+            Debug.Log("[MP] Connected to host (local clientId=" + clientId + ")");
             connectionCompletion?.TrySetResult(true);
             LoadingScreenController.Instance?.SetStatus("CONNECTED. SYNCING LOBBY...");
             LoadingScreenController.Instance?.SetProgress(0.75f);
@@ -568,6 +577,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
     private void NotifyRosterChanged()
     {
+        Debug.Log("[MP] Roster updated: " + roster.Count + " entries");
         RosterChanged?.Invoke(roster.ToArray());
     }
 
