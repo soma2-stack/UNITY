@@ -209,7 +209,7 @@ public class ZombieAgent : MonoBehaviour
         {
             // Start just past our own body so we don't hit ourselves.
             Vector3 dir = to / dist;
-            Vector3 rayStart = origin + dir * 0.5f;
+            Vector3 rayStart = origin + dir * 0.15f;
             if (Physics.Raycast(rayStart, dir, out RaycastHit hit, dist, ~0, QueryTriggerInteraction.Ignore))
             {
                 // Blocked unless the first thing we hit is the player.
