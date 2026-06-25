@@ -1,3 +1,4 @@
+// ✅ INTERACTABLES AUDIT FIXES
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -37,9 +38,17 @@ public class Door : MonoBehaviour
              "Opening this door opens all of these too. Set automatically by the door placer.")]
     public Door[] linkedDoors;
 
+    [Header("Audio")]
+    // TODO: assign openSound and audioSource in Inspector
+    [Tooltip("Sound played once when the door opens. Leave empty for no sound.")]
+    public AudioClip openSound;
+    [Tooltip("Source used to play openSound. Leave empty for no sound.")]
+    public AudioSource audioSource;
+
     public bool IsOpen { get; private set; }
 
-    private Transform player;
+    private Transform[] players;
+    private Transform nearestPlayer;
     private Collider doorCollider;
     private NavMeshObstacle navObstacle;
     private Vector3 closedLocalPosition;
@@ -47,6 +56,7 @@ public class Door : MonoBehaviour
     private bool isMoving;
     private float nextPromptTime;
     private bool playerInRange;
+    private GUIStyle promptStyle;
 
     private void Awake()
     {
@@ -92,7 +102,7 @@ public class Door : MonoBehaviour
 
     private void Start()
     {
-        FindPlayer();
+        FindPlayers();
     }
 
     private void Update()
@@ -106,18 +116,35 @@ public class Door : MonoBehaviour
             return;
         }
 
-        if (player == null)
+        if (players == null || players.Length == 0)
         {
-            FindPlayer();
-            if (player == null)
+            FindPlayers();
+            if (players == null || players.Length == 0)
             {
                 playerInRange = false;
+                nearestPlayer = null;
                 return;
             }
         }
 
-        float distance = Vector3.Distance(transform.position, player.position);
-        playerInRange = distance <= interactionRange;
+        // Co-op aware: check every player and keep the closest one within range.
+        nearestPlayer = null;
+        float bestDistance = float.MaxValue;
+        foreach (Transform p in players)
+        {
+            if (p == null)
+            {
+                continue;
+            }
+            float distance = Vector3.Distance(transform.position, p.position);
+            if (distance <= interactionRange && distance < bestDistance)
+            {
+                bestDistance = distance;
+                nearestPlayer = p;
+            }
+        }
+
+        playerInRange = nearestPlayer != null;
         if (!playerInRange)
         {
             return;
@@ -129,6 +156,21 @@ public class Door : MonoBehaviour
         }
     }
 
+    // Lazily build the prompt style once (mirrors GameOverController.EnsureStyles)
+    // so OnGUI doesn't allocate a new GUIStyle every frame the player is in range.
+    private void EnsureStyles()
+    {
+        if (promptStyle == null)
+        {
+            promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
+    }
+
     private void OnGUI()
     {
         if (IsOpen || !playerInRange)
@@ -136,14 +178,10 @@ public class Door : MonoBehaviour
             return;
         }
 
-        string label = cost > 0 ? $"Press E   Buy Door   [{cost}]" : "Press E   Open Door";
+        EnsureStyles();
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 22,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-        };
+        string label = cost > 0 ? $"Press E   Buy Door   [{cost}]" : "Press E   Open Door";
+        GUIStyle style = promptStyle;
 
         float w = 360f;
         float h = 34f;
@@ -184,6 +222,9 @@ public class Door : MonoBehaviour
         }
 
         // Paid door: must be able to afford it (when an economy exists).
+        // TODO: per-player economy — charge nearestPlayer's own PlayerPoints once
+        // co-op gives each player a separate economy. For now there is a single
+        // shared economy, so we spend from the PlayerPoints singleton.
         if (PlayerPoints.Instance != null)
         {
             if (!PlayerPoints.Instance.TrySpend(cost))
@@ -221,6 +262,12 @@ public class Door : MonoBehaviour
         IsOpen = true;
         isMoving = true;
         playerInRange = false;
+
+        // Door open SFX (no-op until both fields are wired in the Inspector).
+        if (audioSource != null && openSound != null)
+        {
+            audioSource.PlayOneShot(openSound);
+        }
 
         // Stop blocking the player immediately.
         if (doorCollider != null)
@@ -270,19 +317,25 @@ public class Door : MonoBehaviour
         }
     }
 
-    private void FindPlayer()
+    private void FindPlayers()
     {
-        // Prefer the CharacterController player (CoDMovement / PlayerMovement use one).
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller != null)
+        // Co-op aware: gather EVERY CharacterController player (CoDMovement /
+        // PlayerMovement use one) so any player can interact with the door.
+        CharacterController[] controllers = FindObjectsByType<CharacterController>(FindObjectsSortMode.None);
+        if (controllers != null && controllers.Length > 0)
         {
-            player = controller.transform;
+            players = new Transform[controllers.Length];
+            for (int i = 0; i < controllers.Length; i++)
+            {
+                players[i] = controllers[i] != null ? controllers[i].transform : null;
+            }
             return;
         }
 
+        // Fallback so the door still works if no CharacterController is present.
         if (Camera.main != null)
         {
-            player = Camera.main.transform;
+            players = new[] { Camera.main.transform };
         }
     }
 
