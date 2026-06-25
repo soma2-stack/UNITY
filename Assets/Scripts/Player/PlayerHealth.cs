@@ -38,7 +38,7 @@ public class PlayerHealth : MonoBehaviour
     [Tooltip("Seconds the player can stay downed before bleeding out (final death).")]
     public float bleedOutTime = 30f;
     [Tooltip("Fraction of max health restored on revive (0..1). 1 = full health.")]
-    [Range(0f, 1f)] public float reviveHealthFraction = 1f;
+    [Range(0f, 1f)] public float reviveHealthFraction = 0.25f;
     [Tooltip("Delay (seconds) before a Quick Revive solo self-revive completes once downed.")]
     public float quickReviveSelfReviveDelay = 3f;
     [Tooltip("If true the player is in solo mode and RescueRush self-revives. In multiplayer this is handled by the revive interaction script.")]
@@ -212,9 +212,8 @@ public class PlayerHealth : MonoBehaviour
         lastDamageTime = Time.time;
         regenAccumulator = 0f;
 
-        // Authentic CoD Zombies: a revive restores EXACTLY 25% of max health (the
-        // reviveHealthFraction field is intentionally ignored to match base-game feel).
-        int restored = Mathf.Max(1, Mathf.RoundToInt(maxHealth * 0.25f));
+        // Revive restores reviveHealthFraction of max health (default 0.25).
+        int restored = Mathf.Max(1, Mathf.RoundToInt(maxHealth * reviveHealthFraction));
         CurrentHealth = Mathf.Clamp(restored, 1, maxHealth);
 
         Debug.Log("[PlayerHealth] Player revived (" + CurrentHealth + "/" + maxHealth + ")");
