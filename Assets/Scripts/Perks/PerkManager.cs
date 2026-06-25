@@ -387,8 +387,10 @@ public class PerkManager : MonoBehaviour
             float x = startX + i * (boxSize + gap);
 
             Color prev = GUI.color;
-            GUI.color = PerkColor(perk);
-            GUI.DrawTexture(new Rect(x, y, boxSize, boxSize), Texture2D.whiteTexture);
+            Texture2D icon = GetPerkIcon(perk);
+            Texture2D tex  = icon != null ? icon : Texture2D.whiteTexture;
+            GUI.color      = icon != null ? Color.white : PerkColor(perk);
+            GUI.DrawTexture(new Rect(x, y, boxSize, boxSize), tex);
             GUI.color = prev;
 
             GUI.Label(new Rect(x - gap, y + boxSize, boxSize + gap * 2f, labelH), PerkAbbreviation(perk), perkLabelStyle);
