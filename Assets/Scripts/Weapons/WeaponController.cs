@@ -354,6 +354,15 @@ public class WeaponController : MonoBehaviour
                 reloadTime = 1.8f,
             };
             pistol.InitAmmo();
+
+            // Clear, actionable warning instead of a silent invisible gun.
+            if (pistol.weaponModel == null)
+            {
+                Debug.LogWarning("[WeaponController] Default Pistol ('" + pistol.weaponName + "') has no Weapon Model " +
+                    "assigned — it will be invisible in first person. Assign the M1911 prefab to " +
+                    "WeaponController > Default Starting Weapon > Weapon Model.");
+            }
+
             weapons.Add(pistol);
             currentIndex = 0;
         }
