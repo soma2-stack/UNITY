@@ -1,12 +1,18 @@
 // ✅ WEAPONS AUDIT FIXES
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Netcode;
 using UnityEngine;
 
 // Simple hitscan (raycast) shooting system for "School Of The Dead".
 // No animations are used — pure raycast firing plus enabling/disabling weapon models.
 // Put this on the player root or the camera. Uses the legacy Input Manager only.
-public class WeaponController : MonoBehaviour
+//
+// Server-authoritative in a networked session: a client's shot is sent to the server
+// (FireServerRpc), the SERVER does the spread + raycast + damage, and hit feedback is
+// broadcast back to clients (ClientRpc). In solo (not network-spawned) everything runs
+// locally exactly as before.
+public class WeaponController : NetworkBehaviour
 {
     [Header("Weapons")]
     [Tooltip("Configure each weapon's stats and assign its in-hand model.")]
@@ -814,24 +820,134 @@ public class WeaponController : MonoBehaviour
         ReturnBloodEffect(fx);
     }
 
-    // Routes zombie damage to the correct authority: solo or the server apply it
-    // directly; a client in a networked session forwards the hit to the server via its
-    // owned NetworkPlayerAvatar so health/points stay server-authoritative.
-    private void ApplyZombieDamage(ZombieAgent zombie, int damage, bool isHeadshot)
+    [ServerRpc(RequireOwnership = false)]
+    private void FireServerRpc(Vector3 origin, Vector3 forward, int baseDamage, float range, float spread, ServerRpcParams rpcParams = default)
     {
-        Unity.Netcode.NetworkManager nm = Unity.Netcode.NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || nm.IsServer)
+        ulong shooter = rpcParams.Receive.SenderClientId;
+        PerformShot(origin, forward, baseDamage, range, spread, shooter, false);
+        // Other clients play this gun's muzzle/sound for the shot.
+        FireEffectsClientRpc(shooter);
+    }
+
+    [ClientRpc]
+    private void FireEffectsClientRpc(ulong shooterClientId)
+    {
+        // The host (server) and the shooter already played their own effects.
+        if (IsServer)
         {
-            zombie.TakeDamage(damage, isHeadshot);
+            return;
+        }
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClientId == shooterClientId)
+        {
+            return;
+        }
+        if (gunRecoil != null)
+        {
+            gunRecoil.Kick();
+        }
+    }
+
+    // The authoritative shot: server (or solo) applies spread, raycasts, deals damage,
+    // and pushes hit feedback. `origin`/`forward` come from the shooter's camera.
+    private void PerformShot(Vector3 origin, Vector3 forward, int baseDamage, float range, float spread, ulong shooterClientId, bool localShooter)
+    {
+        forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : Vector3.forward;
+
+        Vector3 dir = forward;
+        if (spread > 0f)
+        {
+            // Orthonormal basis from forward (the server doesn't have the client's cam basis).
+            Vector3 right = Vector3.Cross(Vector3.up, forward);
+            right = right.sqrMagnitude > 0.0001f ? right.normalized : Vector3.right;
+            Vector3 up = Vector3.Cross(forward, right);
+
+            float maxRad = Mathf.Tan(spread * Mathf.Deg2Rad);
+            Vector2 offset = Random.insideUnitCircle * maxRad;
+            dir = (forward + right * offset.x + up * offset.y).normalized;
+        }
+
+        if (!Physics.Raycast(origin, dir, out RaycastHit hit, range, hitMask, QueryTriggerInteraction.Ignore))
+        {
             return;
         }
 
-        Unity.Netcode.NetworkObject netObj = zombie.GetComponent<Unity.Netcode.NetworkObject>();
-        NetworkPlayerAvatar avatar = GetComponentInParent<NetworkPlayerAvatar>();
-        if (netObj != null && netObj.IsSpawned && avatar != null)
+        ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
+        if (zombie == null)
         {
-            avatar.RequestZombieDamage(netObj.NetworkObjectId, damage, isHeadshot);
+            return;
         }
+
+        bool isHeadshot = hit.collider.CompareTag("Head");
+        int damage = ComputeDamage(baseDamage);
+
+        // Authority applies damage directly (server in a session, or this peer in solo).
+        zombie.TakeDamage(damage, isHeadshot);
+
+        // Hit feedback: in a session the server broadcasts blood to everyone and a hit
+        // marker to the shooter; in solo it's all local.
+        if (IsSpawned)
+        {
+            SpawnBloodClientRpc(hit.point, hit.normal);
+            if (localShooter)
+            {
+                HitMarkerHud.Show(); // host fired its own shot
+            }
+            else
+            {
+                HitMarkerClientRpc(new ClientRpcParams
+                {
+                    Send = new ClientRpcSendParams { TargetClientIds = new[] { shooterClientId } }
+                });
+            }
+        }
+        else
+        {
+            SpawnBloodLocal(hit.point, hit.normal);
+            HitMarkerHud.Show();
+        }
+    }
+
+    // Damage with Insta-Kill / Rapid Ruin / downed-pistol modifiers (authority-side state).
+    private int ComputeDamage(int baseDamage)
+    {
+        if (PowerupManager.InstaKillActive)
+        {
+            return 99999;
+        }
+        int damage = baseDamage;
+        if (PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RapidRuin))
+        {
+            damage = Mathf.RoundToInt(damage * 2f);
+        }
+        if (playerHealth != null && playerHealth.IsDownedGunActive)
+        {
+            damage = Mathf.Max(1, damage / 4);
+        }
+        return damage;
+    }
+
+    [ClientRpc]
+    private void HitMarkerClientRpc(ClientRpcParams rpcParams = default)
+    {
+        HitMarkerHud.Show();
+    }
+
+    [ClientRpc]
+    private void SpawnBloodClientRpc(Vector3 point, Vector3 normal)
+    {
+        SpawnBloodLocal(point, normal);
+    }
+
+    private void SpawnBloodLocal(Vector3 point, Vector3 normal)
+    {
+        if (bloodHitEffect == null)
+        {
+            return;
+        }
+        Quaternion fxRot = normal.sqrMagnitude > 0.0001f ? Quaternion.LookRotation(normal) : Quaternion.identity;
+        GameObject fx = GetBloodEffect();
+        fx.transform.SetPositionAndRotation(point, fxRot);
+        StartCoroutine(ReturnBloodEffectAfterDelay(fx));
     }
 
     private void Fire(Weapon w)
@@ -841,100 +957,24 @@ public class WeaponController : MonoBehaviour
             return;
         }
 
+        // Immediate first-person feedback for the shooter (recoil / muzzle / sound).
         if (gunRecoil != null)
         {
             gunRecoil.Kick();
         }
 
-        // TODO: add a pelletsPerShot loop here to support shotgun multi-pellet firing.
-        // Each pellet should use independent spread and its own raycast, awarding hit
-        // points per pellet. Extract single-pellet logic into FirePellet(Weapon w) helper.
+        Vector3 origin = cam.position;
+        Vector3 forward = cam.forward;
 
-        // Apply random spread inside a cone around the camera forward direction.
-        Vector3 dir = cam.forward;
-        if (w.spread > 0f)
+        // MP client: the authoritative shot (spread + raycast + damage) runs on the server.
+        if (IsSpawned && !IsServer)
         {
-            float maxRad = Mathf.Tan(w.spread * Mathf.Deg2Rad);
-            Vector2 offset = Random.insideUnitCircle * maxRad;
-            dir = (cam.forward + cam.right * offset.x + cam.up * offset.y).normalized;
+            FireServerRpc(origin, forward, w.damage, w.range, w.spread);
+            return;
         }
 
-        if (Physics.Raycast(cam.position, dir, out RaycastHit hit, w.range, hitMask, QueryTriggerInteraction.Ignore))
-        {
-            // Look up the chain in case the collider is on a child of the zombie root.
-            ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
-            if (zombie != null)
-            {
-                HitMarkerHud.Show(); // flash the center hit marker on a confirmed zombie hit
-
-                // Optional blood/hit effect at the impact point, oriented to the surface
-                // normal. Only spawned on a zombie hit (walls/floors/props fall to the
-                // else branch below). No-op when no prefab is assigned.
-                if (bloodHitEffect != null)
-                {
-                    Quaternion fxRot = hit.normal.sqrMagnitude > 0.0001f
-                        ? Quaternion.LookRotation(hit.normal)
-                        : Quaternion.identity;
-                    GameObject fx = GetBloodEffect();
-                    fx.transform.SetPositionAndRotation(hit.point, fxRot);
-                    StartCoroutine(ReturnBloodEffectAfterDelay(fx));
-                }
-
-                bool isHeadshot = hit.collider.CompareTag("Head");
-                // Insta-Kill power-up: any hit is lethal. Otherwise use the weapon's
-                // damage, cut to a quarter (min 1) while the player is downed - the
-                // CoD downed pistol does heavily reduced damage.
-                int damage;
-                if (PowerupManager.InstaKillActive)
-                {
-                    damage = 99999;
-                }
-                else
-                {
-                    damage = w.damage;
-                    if (PerkManager.Instance != null &&
-                        PerkManager.Instance.HasPerk(PerkType.RapidRuin))
-                    {
-                        damage = Mathf.RoundToInt(damage * 2f);
-                    }
-                    if (playerHealth != null && playerHealth.IsDownedGunActive)
-                    {
-                        damage = Mathf.Max(1, damage / 4);
-                    }
-                }
-                bool wasAlive = !zombie.IsDead;
-                ApplyZombieDamage(zombie, damage, isHeadshot);
-                
-                if (wasAlive)
-                {
-                    // POINTS OWNERSHIP: ZombieAgent owns the entire economy now -
-                    // TakeDamage() awards the +10 hit and Die() awards the kill
-                    // bonus. WeaponController only logs so points never double-count.
-#if UNITY_EDITOR
-                    if (zombie.IsDead)
-                    {
-                        Debug.Log($"[WeaponController] Killed zombie '{hit.collider.name}' {(isHeadshot ? "(HEADSHOT)" : "")} for {damage} damage.");
-                    }
-                    else
-                    {
-                        Debug.Log($"[WeaponController] Hit zombie '{hit.collider.name}' for {damage} damage.");
-                    }
-#endif
-                }
-            }
-            else
-            {
-#if UNITY_EDITOR
-                Debug.Log("[WeaponController] Hit '" + hit.collider.name + "' at " + hit.point + ".");
-#endif
-            }
-        }
-        else
-        {
-#if UNITY_EDITOR
-            Debug.Log("[WeaponController] Shot missed (no hit within " + w.range + "m).");
-#endif
-        }
+        // Solo or server (host): perform the authoritative shot directly.
+        PerformShot(origin, forward, w.damage, w.range, w.spread, 0, true);
     }
 
     // HUD drawing is handled centrally by GameHud (which reads the public getters above),
