@@ -48,6 +48,25 @@ public class PlayerMovement : MonoBehaviour
     private bool isCrouching;
     private bool isDowned;
     private PlayerHealth playerHealth;
+    private NetworkPlayerAvatar networkAvatar; // cached for the multiplayer ownership check
+
+    // Solo / not network-spawned: this peer always controls the player. In a session:
+    // only the OWNING client drives movement (others are server/owner-replicated).
+    private bool IsLocalOwner
+    {
+        get
+        {
+            if (networkAvatar == null)
+            {
+                networkAvatar = GetComponent<NetworkPlayerAvatar>();
+            }
+            if (networkAvatar == null || !networkAvatar.IsSpawned)
+            {
+                return true;
+            }
+            return networkAvatar.IsOwner;
+        }
+    }
 
     public bool IsGrounded => isGrounded;
     public bool IsCrouching => isCrouching;
@@ -111,6 +130,12 @@ public class PlayerMovement : MonoBehaviour
 
     void Update()
     {
+        // Multiplayer: only the owning client controls this player. Solo is unaffected.
+        if (!IsLocalOwner)
+        {
+            return;
+        }
+
         if (codCamera == null || !codCamera.enabled)
             HandleMouseLook();
 
