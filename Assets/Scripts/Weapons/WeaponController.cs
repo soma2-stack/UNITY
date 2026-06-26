@@ -45,6 +45,18 @@ public class WeaponController : MonoBehaviour
     [Tooltip("Optional layers the rays can hit. Leave as Everything to hit all.")]
     public LayerMask hitMask = ~0;
 
+    [Header("View Model (First-Person)")]
+    [Tooltip("Transform under the camera that the equipped weapon's model is spawned into. " +
+             "Leave empty to auto-find a child named 'WeaponHolder' under the Main Camera " +
+             "(one is created there if it doesn't exist).")]
+    public Transform weaponHolder;
+    [Tooltip("Local position applied to a spawned weapon model under the holder.")]
+    public Vector3 weaponModelLocalPosition = Vector3.zero;
+    [Tooltip("Local euler rotation (degrees) applied to a spawned weapon model under the holder.")]
+    public Vector3 weaponModelLocalEuler = Vector3.zero;
+    [Tooltip("Local scale applied to a spawned weapon model under the holder.")]
+    public Vector3 weaponModelLocalScale = Vector3.one;
+
     [Header("Melee / Knife")]
     [Tooltip("Key to perform an instant-kill knife/melee attack.")]
     public KeyCode meleeKey = KeyCode.V;
@@ -291,6 +303,7 @@ public class WeaponController : MonoBehaviour
     void Start()
     {
         ResolveCamera();
+        ResolveWeaponHolder();
         gunRecoil = GetComponentInChildren<SimpleGunRecoil>();
 
         // Cache the player's health (same GameObject or a parent) so we can block
@@ -426,6 +439,73 @@ public class WeaponController : MonoBehaviour
         {
             Debug.LogWarning("WeaponController: No camera found after 10 attempts — firing disabled.");
         }
+    }
+
+    private const string WeaponHolderName = "WeaponHolder";
+
+    // The camera transform the weapon holder lives under: explicit aim camera -> resolved
+    // aim transform -> Camera.main -> any camera.
+    private Transform ResolveCameraTransform()
+    {
+        if (aimCamera != null)
+        {
+            return aimCamera;
+        }
+        if (cam != null)
+        {
+            return cam;
+        }
+        Camera main = Camera.main;
+        if (main == null)
+        {
+            main = FindFirstObjectByType<Camera>();
+        }
+        return main != null ? main.transform : null;
+    }
+
+    // Resolve (or create) the first-person weapon holder. Safe to call repeatedly; it
+    // only does work while weaponHolder is unset.
+    private void ResolveWeaponHolder()
+    {
+        if (weaponHolder != null)
+        {
+            return;
+        }
+
+        Transform camTransform = ResolveCameraTransform();
+        if (camTransform == null)
+        {
+            Debug.LogWarning("[WeaponController] WeaponHolder could not be resolved: no camera found yet.");
+            return;
+        }
+
+        Transform existing = FindDirectChild(camTransform, WeaponHolderName);
+        if (existing != null)
+        {
+            weaponHolder = existing;
+            Debug.Log("[WeaponController] WeaponHolder found under '" + camTransform.name + "'.");
+            return;
+        }
+
+        GameObject holder = new GameObject(WeaponHolderName);
+        holder.transform.SetParent(camTransform, false);
+        holder.transform.localPosition = Vector3.zero;
+        holder.transform.localRotation = Quaternion.identity;
+        holder.transform.localScale = Vector3.one;
+        weaponHolder = holder.transform;
+        Debug.Log("[WeaponController] WeaponHolder created under '" + camTransform.name + "'.");
+    }
+
+    private static Transform FindDirectChild(Transform parent, string childName)
+    {
+        foreach (Transform child in parent)
+        {
+            if (child.name == childName)
+            {
+                return child;
+            }
+        }
+        return null;
     }
 
     // Cancels any in-progress reload and drops to the pistol (slot 0) the instant the
