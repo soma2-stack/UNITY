@@ -363,6 +363,12 @@ public class RoundManager : MonoBehaviour
 
     private void BeginNextRound()
     {
+        // Server-authoritative: only the server (or solo) advances the round.
+        if (!IsRoundAuthority)
+        {
+            return;
+        }
+
         IntermissionActive = false; // the round is starting now; hide the banner
         CurrentRound++;
 

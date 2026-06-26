@@ -352,6 +352,17 @@ public class PlayerHealth : NetworkBehaviour
         SyncState();
     }
 
+    /// <summary>
+    /// Co-op revive entry point: a reviving client calls this so the SERVER authorizes and
+    /// performs the revive on this (the downed) player. RequireOwnership=false because the
+    /// reviver is a different player. Solo / not-networked callers should use Revive() directly.
+    /// </summary>
+    [ServerRpc(RequireOwnership = false)]
+    public void ReviveServerRpc()
+    {
+        Revive();
+    }
+
     private void EnterDowned()
     {
         if (IsDowned || IsDead)

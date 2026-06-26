@@ -120,6 +120,13 @@ public class ZombieSpawner : MonoBehaviour
     /// </summary>
     public void BeginRound(int totalToSpawn, int zombieHealth, float zombieSpeed)
     {
+        // Server-authoritative: only the server (or solo) starts a spawn wave.
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening &&
+            !NetworkManager.Singleton.IsServer)
+        {
+            return;
+        }
+
         // Drop any stale references left over from the previous round. Without this,
         // a lingering/destroyed entry could keep AliveCount above zero and either end
         // the new round prematurely (miscount) or leave it never-ending. Unsubscribe
