@@ -87,6 +87,7 @@ public class WeaponController : MonoBehaviour
     private SimpleGunRecoil gunRecoil;  // Optional FPS gun kickback script found on child weapon model
     private int _cameraResolveAttempts;  // capped retries so we stop searching for a missing camera
     private readonly Queue<GameObject> _bloodPool = new Queue<GameObject>(); // pooled blood-effect instances
+    private GameObject _spawnedViewModel; // first-person model currently spawned under the holder
 
     // Pack-a-Punch upgrade multipliers — adjust here rather than hunting magic numbers.
     private const float PAPDamageMultiplier = 2f;
@@ -580,7 +581,8 @@ public class WeaponController : MonoBehaviour
         EquipCurrent();
     }
 
-    // Enable the current weapon's model and disable all the others.
+    // Spawn the equipped weapon's model under the WeaponHolder, removing the previously
+    // spawned one, so the first-person view model switches with the weapon.
     private void EquipCurrent()
     {
         if (weapons == null)
@@ -588,22 +590,67 @@ public class WeaponController : MonoBehaviour
             return;
         }
 
+        ResolveWeaponHolder();
+
+        Weapon cur = Current;
+        Debug.Log("[WeaponController] Equipping: " + (cur != null ? cur.weaponName : "<none>"));
+
+        // 1. Remove the previously spawned view model.
+        if (_spawnedViewModel != null)
+        {
+            Debug.Log("[WeaponController] Old view model removed: " + _spawnedViewModel.name);
+            Destroy(_spawnedViewModel);
+            _spawnedViewModel = null;
+        }
+
+        // Hide any legacy IN-SCENE weapon models so they don't linger alongside the
+        // spawned view model (prefab-asset references are unaffected by this).
         for (int i = 0; i < weapons.Count; i++)
         {
             Weapon w = weapons[i];
-            if (w != null && w.weaponModel != null)
+            if (w != null && w.weaponModel != null && w.weaponModel.scene.IsValid())
             {
-                w.weaponModel.SetActive(i == currentIndex);
+                w.weaponModel.SetActive(false);
             }
         }
 
-        // Re-bind the recoil/muzzle/sound script to the now-equipped weapon so kickback,
-        // muzzle flash and gunshot audio follow weapon switches. Prefer the equipped
-        // weapon's own model; fall back to a shared rig elsewhere on the player.
-        Weapon cur = Current;
-        gunRecoil = (cur != null && cur.weaponModel != null)
-            ? cur.weaponModel.GetComponentInChildren<SimpleGunRecoil>(true)
-            : null;
+        gunRecoil = null;
+
+        // 2. Get the equipped weapon's model prefab.
+        if (cur == null || cur.weaponModel == null)
+        {
+            if (cur != null)
+            {
+                Debug.LogWarning("[WeaponController] '" + cur.weaponName + "' has no Weapon Model assigned; nothing to show.");
+            }
+        }
+        else if (weaponHolder == null)
+        {
+            Debug.LogWarning("[WeaponController] WeaponHolder is null; cannot spawn the view model for '" + cur.weaponName + "'.");
+        }
+        else
+        {
+            Debug.Log("[WeaponController] Weapon Model prefab found: " + cur.weaponModel.name);
+
+            // 3. Instantiate it under the holder.
+            GameObject model = Instantiate(cur.weaponModel, weaponHolder);
+            // 4. Position/orient/scale it for first person.
+            model.transform.localPosition = weaponModelLocalPosition;
+            model.transform.localEulerAngles = weaponModelLocalEuler;
+            model.transform.localScale = weaponModelLocalScale;
+            // 5. Make sure it's visible.
+            model.SetActive(true);
+            _spawnedViewModel = model;
+
+            Debug.Log("[WeaponController] New view model spawned under WeaponHolder: " + model.name);
+            Debug.Log("[WeaponController] View model local TRS -> pos " + model.transform.localPosition +
+                      " euler " + model.transform.localEulerAngles + " scale " + model.transform.localScale);
+
+            // 6. Re-bind the recoil/muzzle/sound script to the spawned model.
+            gunRecoil = model.GetComponentInChildren<SimpleGunRecoil>(true);
+        }
+
+        // Fallback to a shared rig elsewhere on the player if the model has no recoil script.
         if (gunRecoil == null)
         {
             gunRecoil = GetComponentInChildren<SimpleGunRecoil>(true);
