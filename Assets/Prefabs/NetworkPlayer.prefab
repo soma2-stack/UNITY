@@ -208,13 +208,13 @@ GameObject:
   - component: {fileID: 1417762333057357295}
   - component: {fileID: 3051704117144675460}
   - component: {fileID: 2514045808145443209}
+  - component: {fileID: -611045010333732705}
   - component: {fileID: 5442983735730451567}
   - component: {fileID: 2979035363045577123}
   - component: {fileID: 776399949960826079}
-  - component: {fileID: -611045010333732705}
   - component: {fileID: 3387316547402093547}
   m_Layer: 3
-  m_Name: Player_NetworkPrefab
+  m_Name: NetworkPlayer
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -376,6 +376,31 @@ MonoBehaviour:
   crouchStepInterval: 0.75
   footstepVolume: 0.45
   animator: {fileID: 1457942131771264217}
+--- !u!114 &-611045010333732705
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1210753829647292721}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
+  GlobalObjectIdHash: 3653403724
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  DeferredDespawnTick: 0
+  Ownership: 1
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 1
+  SyncOwnerTransformWhenParented: 1
+  AllowOwnerToParent: 0
 --- !u!114 &5442983735730451567
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -388,6 +413,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 79ccd8333e7148d090ae86b3a4fec3bd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WeaponController
+  ShowTopMostFoldoutHeaderGroup: 1
   weapons:
   - weaponName: M1911
     damage: 40
@@ -537,6 +563,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cd834b9e559f4079ae3acd065aeb5d69, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerHealth
+  ShowTopMostFoldoutHeaderGroup: 1
   maxHealth: 100
   enableRegen: 1
   regenDelay: 4
@@ -546,31 +573,6 @@ MonoBehaviour:
   quickReviveSelfReviveDelay: 3
   isSoloMode: 1
   showHud: 1
---- !u!114 &-611045010333732705
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1210753829647292721}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 3653403724
-  InScenePlacedSourceGlobalObjectIdHash: 0
-  DeferredDespawnTick: 0
-  Ownership: 1
-  AlwaysReplicateAsRoot: 0
-  SynchronizeTransform: 1
-  ActiveSceneSynchronization: 0
-  SceneMigrationSynchronization: 1
-  SpawnWithObservers: 1
-  DontDestroyWithOwner: 0
-  AutoObjectParentSync: 1
-  SyncOwnerTransformWhenParented: 1
-  AllowOwnerToParent: 0
 --- !u!114 &3387316547402093547
 MonoBehaviour:
   m_ObjectHideFlags: 0

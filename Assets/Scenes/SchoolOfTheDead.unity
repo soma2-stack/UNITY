@@ -187379,6 +187379,14 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5442983735730451567, guid: a93f92477c4567c4a9cc86f3edff94f0, type: 3}
+      propertyPath: defaultPistol.damage
+      value: 45
+      objectReference: {fileID: 0}
+    - target: {fileID: 5442983735730451567, guid: a93f92477c4567c4a9cc86f3edff94f0, type: 3}
+      propertyPath: defaultPistol.automatic
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5442983735730451567, guid: a93f92477c4567c4a9cc86f3edff94f0, type: 3}
       propertyPath: defaultPistol.weaponModel
       value: 
       objectReference: {fileID: 2655916905074589685, guid: 00bee769feda28048a87d6af08e65c00, type: 3}
