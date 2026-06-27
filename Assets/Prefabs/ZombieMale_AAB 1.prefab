@@ -140,7 +140,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ZombieAgent
   health: 150
   moveSpeed: 3.5
-  attackDamage: 15
+  attackDamage: 50
   attackRange: 2
   attackInterval: 1.2
   killReward: 60
@@ -151,7 +151,7 @@ MonoBehaviour:
   dieParam: Die
   hitParam: Hit
   hitReactCooldown: 1.2
-  deathDestroyDelay: 3
+  deathDestroyDelay: 2.5
 --- !u!114 &2340189911998036933
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -164,7 +164,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 1066305359
+  GlobalObjectIdHash: 1045885538
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 1
