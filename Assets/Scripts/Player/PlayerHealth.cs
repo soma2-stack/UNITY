@@ -91,6 +91,10 @@ public class PlayerHealth : NetworkBehaviour
     // True in solo (not network-spawned) OR on the server in a session.
     private bool HasAuthority => !IsSpawned || IsServer;
 
+    // True when this is the LOCAL player's own health (so the HUD only draws for them,
+    // not for every replicated teammate).
+    private bool IsLocalPlayer => !IsSpawned || IsOwner;
+
     private void Awake()
     {
         CurrentHealth = maxHealth;
@@ -459,30 +463,93 @@ public class PlayerHealth : NetworkBehaviour
 
     private void OnGUI()
     {
-        if (!showHud)
+        // Only the local player draws their own health HUD.
+        if (!showHud || !IsLocalPlayer)
         {
             return;
         }
 
-        string label;
+        const float barWidth = 280f;
+        const float barHeight = 22f;
+        float x = 16f;
+        float y = Screen.height - barHeight - 16f;
+        Rect rect = new Rect(x, y, barWidth, barHeight);
+
         if (IsDead)
         {
-            label = "DEAD";
-        }
-        else if (IsDowned)
-        {
-            bool quickRevive = PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RescueRush);
-            label = quickRevive
-                ? "DOWNED - reviving... (" + BleedOutRemaining.ToString("0") + "s)"
-                : "DOWNED - bleeding out: " + BleedOutRemaining.ToString("0") + "s";
-        }
-        else
-        {
-            label = "Health: " + CurrentHealth + " / " + maxHealth;
+            DrawStatusBox(rect, "DEAD", new Color(0.85f, 0.12f, 0.12f));
+            return;
         }
 
-        // Bottom-left, clear of GameHud's top-left player-point rows and the
-        // bottom-right weapon/ammo readout.
-        GUI.Label(new Rect(10, Screen.height - 30f, 320, 24), label);
+        if (IsDowned)
+        {
+            bool quickRevive = PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RescueRush);
+            string downedText = quickRevive
+                ? "DOWNED - reviving... (" + BleedOutRemaining.ToString("0") + "s)"
+                : "DOWNED - bleeding out: " + BleedOutRemaining.ToString("0") + "s";
+            DrawStatusBox(rect, downedText, new Color(0.9f, 0.25f, 0.2f));
+            return;
+        }
+
+        DrawSegmentedHealthBar(rect);
+    }
+
+    // CoD-style segmented health: 3 stages normally, 5 with Vital Boost (Juggernog),
+    // so each zombie hit removes ~one segment. Segments deplete right-to-left and the
+    // whole bar refills as health regenerates.
+    private void DrawSegmentedHealthBar(Rect rect)
+    {
+        bool vitalBoost = PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.VitalBoost);
+        int segments = vitalBoost ? 5 : 3;
+        float frac = maxHealth > 0 ? Mathf.Clamp01((float)CurrentHealth / maxHealth) : 0f;
+
+        Color prev = GUI.color;
+
+        // Dark backing panel.
+        GUI.color = new Color(0f, 0f, 0f, 0.55f);
+        GUI.DrawTexture(new Rect(rect.x - 3f, rect.y - 3f, rect.width + 6f, rect.height + 6f), Texture2D.whiteTexture);
+
+        // Green when healthy, amber mid, red when low.
+        Color fillColor = frac > 0.5f
+            ? Color.Lerp(new Color(0.95f, 0.75f, 0.10f), new Color(0.30f, 0.85f, 0.35f), (frac - 0.5f) * 2f)
+            : Color.Lerp(new Color(0.85f, 0.15f, 0.15f), new Color(0.95f, 0.75f, 0.10f), frac * 2f);
+        // Vital Boost tints the fill slightly cooler so the upgraded bar reads differently.
+        if (vitalBoost)
+        {
+            fillColor = Color.Lerp(fillColor, new Color(0.55f, 0.85f, 0.95f), 0.25f);
+        }
+
+        const float gap = 3f;
+        float cellWidth = (rect.width - gap * (segments - 1)) / segments;
+        float filledSegments = frac * segments;
+
+        for (int i = 0; i < segments; i++)
+        {
+            float cellX = rect.x + i * (cellWidth + gap);
+
+            // Empty cell slot.
+            GUI.color = new Color(0.12f, 0.12f, 0.14f, 0.95f);
+            GUI.DrawTexture(new Rect(cellX, rect.y, cellWidth, rect.height), Texture2D.whiteTexture);
+
+            // Filled portion of this cell (0..1 of the cell).
+            float cellFill = Mathf.Clamp01(filledSegments - i);
+            if (cellFill > 0f)
+            {
+                GUI.color = fillColor;
+                GUI.DrawTexture(new Rect(cellX, rect.y, cellWidth * cellFill, rect.height), Texture2D.whiteTexture);
+            }
+        }
+
+        GUI.color = prev;
+    }
+
+    private void DrawStatusBox(Rect rect, string text, Color color)
+    {
+        Color prev = GUI.color;
+        GUI.color = new Color(0f, 0f, 0f, 0.6f);
+        GUI.DrawTexture(new Rect(rect.x - 3f, rect.y - 3f, rect.width + 6f, rect.height + 6f), Texture2D.whiteTexture);
+        GUI.color = color;
+        GUI.Label(new Rect(rect.x + 6f, rect.y, rect.width, rect.height), text);
+        GUI.color = prev;
     }
 }

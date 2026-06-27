@@ -20,6 +20,7 @@ public abstract class InteractableBase : MonoBehaviour
     protected Transform player;
     protected bool playerInRange;
     private float nextMessageTime;
+    private GUIStyle promptStyle;
 
     /// <summary>Prompt shown when in range. Return null/empty to hide the prompt.</summary>
     protected abstract string GetPromptText();
@@ -90,12 +91,17 @@ public abstract class InteractableBase : MonoBehaviour
             return;
         }
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
+        // Cache the style once instead of allocating a GUIStyle every OnGUI frame.
+        if (promptStyle == null)
         {
-            fontSize = 22,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-        };
+            promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
+        GUIStyle style = promptStyle;
 
         float w = 520f;
         float h = 34f;
