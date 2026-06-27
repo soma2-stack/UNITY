@@ -48,6 +48,8 @@ public class SecretEggHud : MonoBehaviour
         hideAt = Time.time + Mathf.Max(0.1f, seconds);
     }
 
+    private GUIStyle messageStyle;
+
     private void OnGUI()
     {
         if (string.IsNullOrEmpty(message))
@@ -61,12 +63,16 @@ public class SecretEggHud : MonoBehaviour
             return;
         }
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
+        if (messageStyle == null)
         {
-            fontSize = 28,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.LowerLeft,
-        };
+            messageStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 28,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.LowerLeft,
+            };
+        }
+        GUIStyle style = messageStyle;
 
         float w = 720f;
         float h = 48f;

@@ -116,6 +116,8 @@ public class PerkMachine : MonoBehaviour
         }
     }
 
+    private GUIStyle promptStyle;
+
     private void OnGUI()
     {
         if (!playerInRange)
@@ -140,12 +142,16 @@ public class PerkMachine : MonoBehaviour
             textColor = owned ? new Color(0.7f, 0.95f, 0.7f, 1f) : new Color(0.96f, 0.93f, 0.86f, 1f);
         }
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
+        if (promptStyle == null)
         {
-            fontSize = 22,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-        };
+            promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
+        GUIStyle style = promptStyle;
 
         float w = 460f;
         float h = 34f;

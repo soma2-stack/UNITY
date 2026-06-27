@@ -75,6 +75,8 @@ public class BookPickup : MonoBehaviour
         gameObject.SetActive(false);
     }
 
+    private GUIStyle promptStyle;
+
     private void OnGUI()
     {
         if (collected || !playerInRange)
@@ -82,12 +84,16 @@ public class BookPickup : MonoBehaviour
             return;
         }
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
+        if (promptStyle == null)
         {
-            fontSize = 20,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-        };
+            promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 20,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
+        GUIStyle style = promptStyle;
 
         float w = 360f;
         float h = 30f;

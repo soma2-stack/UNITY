@@ -66,6 +66,9 @@ public class GameHud : MonoBehaviour
     private GUIStyle smallRightStyle;
     private GUIStyle centerStyle;
     private GUIStyle centerSmallStyle;
+    private GUIStyle playerLabelStyle;
+    private GUIStyle playerPointsStyle;
+    private GUIStyle perkIconLabelStyle;
     private Texture2D whiteTex;
 
     // Gameplay scene the HUD should appear in.
@@ -219,6 +222,39 @@ public class GameHud : MonoBehaviour
                 alignment = TextAnchor.MiddleCenter,
             };
         }
+
+        if (playerLabelStyle == null)
+        {
+            playerLabelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = smallFontSize,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal    = { textColor = Color.white },
+            };
+        }
+
+        if (playerPointsStyle == null)
+        {
+            playerPointsStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = smallFontSize,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleLeft,
+                normal    = { textColor = Color.white },
+            };
+        }
+
+        if (perkIconLabelStyle == null)
+        {
+            perkIconLabelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = Mathf.Max(9, smallFontSize - 6),
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal    = { textColor = Color.white },
+            };
+        }
     }
 
     private void ResolveReferences()
@@ -321,21 +357,8 @@ public class GameHud : MonoBehaviour
         float panelW = 160f;
         float gap    = 6f;
 
-        GUIStyle pLabelStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize  = smallFontSize,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-            normal    = { textColor = Color.white },
-        };
-
-        GUIStyle pointsStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize  = smallFontSize,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleLeft,
-            normal    = { textColor = Color.white },
-        };
+        GUIStyle pLabelStyle = playerLabelStyle;
+        GUIStyle pointsStyle = playerPointsStyle;
 
         int drawn = 0;
         for (int i = 0; i < MaxPlayers; i++)
@@ -432,13 +455,7 @@ public class GameHud : MonoBehaviour
         float x = 10f;
         float perkY = 10f + drawnPlayers * (28f + 5f) + 10f;
 
-        GUIStyle iconLabel = new GUIStyle(GUI.skin.label)
-        {
-            fontSize  = Mathf.Max(9, smallFontSize - 6),
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-            normal    = { textColor = Color.white },
-        };
+        GUIStyle iconLabel = perkIconLabelStyle;
 
         int drawnIcons = 0;
         foreach (PerkType perk in PerkOrder)

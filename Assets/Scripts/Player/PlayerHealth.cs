@@ -21,7 +21,7 @@ public class PlayerHealth : NetworkBehaviour
 {
     [Header("Health")]
     [Tooltip("Maximum (and starting) health. Perks like Juggernog can raise this at runtime via SetMaxHealth().")]
-    public int maxHealth = 100;
+    public int maxHealth = 150;
 
     [Header("Regeneration")]
     [Tooltip("If enabled the player slowly heals after not taking damage for a while.")]

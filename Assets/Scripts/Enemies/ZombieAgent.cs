@@ -25,7 +25,7 @@ public class ZombieAgent : MonoBehaviour
 
     [Header("Attack")]
     [Tooltip("Damage dealt to the player per attack.")]
-    public int attackDamage = 15;
+    public int attackDamage = 50;
     [Tooltip("How close (world units) the zombie must be to attack the player.")]
     public float attackRange = 2f;
     [Tooltip("Seconds between attacks.")]
