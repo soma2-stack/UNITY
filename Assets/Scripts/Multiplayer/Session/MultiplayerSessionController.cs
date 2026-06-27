@@ -321,12 +321,26 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         config.ConnectionApproval = true;
         config.EnableSceneManagement = true;
         config.PlayerPrefab = Resources.Load<GameObject>("NetworkPlayer");
+        if (config.PlayerPrefab == null)
+        {
+            Debug.LogError("[MP] Resources/NetworkPlayer.prefab is missing — players cannot spawn. " +
+                "Let the editor rebuild it (Tools > School of the Dead > Refresh Network Player Prefab).");
+        }
 
-        // Register the networked zombie so the server can spawn it and clients can
-        // replicate it. Put the networked zombie at Assets/Resources/NetworkZombie.prefab
-        // (NetworkObject + NetworkTransform + ZombieAgent). No-op if it isn't present.
+        // Register the networked zombie so the server can spawn it and clients replicate it.
+        // NetworkZombieSetup auto-creates Assets/Resources/NetworkZombie.prefab in the editor.
         GameObject networkZombie = Resources.Load<GameObject>("NetworkZombie");
-        if (networkZombie != null && networkZombie.GetComponent<NetworkObject>() != null)
+        if (networkZombie == null)
+        {
+            Debug.LogWarning("[MP] Resources/NetworkZombie.prefab not found — zombies will not replicate " +
+                "in multiplayer. Use Tools > School of the Dead > Refresh Network Zombie Prefab.");
+        }
+        else if (networkZombie.GetComponent<NetworkObject>() == null)
+        {
+            Debug.LogWarning("[MP] Resources/NetworkZombie.prefab has no NetworkObject — it cannot be a " +
+                "network prefab. Add NetworkObject + NetworkTransform to the source zombie prefab.");
+        }
+        else
         {
             networkManager.AddNetworkPrefab(networkZombie);
         }
@@ -577,10 +591,27 @@ public sealed class MultiplayerSessionController : MonoBehaviour
             return;
         }
 
-        GameObject localScenePlayer = GameObject.Find("Capsule");
-        if (localScenePlayer != null && localScenePlayer.GetComponent<NetworkObject>() == null)
+        // Disable any pre-placed player left in the scene so it doesn't fight the
+        // network-spawned players. Plain (non-networked) scene players are safe to hide;
+        // a pre-placed NETWORK player can't be cleanly handled here, so warn to remove it.
+        PlayerMovement[] scenePlayers = FindObjectsByType<PlayerMovement>(FindObjectsSortMode.None);
+        foreach (PlayerMovement scenePlayer in scenePlayers)
         {
-            localScenePlayer.SetActive(false);
+            if (scenePlayer == null)
+            {
+                continue;
+            }
+            NetworkObject netObj = scenePlayer.GetComponent<NetworkObject>();
+            if (netObj == null)
+            {
+                scenePlayer.gameObject.SetActive(false); // solo/scene player, not for MP
+            }
+            else if (netObj.IsSceneObject == true)
+            {
+                Debug.LogWarning("[MP] A network player is pre-placed in the scene ('" + scenePlayer.name +
+                    "'). Remove it from SchoolOfTheDead — pre-placed network players conflict with " +
+                    "the players spawned for each connected client.");
+            }
         }
 
         LoadingScreenController.Instance?.SetStatus("SURVIVORS READY");

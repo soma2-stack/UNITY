@@ -70,6 +70,9 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
         if (IsOwner)
         {
+            // Make THIS peer's player the one HUD / interactables / grants resolve.
+            LocalPlayer.Register(gameObject);
+
             string preferredName = PlayerPrefs.GetString("MultiplayerDisplayName", "Survivor");
             SetDisplayNameServerRpc(MultiplayerSessionController.SanitizeDisplayName(preferredName));
         }
@@ -81,6 +84,10 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
         displayName.OnValueChanged -= OnDisplayNameChanged;
+        if (IsOwner)
+        {
+            LocalPlayer.Unregister(gameObject);
+        }
     }
 
     private void Update()

@@ -135,9 +135,10 @@ public class ZombieAgent : MonoBehaviour
             return;
         }
 
-        if (player == null)
+        if (player == null || playerHealth == null || playerHealth.IsDead)
         {
-            // Player may not exist yet (or was destroyed); keep trying occasionally.
+            // No target yet, or the current one died/left: re-acquire the nearest living
+            // player occasionally (multiplayer: switch to whoever is still up).
             if (Time.time >= nextRepathTime)
             {
                 nextRepathTime = Time.time + repathInterval;
@@ -422,15 +423,31 @@ public class ZombieAgent : MonoBehaviour
 
     private void AcquirePlayer()
     {
-        // Find the player via its CharacterController (project convention).
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller == null)
+        // Target the NEAREST living player (multiplayer aware). PlayerHealth sits on the
+        // player root, so this also reliably wires up the health reference the attack uses
+        // (fixes "zombies chase but never damage" when there are multiple players).
+        PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        PlayerHealth nearest = null;
+        float bestDistance = float.MaxValue;
+        foreach (PlayerHealth ph in players)
         {
-            return;
+            if (ph == null || ph.IsDead)
+            {
+                continue;
+            }
+            float distance = Vector3.Distance(transform.position, ph.transform.position);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                nearest = ph;
+            }
         }
 
-        player = controller.transform;
-        playerHealth = controller.GetComponent<PlayerHealth>();
+        if (nearest != null)
+        {
+            player = nearest.transform;
+            playerHealth = nearest;
+        }
     }
 
     private void OnDrawGizmosSelected()

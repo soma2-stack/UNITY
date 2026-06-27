@@ -61,6 +61,15 @@ public class ZombieSpawner : MonoBehaviour
     private void Awake()
     {
         baseSpawnInterval = spawnInterval;
+
+        // Prefer the registered network zombie so the SPAWNED prefab matches the one
+        // MultiplayerSessionController registers as a network prefab (NGO requires the
+        // exact same prefab on all peers). No-op in projects without Resources/NetworkZombie.
+        GameObject networkZombie = Resources.Load<GameObject>("NetworkZombie");
+        if (networkZombie != null)
+        {
+            zombiePrefab = networkZombie;
+        }
     }
 
     /// <summary>Number of zombies currently alive.</summary>
@@ -297,10 +306,10 @@ public class ZombieSpawner : MonoBehaviour
 
         nextPlayerRecheckTime = Time.time + Mathf.Max(0.1f, playerRecheckInterval);
 
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller != null)
+        Transform local = LocalPlayer.Transform;
+        if (local != null)
         {
-            player = controller.transform;
+            player = local;
         }
     }
 
