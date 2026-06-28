@@ -45,7 +45,7 @@ public class PackAPunchMachine : InteractableBase
             return;
         }
 
-        WeaponController wc = FindFirstObjectByType<WeaponController>();
+        WeaponController wc = LocalPlayer.Weapon;
         if (wc == null || !wc.HasWeapon)
         {
             Debug.LogWarning("[PackAPunch] No equipped weapon to upgrade.");

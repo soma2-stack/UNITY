@@ -271,7 +271,7 @@ public class PowerupManager : MonoBehaviour
         {
             case PowerupType.MaxAmmo:
             {
-                WeaponController wc = FindFirstObjectByType<WeaponController>();
+                WeaponController wc = LocalPlayer.Weapon;
                 if (wc != null)
                 {
                     wc.RefillAllAmmo();

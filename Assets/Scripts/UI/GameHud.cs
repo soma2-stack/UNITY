@@ -261,7 +261,7 @@ public class GameHud : MonoBehaviour
     {
         if (weapon == null)
         {
-            weapon = FindFirstObjectByType<WeaponController>();
+            weapon = LocalPlayer.Weapon;
         }
         if (round == null)
         {

@@ -101,7 +101,7 @@ public class WallBuy : InteractableBase
 
     protected override string GetPromptText()
     {
-        WeaponController wc = FindFirstObjectByType<WeaponController>();
+        WeaponController wc = LocalPlayer.Weapon;
         bool owns = Owns(wc);
         int price = owns ? ammoCost : buyCost;
         string verb = owns ? "Buy Ammo" : "Buy";
@@ -110,7 +110,7 @@ public class WallBuy : InteractableBase
 
     protected override void OnInteract()
     {
-        WeaponController wc = FindFirstObjectByType<WeaponController>();
+        WeaponController wc = LocalPlayer.Weapon;
         if (wc == null)
         {
             Debug.LogWarning("[WallBuy] No WeaponController in scene.");

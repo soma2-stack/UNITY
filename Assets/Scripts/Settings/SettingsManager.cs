@@ -322,14 +322,14 @@ public class SettingsManager : MonoBehaviour
     private void ApplyCamera()
     {
         // PlayerMovement: native small-scale sensitivity. Null-safe (no player in menu).
-        var movement = FindFirstObjectByType<PlayerMovement>();
+        var movement = LocalPlayer.Movement;
         if (movement != null)
         {
             movement.mouseSensitivity = _mouseSensitivity;
         }
 
         // CoDCamera: large-scale sensitivity + invert + FOV (via defaultFOV).
-        var codCamera = FindFirstObjectByType<CoDCamera>();
+        var codCamera = LocalPlayer.Camera;
         if (codCamera != null)
         {
             codCamera.mouseSensitivity = _mouseSensitivity * CODCAMERA_SENS_SCALE;

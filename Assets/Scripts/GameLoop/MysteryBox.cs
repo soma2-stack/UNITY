@@ -68,7 +68,7 @@ public class MysteryBox : InteractableBase
             return;
         }
 
-        WeaponController wc = FindFirstObjectByType<WeaponController>();
+        WeaponController wc = LocalPlayer.Weapon;
         if (wc == null)
         {
             Debug.LogWarning("[MysteryBox] No WeaponController in scene; cannot grant a weapon.");

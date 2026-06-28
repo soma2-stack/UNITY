@@ -183,15 +183,15 @@ public class PerkManager : MonoBehaviour
     {
         if (playerHealth == null)
         {
-            playerHealth = FindAnyObjectByType<PlayerHealth>();
+            playerHealth = LocalPlayer.Health;
         }
         if (weaponController == null)
         {
-            weaponController = FindAnyObjectByType<WeaponController>();
+            weaponController = LocalPlayer.Weapon;
         }
         if (playerMovement == null)
         {
-            playerMovement = FindAnyObjectByType<PlayerMovement>();
+            playerMovement = LocalPlayer.Movement;
         }
     }
 

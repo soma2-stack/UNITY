@@ -117,10 +117,10 @@ public abstract class InteractableBase : MonoBehaviour
 
     protected void FindPlayer()
     {
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller != null)
+        Transform local = LocalPlayer.Transform;
+        if (local != null)
         {
-            player = controller.transform;
+            player = local;
             return;
         }
         if (Camera.main != null)

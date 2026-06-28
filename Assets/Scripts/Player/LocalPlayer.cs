@@ -50,6 +50,7 @@ public static class LocalPlayer
     public static PlayerHealth Health => Resolve<PlayerHealth>();
     public static WeaponController Weapon => Resolve<WeaponController>();
     public static PlayerMovement Movement => Resolve<PlayerMovement>();
+    public static CoDCamera Camera => Resolve<CoDCamera>();
 
     // Prefer the registered local player's component; fall back to a scene search (solo).
     private static T Resolve<T>() where T : Component

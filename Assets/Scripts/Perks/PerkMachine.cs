@@ -168,11 +168,11 @@ public class PerkMachine : MonoBehaviour
 
     private void FindPlayer()
     {
-        // Prefer the CharacterController player (project convention, mirrors Door).
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller != null)
+        // Prefer the LOCAL player so each client interacts with its own player.
+        Transform local = LocalPlayer.Transform;
+        if (local != null)
         {
-            player = controller.transform;
+            player = local;
             return;
         }
 
