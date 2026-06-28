@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEditor;
 using UnityEngine;
 
@@ -68,15 +69,23 @@ public static class NetworkZombieSetup
             return;
         }
 
-        // Make sure the Animator has the ZombieAI controller (only if it's currently empty).
-        GameObject zombie = AssetDatabase.LoadAssetAtPath<GameObject>(DestPath);
-        Animator animator = zombie != null ? zombie.GetComponentInChildren<Animator>(true) : null;
+        // Edit the copied prefab: ensure the ZombieAI controller, and add a NetworkAnimator
+        // so the server-driven attack / hit / speed / death animations replicate to clients
+        // (zombie AI only runs on the server, so clients need the animator synced).
+        GameObject contents = PrefabUtility.LoadPrefabContents(DestPath);
+        Animator animator = contents.GetComponentInChildren<Animator>(true);
         RuntimeAnimatorController controller = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(ControllerPath);
         if (animator != null && controller != null && animator.runtimeAnimatorController == null)
         {
             animator.runtimeAnimatorController = controller;
-            EditorUtility.SetDirty(zombie);
         }
+        if (animator != null && contents.GetComponent<NetworkAnimator>() == null)
+        {
+            NetworkAnimator networkAnimator = contents.AddComponent<NetworkAnimator>();
+            networkAnimator.Animator = animator;
+        }
+        PrefabUtility.SaveAsPrefabAsset(contents, DestPath);
+        PrefabUtility.UnloadPrefabContents(contents);
 
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();

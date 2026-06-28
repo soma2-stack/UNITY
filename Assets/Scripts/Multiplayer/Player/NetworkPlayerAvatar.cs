@@ -8,11 +8,14 @@ using UnityEngine.SceneManagement;
 [RequireComponent(typeof(NetworkObject))]
 public sealed class NetworkPlayerAvatar : NetworkBehaviour
 {
-    // Animator parameters - MUST match Assets/Animations/PlayerLocomotion.controller
-    // (built by the "Set Up Player" tool): Speed (float), Sprint (bool), Crouch (bool).
-    private const string SpeedParam = "Speed";
-    private const string SprintParam = "Sprint";
-    private const string CrouchParam = "Crouch";
+    // Animator parameters - MUST match the real player controller
+    // (Assets/Animations/PlayerAnimator.controller), which PlayerMovement drives:
+    // MoveX / MoveZ (float), IsMoving / IsSprinting (bool). Jump is a one-shot local
+    // trigger and is not replicated to remote bodies.
+    private static readonly int MoveXHash = Animator.StringToHash("MoveX");
+    private static readonly int MoveZHash = Animator.StringToHash("MoveZ");
+    private static readonly int IsMovingHash = Animator.StringToHash("IsMoving");
+    private static readonly int IsSprintingHash = Animator.StringToHash("IsSprinting");
 
     private static readonly Color[] SurvivorColors =
     {
@@ -41,15 +44,19 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     [SerializeField] private GameObject[] modelVariants;
 
     private readonly NetworkVariable<FixedString64Bytes> displayName = new NetworkVariable<FixedString64Bytes>();
-    private readonly NetworkVariable<float> movementSpeed = new NetworkVariable<float>(
+    private readonly NetworkVariable<float> moveX = new NetworkVariable<float>(
         0f,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
-    private readonly NetworkVariable<bool> sprinting = new NetworkVariable<bool>(
+    private readonly NetworkVariable<float> moveZ = new NetworkVariable<float>(
+        0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Owner);
+    private readonly NetworkVariable<bool> isMoving = new NetworkVariable<bool>(
         false,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
-    private readonly NetworkVariable<bool> crouching = new NetworkVariable<bool>(
+    private readonly NetworkVariable<bool> isSprinting = new NetworkVariable<bool>(
         false,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
@@ -95,9 +102,10 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         // The owner replicates its real locomotion state for everyone else to read.
         if (IsOwner && movement != null && movement.enabled)
         {
-            movementSpeed.Value = movement.MoveInput.magnitude * movement.CurrentSpeed;
-            sprinting.Value = movement.CurrentSpeed > (movement.sprintSpeed - 0.5f);
-            crouching.Value = movement.IsCrouching;
+            moveX.Value = movement.MoveInput.x;
+            moveZ.Value = movement.MoveInput.y;
+            isMoving.Value = movement.MoveInput.sqrMagnitude > 0.01f;
+            isSprinting.Value = movement.CurrentSpeed > (movement.sprintSpeed - 0.5f);
         }
 
         // Remote bodies are animated from the replicated NetworkVariables. The owner's
@@ -105,9 +113,10 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         // so the avatar does NOT touch the animator for the owner to avoid double-driving.
         if (!IsOwner && animator != null && animator.runtimeAnimatorController != null)
         {
-            animator.SetFloat(SpeedParam, movementSpeed.Value, 0.1f, Time.deltaTime);
-            animator.SetBool(SprintParam, sprinting.Value);
-            animator.SetBool(CrouchParam, crouching.Value);
+            animator.SetFloat(MoveXHash, moveX.Value, 0.1f, Time.deltaTime);
+            animator.SetFloat(MoveZHash, moveZ.Value, 0.1f, Time.deltaTime);
+            animator.SetBool(IsMovingHash, isMoving.Value);
+            animator.SetBool(IsSprintingHash, isSprinting.Value);
         }
 
         if (worldName != null && Camera.main != null)
@@ -230,10 +239,23 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         playerCamera ??= GetComponentInChildren<Camera>(true);
         audioListener ??= GetComponentInChildren<AudioListener>(true);
         animator ??= GetComponentInChildren<Animator>(true);
-        if (survivorRenderers == null || survivorRenderers.Length == 0)
+        // Auto-fill renderers if unset, empty, or only null entries (stale prefab wiring).
+        if (survivorRenderers == null || survivorRenderers.Length == 0 || AllNull(survivorRenderers))
         {
             survivorRenderers = GetComponentsInChildren<Renderer>(true);
         }
+    }
+
+    private static bool AllNull(Renderer[] renderers)
+    {
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer != null)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void ApplySurvivorColor()
