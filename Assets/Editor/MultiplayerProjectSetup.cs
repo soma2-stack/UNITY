@@ -111,6 +111,8 @@ public static class MultiplayerProjectSetup
         root.AddComponent<PlayerHealth>();
         WeaponController weaponController = root.AddComponent<WeaponController>();
         root.AddComponent<PlayerAnimator>();
+        // Co-op revive: hold-to-revive a downed teammate. Owner-gated inside the component.
+        root.AddComponent<ReviveInteraction>();
 
         root.AddComponent<NetworkObject>();
         root.AddComponent<OwnerNetworkTransform>();

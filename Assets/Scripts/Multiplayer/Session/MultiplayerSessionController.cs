@@ -586,6 +586,22 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
+        // There must be exactly ONE NetworkManager. We create the runtime one
+        // (DontDestroyOnLoad), so destroy any extra NetworkManager placed in a loaded
+        // scene (solo and multiplayer alike) to avoid the "multiple NetworkManager" conflict.
+        if (NetworkManager.Singleton != null)
+        {
+            NetworkManager[] managers = FindObjectsByType<NetworkManager>(FindObjectsSortMode.None);
+            foreach (NetworkManager manager in managers)
+            {
+                if (manager != null && manager != NetworkManager.Singleton)
+                {
+                    Debug.LogWarning("[MP] Destroying a duplicate NetworkManager found in scene '" + scene.name + "'.");
+                    Destroy(manager.gameObject);
+                }
+            }
+        }
+
         if (scene.name != GameplayScene || networkManager == null || !networkManager.IsListening)
         {
             return;
