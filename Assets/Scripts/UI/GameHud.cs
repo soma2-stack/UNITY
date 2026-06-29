@@ -259,9 +259,16 @@ public class GameHud : MonoBehaviour
 
     private void ResolveReferences()
     {
-        if (weapon == null)
+        // Always track the LOCAL player's weapon. In multiplayer the local player
+        // registers with LocalPlayer only after it spawns, so we must keep
+        // re-resolving until we have it — otherwise the HUD latches onto a remote
+        // (non-owner) player's weapon, which never had its ammo initialised, and
+        // shows "0 / 0". Re-resolving each frame corrects it the moment the local
+        // player registers (and it's cheap: a cached GetComponentInChildren).
+        WeaponController localWeapon = LocalPlayer.Weapon;
+        if (localWeapon != null && localWeapon != weapon)
         {
-            weapon = LocalPlayer.Weapon;
+            weapon = localWeapon;
         }
         if (round == null)
         {
@@ -360,11 +367,36 @@ public class GameHud : MonoBehaviour
         GUIStyle pLabelStyle = playerLabelStyle;
         GUIStyle pointsStyle = playerPointsStyle;
 
+        // Each player has their OWN points. PlayerPoints publishes a per-player table
+        // (one entry per connected client, the local peer included) so this HUD shows
+        // every survivor's individual total — not one shared number. In solo the table
+        // is a single entry. Falls back to the wired slot sources if no table exists.
+        PlayerPoints pp = PlayerPoints.Instance;
+        ulong localId = pp != null ? pp.LocalClientId : 0;
+        // Only call out "which one is you" when there's actually more than one player,
+        // so solo looks exactly as before.
+        bool markLocal = pp != null && pp.Table != null && pp.Table.Count > 1;
+
         int drawn = 0;
         for (int i = 0; i < MaxPlayers; i++)
         {
-            PlayerPoints source = GetPlayerSource(i);
-            if (source == null && !alwaysShowAllSlots) continue;
+            int points;
+            bool isLocal;
+            if (pp != null && pp.Table != null && i < pp.Table.Count)
+            {
+                PlayerPoints.Entry entry = pp.Table[i];
+                points = entry.Points;
+                isLocal = markLocal && entry.ClientId == localId;
+            }
+            else
+            {
+                // No per-player table available: fall back to the explicitly wired
+                // sources (slot 0 = the live singleton). Skips empty slots unless forced.
+                PlayerPoints source = GetPlayerSource(i);
+                if (source == null && !alwaysShowAllSlots) continue;
+                points = source != null ? source.Points : 0;
+                isLocal = markLocal && i == 0;
+            }
 
             float rowY = y + drawn * (rowH + 5f);
 
@@ -373,9 +405,9 @@ public class GameHud : MonoBehaviour
             GUI.color = new Color(0f, 0f, 0f, 0.55f);
             GUI.DrawTexture(new Rect(x - 2f, rowY - 2f, panelW, rowH + 4f), whiteTex);
 
-            // Dark border behind the color box
-            GUI.color = new Color(0f, 0f, 0f, 0.8f);
-            GUI.DrawTexture(new Rect(x, rowY, boxW, boxH), whiteTex);
+            // Dark border behind the color box (brighter for the local player's row).
+            GUI.color = isLocal ? new Color(1f, 1f, 1f, 0.9f) : new Color(0f, 0f, 0f, 0.8f);
+            GUI.DrawTexture(new Rect(x - 1f, rowY - 1f, boxW + 2f, boxH + 2f), whiteTex);
 
             // Player color box (inset 1px from border)
             Color slotColor = (playerColors != null && i < playerColors.Length)
@@ -384,15 +416,13 @@ public class GameHud : MonoBehaviour
             GUI.DrawTexture(new Rect(x + 1f, rowY + 1f, boxW - 2f, boxH - 2f), whiteTex);
             GUI.color = prev;
 
-            // "P1" label inside the box
+            // "P1" label inside the box; the local player is marked "YOU".
             GUI.Label(new Rect(x, rowY, boxW, boxH),
-                "P" + (i + 1), pLabelStyle);
+                isLocal ? "YOU" : "P" + (i + 1), pLabelStyle);
 
             // Points value to the right of the box
-            string pointsText = source != null
-                ? source.Points.ToString("N0") : "—";
             GUI.Label(new Rect(x + boxW + gap, rowY, panelW - boxW - gap, rowH),
-                pointsText, pointsStyle);
+                points.ToString("N0"), pointsStyle);
 
             drawn++;
         }

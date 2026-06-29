@@ -208,7 +208,8 @@ public class PowerupManager : MonoBehaviour
 
         if (PlayerPoints.Instance != null && nukeBonusPoints > 0)
         {
-            PlayerPoints.Instance.Add(nukeBonusPoints);
+            // Classic Nuke bonus goes to every player (per-player economy).
+            PlayerPoints.Instance.AddPointsToAll(nukeBonusPoints);
         }
     }
 
@@ -342,7 +343,8 @@ public class PowerupManager : MonoBehaviour
                 // classic flat points bonus to the player.
                 if (PlayerPoints.Instance != null && carpenterBonusPoints > 0)
                 {
-                    PlayerPoints.Instance.Add(carpenterBonusPoints);
+                    // Carpenter bonus goes to every player (per-player economy).
+                    PlayerPoints.Instance.AddPointsToAll(carpenterBonusPoints);
                 }
                 break;
             }

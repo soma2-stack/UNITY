@@ -928,7 +928,7 @@ public class WeaponController : NetworkBehaviour
             if (zombie != null)
             {
                 Debug.Log("[WeaponController] Melee by client " + shooterClientId + " killed zombie '" + zombie.name + "'.");
-                zombie.KillByMelee(); // instant kill; ZombieAgent.Die() awards the 130 melee reward
+                zombie.KillByMelee(shooterClientId); // instant kill; ZombieAgent.Die() awards the 130 melee reward to this shooter
             }
         }
         // Miss or non-zombie: silent (no effect), per spec.
@@ -1147,7 +1147,7 @@ public class WeaponController : NetworkBehaviour
         // Authority applies damage directly (server in a session, or this peer in solo).
         Debug.Log("[WeaponController] Applying " + damage + " damage to zombie '" + zombie.name +
             "' from shooter client " + shooterClientId + " headshot=" + isHeadshot + ".");
-        zombie.TakeDamage(damage, isHeadshot);
+        zombie.TakeDamage(damage, isHeadshot, shooterClientId);
 
         // Hit feedback: in a session the server broadcasts blood to everyone and a hit
         // marker to the shooter; in solo it's all local.

@@ -203,7 +203,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         }
 
         int cost = Mathf.Max(0, door.Cost);
-        if (cost > 0 && PlayerPoints.Instance != null && !PlayerPoints.Instance.TrySpend(cost))
+        if (cost > 0 && PlayerPoints.Instance != null && !PlayerPoints.Instance.TrySpend(senderClientId, cost))
         {
             Debug.Log("[Door] Client " + senderClientId + " could not afford door '" + key + "'.");
             return;
@@ -213,7 +213,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         int reward = Mathf.RoundToInt(cost / 10f);
         if (reward > 0)
         {
-            PlayerPoints.Instance?.AddPoints(reward);
+            PlayerPoints.Instance?.AddPoints(senderClientId, reward);
         }
         BroadcastDoorOpen(key);
     }
@@ -290,7 +290,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         }
 
         int cost = Mathf.Max(0, powerSwitch.cost);
-        if (cost > 0 && PlayerPoints.Instance != null && !PlayerPoints.Instance.TrySpend(cost))
+        if (cost > 0 && PlayerPoints.Instance != null && !PlayerPoints.Instance.TrySpend(senderClientId, cost))
         {
             return;
         }
@@ -413,7 +413,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     {
         if (!InteractableBase.TryFind(key, out MysteryBox box) ||
             (box.requirePower && !PowerState.IsOn) ||
-            !TrySpend(box.cost))
+            !TrySpend(senderClientId, box.cost))
         {
             return;
         }
@@ -437,7 +437,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         }
 
         int price = ownsWeapon ? wallBuy.ammoCost : wallBuy.buyCost;
-        if (!TrySpend(price))
+        if (!TrySpend(senderClientId, price))
         {
             return;
         }
@@ -449,7 +449,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     {
         if (!InteractableBase.TryFind(key, out PackAPunchMachine machine) ||
             (machine.requirePower && !PowerState.IsOn) ||
-            !TrySpend(machine.cost))
+            !TrySpend(senderClientId, machine.cost))
         {
             return;
         }
@@ -462,7 +462,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         if (!PerkMachine.TryFind(key, out PerkMachine machine) ||
             !PowerState.IsOn ||
             PerkManager.ClientHasPerk(senderClientId, machine.perk) ||
-            !TrySpend(machine.cost))
+            !TrySpend(senderClientId, machine.cost))
         {
             return;
         }
@@ -473,9 +473,11 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         BroadcastPerkState(senderClientId, machine.perk, true);
     }
 
-    private static bool TrySpend(int cost)
+    // Charge a SPECIFIC client (per-player economy). Free (cost <= 0) or no economy
+    // present both succeed.
+    private static bool TrySpend(ulong clientId, int cost)
     {
-        return cost <= 0 || PlayerPoints.Instance == null || PlayerPoints.Instance.TrySpend(cost);
+        return cost <= 0 || PlayerPoints.Instance == null || PlayerPoints.Instance.TrySpend(clientId, cost);
     }
 
     private static void ApplyLocalPurchase(PurchaseKind kind, string key, int aux)

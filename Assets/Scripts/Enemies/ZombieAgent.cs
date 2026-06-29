@@ -300,7 +300,7 @@ public class ZombieAgent : MonoBehaviour
     /// <summary>
     /// Damage this zombie. When health reaches zero the zombie dies.
     /// </summary>
-    public void TakeDamage(int amount, bool isHeadshot = false)
+    public void TakeDamage(int amount, bool isHeadshot = false, ulong attackerClientId = PlayerPoints.EveryoneClientId)
     {
         // Server-authoritative: in a session, clients route damage to the server
         // (see WeaponController) so only the authority mutates health/awards points.
@@ -310,17 +310,19 @@ public class ZombieAgent : MonoBehaviour
         }
 
         // +10 per bullet hit (CoD economy), awarded for EVERY hit regardless of
-        // whether it kills. Melee (KillByMelee) bypasses TakeDamage, so it never
-        // receives this hit award - only its full kill reward in Die().
+        // whether it kills, and credited to the SHOOTER (per-player economy). Melee
+        // (KillByMelee) bypasses TakeDamage, so it never receives this hit award -
+        // only its full kill reward in Die(). attackerClientId defaults to "everyone"
+        // for un-attributed damage (e.g. the Nuke power-up); in solo the id is ignored.
         if (awardHitPoints)
         {
-            PlayerPoints.Instance?.AddPoints(HitPoints);
+            PlayerPoints.Instance?.AddPoints(attackerClientId, HitPoints);
         }
 
         health -= amount;
         if (health <= 0)
         {
-            Die(isHeadshot);
+            Die(isHeadshot, false, attackerClientId);
             return;
         }
 
@@ -335,17 +337,17 @@ public class ZombieAgent : MonoBehaviour
     /// <summary>
     /// Kill this zombie via melee/knife. Awards bonus points.
     /// </summary>
-    public void KillByMelee()
+    public void KillByMelee(ulong attackerClientId = PlayerPoints.EveryoneClientId)
     {
         if (isDead)
         {
             return;
         }
         health = 0;
-        Die(false, true);
+        Die(false, true, attackerClientId);
     }
 
-    private void Die(bool isHeadshot = false, bool isMelee = false)
+    private void Die(bool isHeadshot = false, bool isMelee = false, ulong attackerClientId = PlayerPoints.EveryoneClientId)
     {
         if (isDead)
         {
@@ -379,7 +381,9 @@ public class ZombieAgent : MonoBehaviour
             {
                 reward = Mathf.Max(0, killReward - HitPoints); // +50 -> 60 total body kill
             }
-            PlayerPoints.Instance?.AddPoints(reward);
+            // Credit the killing shooter (per-player economy). Melee passes its own
+            // attacker id; the Nuke / unattributed kills credit everyone.
+            PlayerPoints.Instance?.AddPoints(attackerClientId, reward);
         }
 
         OnDeath?.Invoke(this);
