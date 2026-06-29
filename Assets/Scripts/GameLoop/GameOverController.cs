@@ -219,6 +219,17 @@ public class GameOverController : MonoBehaviour
         Time.timeScale = 1f;
         showScreen = false;
         ZombieAgent.ResetKillCount(); // fresh run starts at zero kills
+
+        // In a networked session the match must restart through NGO: the server reloads
+        // the gameplay scene and every client follows (raw SceneManager.LoadScene would
+        // desync the host and do nothing on a client). The local overlay is hidden now;
+        // the scene reload will rebuild a fresh GameOverController for everyone.
+        if (NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.RequestRestartMatch();
+            return;
+        }
+
         SceneManager.LoadScene(GameplayScene);
     }
 
@@ -227,6 +238,15 @@ public class GameOverController : MonoBehaviour
         Time.timeScale = 1f;
         showScreen = false;
         ZombieAgent.ResetKillCount(); // clear the run kill count when leaving to the menu
+
+        // In a networked session, leave the session cleanly (shuts down NGO and returns
+        // to the menu) instead of a raw scene load that strands the NetworkManager.
+        if (NetworkGameplayCoordinator.IsNetworkActive && MultiplayerSessionController.Instance != null)
+        {
+            _ = MultiplayerSessionController.Instance.LeaveAsync();
+            return;
+        }
+
         SceneManager.LoadScene(MainMenuScene);
     }
 

@@ -237,6 +237,34 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Server-only: restart the current match by reloading the gameplay scene through
+    /// NGO so every client follows and all players respawn fresh (full health, not
+    /// downed). Clears the spawned-player set so HandleNetworkSceneLoadComplete
+    /// re-spawns everyone after the reload.
+    /// </summary>
+    public void RestartMatch()
+    {
+        if (networkManager == null || !networkManager.IsServer)
+        {
+            return;
+        }
+
+        // The Single load despawns the existing dynamically-spawned player objects;
+        // clearing this set lets us re-spawn each connected client after the reload.
+        spawnedPlayers.Clear();
+
+        SceneEventProgressStatus result = networkManager.SceneManager.LoadScene(GameplayScene, LoadSceneMode.Single);
+        if (result != SceneEventProgressStatus.Started)
+        {
+            Debug.LogWarning("[MP] Restart scene load could not start: " + result);
+        }
+        else
+        {
+            Debug.Log("[MP] Restart: reloading " + GameplayScene);
+        }
+    }
+
     public Task LeaveAsync()
     {
         if (networkManager != null && networkManager.IsListening)

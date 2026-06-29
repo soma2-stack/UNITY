@@ -100,7 +100,12 @@ public class WeaponController : NetworkBehaviour
     private const float PAPDamageMultiplier = 2f;
     private const float PAPFireRateMultiplier = 1.5f;
     private const int PAPReserveMinMagazines = 5;
-    private const float MaxServerShotOriginDistance = 2.5f;
+    // Sanity bound only. The server trusts the shooter's reported camera origin (this is
+    // co-op PvE, not competitive), because the server's replica of a remote player lags
+    // behind by the network interpolation buffer — a tight bound here would silently drop
+    // legitimate client shots while they move/sprint. We only reject origins that are
+    // wildly off (garbage / teleport exploits), never normal play.
+    private const float MaxServerShotOriginDistance = 100f;
 
     /// <summary>True for a short window while a knife swing is in progress (HUD/animator can react).</summary>
     public bool IsKnifing { get; private set; }

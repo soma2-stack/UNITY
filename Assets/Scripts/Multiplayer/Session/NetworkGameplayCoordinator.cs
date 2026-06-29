@@ -23,6 +23,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     private const string PowerupCollectedMessage = "SOTD_POWERUP_COLLECTED";
     private const string PowerupEffectMessage = "SOTD_POWERUP_EFFECT";
     private const string GameOverMessage = "SOTD_GAME_OVER";
+    private const string RestartRequestMessage = "SOTD_RESTART_REQUEST";
 
     private enum PurchaseKind : byte
     {
@@ -128,6 +129,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.RegisterNamedMessageHandler(PowerupCollectedMessage, ReceivePowerupCollected);
         messaging.RegisterNamedMessageHandler(PowerupEffectMessage, ReceivePowerupEffect);
         messaging.RegisterNamedMessageHandler(GameOverMessage, ReceiveGameOver);
+        messaging.RegisterNamedMessageHandler(RestartRequestMessage, ReceiveRestartRequest);
         registered = true;
         registeredManager = NetworkManager.Singleton;
     }
@@ -155,6 +157,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.UnregisterNamedMessageHandler(PowerupCollectedMessage);
         messaging.UnregisterNamedMessageHandler(PowerupEffectMessage);
         messaging.UnregisterNamedMessageHandler(GameOverMessage);
+        messaging.UnregisterNamedMessageHandler(RestartRequestMessage);
         registered = false;
         registeredManager = null;
     }
@@ -851,6 +854,43 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         }
         PowerupManager.SendActiveEffectsToClient(clientId);
         SendPerkStateToClient(clientId);
+    }
+
+    // --- Match restart (from the game-over screen) -----------------------
+
+    /// <summary>
+    /// Restart the match. On the server this reloads the gameplay scene through NGO so
+    /// every client follows and all players respawn fresh; on a client it asks the
+    /// server to do so. Solo callers reload the scene directly instead.
+    /// </summary>
+    public static void RequestRestartMatch()
+    {
+        Ensure();
+        if (!NetworkActive)
+        {
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            MultiplayerSessionController.Instance?.RestartMatch();
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(byte), Allocator.Temp);
+        writer.WriteValueSafe((byte)1);
+        SendToServer(RestartRequestMessage, writer);
+    }
+
+    private void ReceiveRestartRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+
+        // Any surviving client may ask to restart once the team has wiped.
+        MultiplayerSessionController.Instance?.RestartMatch();
     }
 
     private static void SendToServer(string message, FastBufferWriter writer)
