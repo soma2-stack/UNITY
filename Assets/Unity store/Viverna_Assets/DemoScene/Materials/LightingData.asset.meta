@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 3b40e5fbaa43e97498f4b28498ff924d
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 25800000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 152072
+  packageName: Globe
+  packageVersion: 1.0
+  assetPath: Assets/Viverna_Assets/DemoScene/Materials/LightingData.asset
+  uploadId: 324718
