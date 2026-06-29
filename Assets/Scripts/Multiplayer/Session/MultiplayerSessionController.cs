@@ -392,10 +392,19 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         // Catch this just-loaded client up to the authoritative round + team points.
         RoundManager.Instance?.SendRoundToClient(clientId);
         PlayerPoints.Instance?.SendPointsToClient(clientId);
+        NetworkGameplayCoordinator.SendGameplaySnapshotToClient(clientId);
     }
 
     private void SpawnPlayerObject(ulong clientId)
     {
+        if (networkManager.ConnectedClients.TryGetValue(clientId, out NetworkClient client) &&
+            client.PlayerObject != null && client.PlayerObject.IsSpawned)
+        {
+            spawnedPlayers.Add(clientId);
+            Debug.Log("[MP] Player already exists for clientId=" + clientId + "; skipping duplicate spawn.");
+            return;
+        }
+
         if (spawnedPlayers.Contains(clientId))
         {
             return;
@@ -408,6 +417,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         }
 
         GameObject instance = Instantiate(prefab);
+        instance.name = "NetworkPlayer (" + clientId + ")";
         NetworkObject netObj = instance.GetComponent<NetworkObject>();
         if (netObj == null)
         {

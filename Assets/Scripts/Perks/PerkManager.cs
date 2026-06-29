@@ -27,6 +27,9 @@ using UnityEngine.SceneManagement;
 public class PerkManager : MonoBehaviour
 {
     public static PerkManager Instance { get; private set; }
+    private static readonly Dictionary<ulong, HashSet<PerkType>> serverPerksByClient = new Dictionary<ulong, HashSet<PerkType>>();
+
+    public static IReadOnlyDictionary<ulong, HashSet<PerkType>> ServerPerks => serverPerksByClient;
 
     [Header("Juggernog")]
     [Tooltip("Maximum health the player is raised to when Juggernog is bought.")]
@@ -179,6 +182,40 @@ public class PerkManager : MonoBehaviour
         return true;
     }
 
+    public static void ServerGrantClientPerk(ulong clientId, PerkType perk)
+    {
+        if (!serverPerksByClient.TryGetValue(clientId, out HashSet<PerkType> perks))
+        {
+            perks = new HashSet<PerkType>();
+            serverPerksByClient[clientId] = perks;
+        }
+        perks.Add(perk);
+    }
+
+    public static void ApplyNetworkPerkState(ulong clientId, PerkType perk, bool hasPerk)
+    {
+        if (!serverPerksByClient.TryGetValue(clientId, out HashSet<PerkType> perks))
+        {
+            perks = new HashSet<PerkType>();
+            serverPerksByClient[clientId] = perks;
+        }
+
+        if (hasPerk)
+        {
+            perks.Add(perk);
+        }
+        else
+        {
+            perks.Remove(perk);
+        }
+    }
+
+    public static bool ClientHasPerk(ulong clientId, PerkType perk)
+    {
+        return serverPerksByClient.TryGetValue(clientId, out HashSet<PerkType> perks) &&
+               perks.Contains(perk);
+    }
+
     private void ResolvePlayer()
     {
         if (playerHealth == null)
@@ -233,6 +270,13 @@ public class PerkManager : MonoBehaviour
             case PerkType.RescueRush:
                 // No stat to set here - PlayerHealth queries HasPerk(QuickRevive)
                 // each frame while downed to allow a solo self-revive.
+                ReviveInteraction revive = LocalPlayer.Transform != null
+                    ? LocalPlayer.Transform.GetComponent<ReviveInteraction>()
+                    : null;
+                if (revive != null)
+                {
+                    revive.reviveDuration = Mathf.Max(1f, revive.reviveDuration * 0.5f);
+                }
                 break;
 
             case PerkType.ArmoryAmp:
@@ -317,6 +361,13 @@ public class PerkManager : MonoBehaviour
 
             case PerkType.RescueRush:
                 // No stat to revert.
+                ReviveInteraction revive = LocalPlayer.Transform != null
+                    ? LocalPlayer.Transform.GetComponent<ReviveInteraction>()
+                    : null;
+                if (revive != null)
+                {
+                    revive.reviveDuration = 4f;
+                }
                 break;
 
             case PerkType.ArmoryAmp:

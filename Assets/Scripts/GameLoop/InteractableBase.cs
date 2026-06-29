@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -11,6 +12,8 @@ using UnityEngine;
 /// </summary>
 public abstract class InteractableBase : MonoBehaviour
 {
+    private static readonly Dictionary<string, InteractableBase> Registry = new Dictionary<string, InteractableBase>();
+
     [Header("Interaction")]
     [Tooltip("How close the player must be (world units) to interact.")]
     public float interactionRange = 3f;
@@ -21,12 +24,40 @@ public abstract class InteractableBase : MonoBehaviour
     protected bool playerInRange;
     private float nextMessageTime;
     private GUIStyle promptStyle;
+    private string networkKey;
+
+    public string NetworkKey
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(networkKey))
+            {
+                networkKey = BuildNetworkKey(transform);
+            }
+            return networkKey;
+        }
+    }
 
     /// <summary>Prompt shown when in range. Return null/empty to hide the prompt.</summary>
     protected abstract string GetPromptText();
 
     /// <summary>Called when the player presses the interact key while in range.</summary>
     protected abstract void OnInteract();
+
+    protected virtual void OnEnable()
+    {
+        Registry[NetworkKey] = this;
+    }
+
+    protected virtual void OnDisable()
+    {
+        if (!string.IsNullOrEmpty(networkKey) &&
+            Registry.TryGetValue(networkKey, out InteractableBase registered) &&
+            registered == this)
+        {
+            Registry.Remove(networkKey);
+        }
+    }
 
     protected virtual void Start()
     {
@@ -127,6 +158,48 @@ public abstract class InteractableBase : MonoBehaviour
         {
             player = Camera.main.transform;
         }
+    }
+
+    public static bool TryFind<T>(string key, out T interactable) where T : InteractableBase
+    {
+        if (!string.IsNullOrEmpty(key) &&
+            Registry.TryGetValue(key, out InteractableBase found) &&
+            found is T typed)
+        {
+            interactable = typed;
+            return true;
+        }
+
+        interactable = null;
+        return false;
+    }
+
+    public static IEnumerable<T> FindAll<T>() where T : InteractableBase
+    {
+        foreach (InteractableBase interactable in Registry.Values)
+        {
+            if (interactable is T typed)
+            {
+                yield return typed;
+            }
+        }
+    }
+
+    protected static string BuildNetworkKey(Transform target)
+    {
+        if (target == null)
+        {
+            return string.Empty;
+        }
+
+        string key = target.name;
+        Transform parent = target.parent;
+        while (parent != null)
+        {
+            key = parent.name + "/" + key;
+            parent = parent.parent;
+        }
+        return key;
     }
 
     protected virtual void OnDrawGizmosSelected()

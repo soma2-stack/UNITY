@@ -5,12 +5,9 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// Editor tool that auto-creates Assets/Resources/NetworkZombie.prefab from the existing
-/// scene zombie prefab, so MultiplayerSessionController's
-/// Resources.Load&lt;GameObject&gt;("NetworkZombie") registration succeeds without any manual
-/// setup. Runs on editor load (and via the menu item). It copies the source zombie prefab
-/// (which already has NetworkObject / NetworkTransform / ZombieAgent / NavMeshAgent /
-/// collider) and makes sure its Animator uses ZombieAI.controller.
+/// Editor tool that creates or upgrades Assets/Resources/NetworkZombie.prefab from
+/// the existing scene zombie prefab. Existing stale prefabs are upgraded in place so
+/// NetworkAnimator is not missed after the first build.
 /// </summary>
 [InitializeOnLoad]
 public static class NetworkZombieSetup
@@ -31,6 +28,11 @@ public static class NetworkZombieSetup
         EnsureNetworkZombiePrefab();
     }
 
+    public static void EnsureOrUpgradeNetworkZombiePrefab()
+    {
+        EnsureNetworkZombiePrefab();
+    }
+
     private static void EnsureNetworkZombiePrefab()
     {
         if (EditorApplication.isPlayingOrWillChangePlaymode)
@@ -38,40 +40,35 @@ public static class NetworkZombieSetup
             return;
         }
 
-        if (AssetDatabase.LoadAssetAtPath<GameObject>(DestPath) != null)
+        bool prefabAlreadyExists = AssetDatabase.LoadAssetAtPath<GameObject>(DestPath) != null;
+        if (!prefabAlreadyExists)
         {
-            return; // already exists
+            GameObject source = AssetDatabase.LoadAssetAtPath<GameObject>(SourcePath);
+            if (source == null)
+            {
+                Debug.LogWarning("[NetworkZombieSetup] Source zombie prefab not found at '" + SourcePath +
+                                 "'. Cannot build NetworkZombie.prefab - assign your zombie prefab there or edit SourcePath.");
+                return;
+            }
+
+            if (source.GetComponent<NetworkObject>() == null)
+            {
+                Debug.LogWarning("[NetworkZombieSetup] '" + SourcePath + "' has no NetworkObject; the " +
+                                 "NetworkZombie prefab will not replicate. Add NetworkObject + NetworkTransform first.");
+            }
+
+            if (!AssetDatabase.IsValidFolder("Assets/Resources"))
+            {
+                AssetDatabase.CreateFolder("Assets", "Resources");
+            }
+
+            if (!AssetDatabase.CopyAsset(SourcePath, DestPath))
+            {
+                Debug.LogWarning("[NetworkZombieSetup] Failed to copy '" + SourcePath + "' -> '" + DestPath + "'.");
+                return;
+            }
         }
 
-        GameObject source = AssetDatabase.LoadAssetAtPath<GameObject>(SourcePath);
-        if (source == null)
-        {
-            Debug.LogWarning("[NetworkZombieSetup] Source zombie prefab not found at '" + SourcePath +
-                             "'. Cannot build NetworkZombie.prefab — assign your zombie prefab there or " +
-                             "edit SourcePath.");
-            return;
-        }
-
-        if (source.GetComponent<NetworkObject>() == null)
-        {
-            Debug.LogWarning("[NetworkZombieSetup] '" + SourcePath + "' has no NetworkObject; the " +
-                             "NetworkZombie prefab will not replicate. Add a NetworkObject + NetworkTransform first.");
-        }
-
-        if (!AssetDatabase.IsValidFolder("Assets/Resources"))
-        {
-            AssetDatabase.CreateFolder("Assets", "Resources");
-        }
-
-        if (!AssetDatabase.CopyAsset(SourcePath, DestPath))
-        {
-            Debug.LogWarning("[NetworkZombieSetup] Failed to copy '" + SourcePath + "' -> '" + DestPath + "'.");
-            return;
-        }
-
-        // Edit the copied prefab: ensure the ZombieAI controller, and add a NetworkAnimator
-        // so the server-driven attack / hit / speed / death animations replicate to clients
-        // (zombie AI only runs on the server, so clients need the animator synced).
         GameObject contents = PrefabUtility.LoadPrefabContents(DestPath);
         Animator animator = contents.GetComponentInChildren<Animator>(true);
         RuntimeAnimatorController controller = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(ControllerPath);
@@ -89,7 +86,7 @@ public static class NetworkZombieSetup
 
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
-        Debug.Log("[NetworkZombieSetup] Created '" + DestPath + "' from '" + SourcePath +
+        Debug.Log("[NetworkZombieSetup] " + (prefabAlreadyExists ? "Updated" : "Created") + " '" + DestPath +
                   "'. ZombieSpawner will use it automatically.");
     }
 }

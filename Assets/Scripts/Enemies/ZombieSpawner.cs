@@ -46,9 +46,9 @@ public class ZombieSpawner : MonoBehaviour
 
     // Scratch buffers reused every spawn attempt (no per-frame allocations).
     private readonly List<int> reachableCandidates = new List<int>();
+    private readonly List<Vector3> reachablePlayerPositions = new List<Vector3>();
     private NavMeshPath pathScratch;
 
-    private Transform player;            // cached player (CharacterController) transform
     private float nextPlayerRecheckTime;
 
     private int remainingToSpawn;       // how many still need to be spawned this round
@@ -226,23 +226,17 @@ public class ZombieSpawner : MonoBehaviour
             return RandomValidPoint();
         }
 
-        EnsurePlayer();
-        if (player == null)
+        EnsureReachablePlayers();
+        if (reachablePlayerPositions.Count == 0)
         {
-            // No player to path to yet - fall back so the round still gets going.
-            return RandomValidPoint();
-        }
-
-        // Sample the player onto the NavMesh once for all candidate tests.
-        if (!NavMesh.SamplePosition(player.position, out NavMeshHit playerHit, navSampleRadius, NavMesh.AllAreas))
-        {
+            // No living player to path to yet - fall back so the round still gets going.
             return RandomValidPoint();
         }
 
         reachableCandidates.Clear();
         for (int i = 0; i < spawnPoints.Length; i++)
         {
-            if (spawnPoints[i] != null && IsReachable(spawnPoints[i].position, playerHit.position))
+            if (spawnPoints[i] != null && IsReachableToAnyPlayer(spawnPoints[i].position))
             {
                 reachableCandidates.Add(i);
             }
@@ -278,6 +272,19 @@ public class ZombieSpawner : MonoBehaviour
         return pathScratch.status == NavMeshPathStatus.PathComplete;
     }
 
+    private bool IsReachableToAnyPlayer(Vector3 spawnPos)
+    {
+        foreach (Vector3 playerPosition in reachablePlayerPositions)
+        {
+            if (IsReachable(spawnPos, playerPosition))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private Transform RandomValidPoint()
     {
         // A couple of quick tries to skip any null entries in the array.
@@ -293,23 +300,31 @@ public class ZombieSpawner : MonoBehaviour
     }
 
     /// <summary>
-    /// Caches the player transform (found via its CharacterController, the project
-    /// convention) and refreshes it periodically so a respawned/late player is picked
-    /// up without searching every frame.
+    /// Caches living player NavMesh positions and refreshes them periodically so
+    /// respawned/late players are picked up without searching every frame.
     /// </summary>
-    private void EnsurePlayer()
+    private void EnsureReachablePlayers()
     {
-        if (player != null && Time.time < nextPlayerRecheckTime)
+        if (reachablePlayerPositions.Count > 0 && Time.time < nextPlayerRecheckTime)
         {
             return;
         }
 
         nextPlayerRecheckTime = Time.time + Mathf.Max(0.1f, playerRecheckInterval);
+        reachablePlayerPositions.Clear();
 
-        Transform local = LocalPlayer.Transform;
-        if (local != null)
+        PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        foreach (PlayerHealth health in players)
         {
-            player = local;
+            if (health == null || health.IsDead || health.IsDowned)
+            {
+                continue;
+            }
+
+            if (NavMesh.SamplePosition(health.transform.position, out NavMeshHit playerHit, navSampleRadius, NavMesh.AllAreas))
+            {
+                reachablePlayerPositions.Add(playerHit.position);
+            }
         }
     }
 

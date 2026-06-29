@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -16,6 +17,8 @@ using UnityEngine;
 /// </summary>
 public class PerkMachine : MonoBehaviour
 {
+    private static readonly Dictionary<string, PerkMachine> Registry = new Dictionary<string, PerkMachine>();
+
     [Header("Perk")]
     [Tooltip("Which perk this machine sells.")]
     public PerkType perk = PerkType.VitalBoost;
@@ -31,6 +34,34 @@ public class PerkMachine : MonoBehaviour
     private Transform player;
     private bool playerInRange;
     private float nextPromptTime;
+    private string networkKey;
+
+    public string NetworkKey
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(networkKey))
+            {
+                networkKey = BuildNetworkKey(transform);
+            }
+            return networkKey;
+        }
+    }
+
+    private void OnEnable()
+    {
+        Registry[NetworkKey] = this;
+    }
+
+    private void OnDisable()
+    {
+        if (!string.IsNullOrEmpty(networkKey) &&
+            Registry.TryGetValue(networkKey, out PerkMachine registered) &&
+            registered == this)
+        {
+            Registry.Remove(networkKey);
+        }
+    }
 
     private void Start()
     {
@@ -72,7 +103,14 @@ public class PerkMachine : MonoBehaviour
 
         if (Input.GetKeyDown(interactKey))
         {
-            TryBuy();
+            if (NetworkGameplayCoordinator.IsNetworkActive)
+            {
+                NetworkGameplayCoordinator.RequestPerk(this);
+            }
+            else
+            {
+                TryBuy();
+            }
         }
     }
 
@@ -186,5 +224,27 @@ public class PerkMachine : MonoBehaviour
     {
         Gizmos.color = PerkManager.PerkColor(perk);
         Gizmos.DrawWireSphere(transform.position, interactionRange);
+    }
+
+    public static bool TryFind(string key, out PerkMachine machine)
+    {
+        return Registry.TryGetValue(key, out machine);
+    }
+
+    private static string BuildNetworkKey(Transform target)
+    {
+        if (target == null)
+        {
+            return string.Empty;
+        }
+
+        string key = target.name;
+        Transform parent = target.parent;
+        while (parent != null)
+        {
+            key = parent.name + "/" + key;
+            parent = parent.parent;
+        }
+        return key;
     }
 }

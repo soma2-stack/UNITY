@@ -118,10 +118,28 @@ public class WallBuy : InteractableBase
         }
 
         bool owns = Owns(wc);
+        if (NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.RequestWallBuy(this, owns);
+            return;
+        }
+
         int price = owns ? ammoCost : buyCost;
 
         if (!TryCharge(price))
         {
+            return;
+        }
+
+        ApplyPurchaseResult(owns);
+    }
+
+    public void ApplyPurchaseResult(bool owns)
+    {
+        WeaponController wc = LocalPlayer.Weapon;
+        if (wc == null)
+        {
+            Debug.LogWarning("[WallBuy] No WeaponController in scene.");
             return;
         }
 

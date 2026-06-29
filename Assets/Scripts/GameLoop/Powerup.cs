@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -10,6 +11,9 @@ using UnityEngine;
 /// </summary>
 public class Powerup : MonoBehaviour
 {
+    private static readonly Dictionary<int, Powerup> Registry = new Dictionary<int, Powerup>();
+    private static readonly List<Powerup> NetworkedPowerups = new List<Powerup>();
+
     public PowerupType type = PowerupType.MaxAmmo;
 
     [Tooltip("How close the player must be to auto-collect / press E.")]
@@ -29,9 +33,16 @@ public class Powerup : MonoBehaviour
     private Transform player;
     private Renderer rend;
     private Vector3 spawnPosition; // captured once so the bob oscillates without drifting
+    private bool networked;
+    private int networkId;
+
+    public int NetworkId => networkId;
+    public bool IsNetworked => networked;
+    public float RemainingLifetime => Mathf.Max(0f, lifetime - (Time.time - spawnTime));
+    public static IEnumerable<Powerup> ActiveNetworkedPowerups => NetworkedPowerups;
 
     /// <summary>Create a power-up pickup at a world position. Returns the new instance.</summary>
-    public static Powerup Spawn(PowerupType type, Vector3 position, float lifetime)
+    public static Powerup Spawn(PowerupType type, Vector3 position, float lifetime, int networkId = 0, bool networked = false)
     {
         GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
         go.name = "Powerup_" + type;
@@ -69,6 +80,9 @@ public class Powerup : MonoBehaviour
         Powerup p = go.AddComponent<Powerup>();
         p.type = type;
         p.lifetime = Mathf.Max(1f, lifetime);
+        p.networkId = networkId;
+        p.networked = networked;
+        p.RegisterNetworked();
         return p;
     }
 
@@ -82,6 +96,34 @@ public class Powerup : MonoBehaviour
         FindPlayer();
     }
 
+    private void OnEnable()
+    {
+        RegisterNetworked();
+    }
+
+    private void RegisterNetworked()
+    {
+        if (networked && networkId != 0)
+        {
+            Registry[networkId] = this;
+            if (!NetworkedPowerups.Contains(this))
+            {
+                NetworkedPowerups.Add(this);
+            }
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (networkId != 0 &&
+            Registry.TryGetValue(networkId, out Powerup registered) &&
+            registered == this)
+        {
+            Registry.Remove(networkId);
+        }
+        NetworkedPowerups.Remove(this);
+    }
+
     private void Update()
     {
         // Spin around Y, and bob up/down around the spawn height, for visibility.
@@ -92,6 +134,10 @@ public class Powerup : MonoBehaviour
         float age = Time.time - spawnTime;
         if (age >= lifetime)
         {
+            if (networked && NetworkGameplayCoordinator.IsNetworkActive && NetworkGameplayCoordinator.IsServer)
+            {
+                NetworkGameplayCoordinator.BroadcastPowerupCollected(networkId);
+            }
             Destroy(gameObject);
             return;
         }
@@ -134,11 +180,27 @@ public class Powerup : MonoBehaviour
 
     private void Collect()
     {
+        if (networked && NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.RequestPowerupCollect(this);
+            return;
+        }
+
+        CollectOffline();
+    }
+
+    public void CollectOffline()
+    {
         if (PowerupManager.Instance != null)
         {
             PowerupManager.Instance.Apply(type);
         }
         Destroy(gameObject);
+    }
+
+    public static bool TryFind(int id, out Powerup powerup)
+    {
+        return Registry.TryGetValue(id, out powerup);
     }
 
     private void FindPlayer()

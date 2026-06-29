@@ -1,4 +1,5 @@
 // ✅ INTERACTABLES AUDIT FIXES
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -14,6 +15,9 @@ using UnityEngine.AI;
 [RequireComponent(typeof(Collider))]
 public class Door : MonoBehaviour
 {
+    private static readonly Dictionary<string, Door> Registry = new Dictionary<string, Door>();
+    private static readonly List<Door> Doors = new List<Door>();
+
     [Header("Buy Cost")]
     [Tooltip("Points required to open this door. 0 = opens for free. Buying spends this " +
              "many points (via PlayerPoints) and rewards +10 points per 100 spent.")]
@@ -46,6 +50,20 @@ public class Door : MonoBehaviour
     public AudioSource audioSource;
 
     public bool IsOpen { get; private set; }
+    public int Cost => cost;
+    public string NetworkKey
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(networkKey))
+            {
+                networkKey = BuildNetworkKey(transform);
+            }
+            return networkKey;
+        }
+    }
+
+    public static IEnumerable<Door> AllDoors => Doors;
 
     private Transform[] players;
     private Transform nearestPlayer;
@@ -57,6 +75,27 @@ public class Door : MonoBehaviour
     private float nextPromptTime;
     private bool playerInRange;
     private GUIStyle promptStyle;
+    private string networkKey;
+
+    private void OnEnable()
+    {
+        Registry[NetworkKey] = this;
+        if (!Doors.Contains(this))
+        {
+            Doors.Add(this);
+        }
+    }
+
+    private void OnDisable()
+    {
+        Doors.Remove(this);
+        if (!string.IsNullOrEmpty(networkKey) &&
+            Registry.TryGetValue(networkKey, out Door registered) &&
+            registered == this)
+        {
+            Registry.Remove(networkKey);
+        }
+    }
 
     private void Awake()
     {
@@ -152,7 +191,7 @@ public class Door : MonoBehaviour
 
         if (Input.GetKeyDown(interactKey))
         {
-            TryOpen();
+            NetworkGameplayCoordinator.RequestDoorOpen(this);
         }
     }
 
@@ -212,12 +251,12 @@ public class Door : MonoBehaviour
     /// spends the points, then opens and rewards +10 points per 100 spent. Free
     /// doors (cost &lt;= 0) just open. Opens for free when no economy is present.
     /// </summary>
-    private void TryOpen()
+    public void TryOpenOffline()
     {
         // Free door: open immediately, no charge or reward.
         if (cost <= 0)
         {
-            Open();
+            OpenFromNetwork();
             return;
         }
 
@@ -238,7 +277,7 @@ public class Door : MonoBehaviour
             }
         }
 
-        Open();
+        OpenFromNetwork();
 
         // Classic CoD door-buy reward: +10 points per 100 spent (e.g. 750 -> 75).
         int reward = Mathf.RoundToInt(cost / 10f);
@@ -253,6 +292,11 @@ public class Door : MonoBehaviour
     /// Public so a future points/buy system can call it directly.
     /// </summary>
     public void Open()
+    {
+        NetworkGameplayCoordinator.RequestDoorOpen(this);
+    }
+
+    public void OpenFromNetwork()
     {
         if (IsOpen)
         {
@@ -294,17 +338,40 @@ public class Door : MonoBehaviour
         }
 
         // Open every linked door too (e.g. both ends of a stairwell). The IsOpen
-        // guard at the top of Open() prevents mutual links from looping forever.
+        // guard at the top of OpenFromNetwork() prevents mutual links from looping forever.
         if (linkedDoors != null)
         {
             foreach (Door linked in linkedDoors)
             {
                 if (linked != null && !linked.IsOpen)
                 {
-                    linked.Open();
+                    linked.OpenFromNetwork();
+                    NetworkGameplayCoordinator.BroadcastDoorOpen(linked.NetworkKey);
                 }
             }
         }
+    }
+
+    public static bool TryFind(string key, out Door door)
+    {
+        return Registry.TryGetValue(key, out door);
+    }
+
+    private static string BuildNetworkKey(Transform target)
+    {
+        if (target == null)
+        {
+            return string.Empty;
+        }
+
+        string key = target.name;
+        Transform parent = target.parent;
+        while (parent != null)
+        {
+            key = parent.name + "/" + key;
+            parent = parent.parent;
+        }
+        return key;
     }
 
     private void AnimateOpen()

@@ -44,6 +44,8 @@ public class ZombieAgent : MonoBehaviour
     [Header("Pathing")]
     [Tooltip("How often (seconds) to recompute the path to the player. Throttled for performance.")]
     public float repathInterval = 0.2f;
+    [Tooltip("How often (seconds) to re-check all players and switch to the nearest reachable living target.")]
+    public float targetRecheckInterval = 0.75f;
 
     [Header("Animation")]
     [Tooltip("Animator float parameter set to the zombie's current move speed (drives idle<->move).")]
@@ -89,9 +91,11 @@ public class ZombieAgent : MonoBehaviour
     private bool hasDieParam;
     private bool hasHitParam;
     private float nextRepathTime;
+    private float nextTargetRecheckTime;
     private float nextAttackTime;
     private float nextHitReactTime;
     private float nextRecoveryTime; // throttles off-mesh recovery attempts
+    private NavMeshPath targetPathScratch;
     private bool isDead;
     private bool pointsAwarded; // guard: the kill reward may be granted at most once
 
@@ -135,10 +139,16 @@ public class ZombieAgent : MonoBehaviour
             return;
         }
 
-        if (player == null || playerHealth == null || playerHealth.IsDead)
+        if (Time.time >= nextTargetRecheckTime)
         {
-            // No target yet, or the current one died/left: re-acquire the nearest living
-            // player occasionally (multiplayer: switch to whoever is still up).
+            nextTargetRecheckTime = Time.time + Mathf.Max(0.1f, targetRecheckInterval);
+            AcquirePlayer();
+        }
+
+        if (!IsCurrentTargetValid())
+        {
+            // No target yet, or the current one died/downed/left/became unreachable:
+            // re-acquire the nearest reachable living player.
             if (Time.time >= nextRepathTime)
             {
                 nextRepathTime = Time.time + repathInterval;
@@ -173,7 +183,9 @@ public class ZombieAgent : MonoBehaviour
                     agent.pathStatus == NavMeshPathStatus.PathInvalid)
                 {
                     agent.ResetPath();
+                    ClearTarget();
                     nextRepathTime = Time.time + 0.1f;
+                    nextTargetRecheckTime = 0f;
                 }
             }
         }
@@ -205,7 +217,7 @@ public class ZombieAgent : MonoBehaviour
 
     private void TryAttack()
     {
-        if (playerHealth == null || playerHealth.IsDead)
+        if (!IsCurrentTargetValid())
         {
             return;
         }
@@ -235,9 +247,17 @@ public class ZombieAgent : MonoBehaviour
             Vector3 rayStart = origin + dir * 0.15f;
             if (Physics.Raycast(rayStart, dir, out RaycastHit hit, dist, ~0, QueryTriggerInteraction.Ignore))
             {
-                // Blocked unless the first thing we hit is the player.
-                if (hit.collider.GetComponentInParent<CharacterController>() == null)
+                CharacterController hitController = hit.collider.GetComponentInParent<CharacterController>();
+                if (hitController == null)
                 {
+                    return;
+                }
+
+                PlayerHealth hitHealth = hitController.GetComponentInParent<PlayerHealth>();
+                if (hitHealth != playerHealth)
+                {
+                    // Another player/body is in the way. Do not damage the stale target.
+                    nextTargetRecheckTime = 0f;
                     return;
                 }
             }
@@ -249,11 +269,7 @@ public class ZombieAgent : MonoBehaviour
             animator.SetTrigger(attackParam);
         }
 
-        // Authentic CoD: hitting a DOWNED player only chips 1 damage (death comes from
-        // the bleed-out timer, so hits slow the drain rather than accelerating a kill),
-        // and no points are involved in a zombie striking the player.
-        int dealt = playerHealth.IsDowned ? 1 : attackDamage;
-        playerHealth.TakeDamage(dealt);
+        playerHealth.TakeDamage(attackDamage);
     }
 
     /// <summary>
@@ -423,18 +439,24 @@ public class ZombieAgent : MonoBehaviour
 
     private void AcquirePlayer()
     {
-        // Target the NEAREST living player (multiplayer aware). PlayerHealth sits on the
-        // player root, so this also reliably wires up the health reference the attack uses
-        // (fixes "zombies chase but never damage" when there are multiple players).
+        // Target the nearest reachable, non-downed player (multiplayer aware).
+        // PlayerHealth sits on the player root, so this also reliably wires up the
+        // health reference the attack uses.
         PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
         PlayerHealth nearest = null;
         float bestDistance = float.MaxValue;
         foreach (PlayerHealth ph in players)
         {
-            if (ph == null || ph.IsDead)
+            if (!IsTargetable(ph))
             {
                 continue;
             }
+
+            if (!HasCompletePathTo(ph.transform))
+            {
+                continue;
+            }
+
             float distance = Vector3.Distance(transform.position, ph.transform.position);
             if (distance < bestDistance)
             {
@@ -448,6 +470,71 @@ public class ZombieAgent : MonoBehaviour
             player = nearest.transform;
             playerHealth = nearest;
         }
+        else
+        {
+            ClearTarget();
+        }
+    }
+
+    private bool IsCurrentTargetValid()
+    {
+        return player != null &&
+               playerHealth != null &&
+               IsTargetable(playerHealth);
+    }
+
+    private static bool IsTargetable(PlayerHealth health)
+    {
+        return health != null &&
+               health.gameObject.activeInHierarchy &&
+               !health.IsDead &&
+               !health.IsDowned;
+    }
+
+    private bool HasCompletePathTo(Transform target)
+    {
+        if (target == null)
+        {
+            return false;
+        }
+
+        if (agent == null || !agent.enabled)
+        {
+            return true;
+        }
+
+        Vector3 from = transform.position;
+        if (agent.isOnNavMesh)
+        {
+            from = agent.transform.position;
+        }
+        else if (NavMesh.SamplePosition(transform.position, out NavMeshHit sampledFrom, 2f, NavMesh.AllAreas))
+        {
+            from = sampledFrom.position;
+        }
+        else
+        {
+            return true;
+        }
+
+        if (!NavMesh.SamplePosition(target.position, out NavMeshHit sampledTarget, 2f, NavMesh.AllAreas))
+        {
+            return false;
+        }
+
+        targetPathScratch ??= new NavMeshPath();
+        if (!NavMesh.CalculatePath(from, sampledTarget.position, NavMesh.AllAreas, targetPathScratch))
+        {
+            return false;
+        }
+
+        return targetPathScratch.status == NavMeshPathStatus.PathComplete;
+    }
+
+    private void ClearTarget()
+    {
+        player = null;
+        playerHealth = null;
     }
 
     private void OnDrawGizmosSelected()

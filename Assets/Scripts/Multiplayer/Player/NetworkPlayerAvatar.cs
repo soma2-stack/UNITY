@@ -66,6 +66,12 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
     public string DisplayName => displayName.Value.ToString();
 
+    private void Awake()
+    {
+        ResolveReferences();
+        SetOwnerOnlyComponents(false);
+    }
+
     public override void OnNetworkSpawn()
     {
         SelectModelVariant();
@@ -166,46 +172,50 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
     private void ConfigureOwnership()
     {
-        if (movement != null)
-        {
-            movement.enabled = IsOwner;
-        }
+        SetOwnerOnlyComponents(IsOwner);
 
-        if (playerCamera != null)
-        {
-            playerCamera.enabled = IsOwner;
-            CoDCamera cameraController = playerCamera.GetComponent<CoDCamera>();
-            if (cameraController != null)
-            {
-                cameraController.enabled = IsOwner;
-            }
-        }
-
-        if (audioListener != null)
-        {
-            audioListener.enabled = IsOwner;
-        }
-
-        // The owner uses PlayerAnimator to drive their own body; remote players are
-        // driven by this avatar from the replicated NetworkVariables. Disable
-        // PlayerAnimator on non-owners so the two systems never fight.
-        if (playerAnimator != null)
-        {
-            playerAnimator.enabled = IsOwner;
-        }
-
-        // Weapons (firing / switching / first-person model) belong to the owner only.
-        WeaponController weaponController = GetComponent<WeaponController>();
-        if (weaponController != null)
-        {
-            weaponController.enabled = IsOwner;
-        }
-
+        // Owner sees their own body as shadows-only; every remote copy stays visible.
         ApplyBodyVisibility();
 
         if (!IsOwner)
         {
             BuildWorldName();
+        }
+    }
+
+    private void SetOwnerOnlyComponents(bool enabledForOwner)
+    {
+        if (movement != null)
+        {
+            movement.enabled = enabledForOwner;
+        }
+
+        if (playerCamera != null)
+        {
+            playerCamera.enabled = enabledForOwner;
+            CoDCamera cameraController = playerCamera.GetComponent<CoDCamera>();
+            if (cameraController != null)
+            {
+                cameraController.enabled = enabledForOwner;
+            }
+        }
+
+        if (audioListener != null)
+        {
+            audioListener.enabled = enabledForOwner;
+        }
+
+        if (playerAnimator != null)
+        {
+            playerAnimator.enabled = enabledForOwner;
+        }
+
+        // Weapons are owner-only for input and first-person view setup. Weapon behavior
+        // itself is left unchanged for the later weapons checkpoint.
+        WeaponController weaponController = GetComponent<WeaponController>();
+        if (weaponController != null)
+        {
+            weaponController.enabled = enabledForOwner || IsServer;
         }
     }
 
@@ -302,7 +312,29 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
         if (playerCamera != null)
         {
+            playerCamera.enabled = gameplay && IsOwner;
+            CoDCamera cameraController = playerCamera.GetComponent<CoDCamera>();
+            if (cameraController != null)
+            {
+                cameraController.enabled = gameplay && IsOwner;
+            }
             playerCamera.gameObject.SetActive(gameplay && IsOwner);
+        }
+
+        if (audioListener != null)
+        {
+            audioListener.enabled = gameplay && IsOwner;
+        }
+
+        if (playerAnimator != null)
+        {
+            playerAnimator.enabled = gameplay && IsOwner;
+        }
+
+        WeaponController weaponController = GetComponent<WeaponController>();
+        if (weaponController != null)
+        {
+            weaponController.enabled = gameplay && (IsOwner || IsServer);
         }
 
         if (survivorRenderers != null)
@@ -314,6 +346,10 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
                     // Owner keeps a shadow-only body in gameplay; remote shows full body.
                     survivorRenderer.enabled = gameplay;
                 }
+            }
+            if (gameplay)
+            {
+                ApplyBodyVisibility();
             }
         }
 

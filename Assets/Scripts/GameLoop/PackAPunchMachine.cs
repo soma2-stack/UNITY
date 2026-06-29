@@ -34,6 +34,12 @@ public class PackAPunchMachine : InteractableBase
 
     protected override void OnInteract()
     {
+        if (NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.RequestPackAPunch(this);
+            return;
+        }
+
         if (requirePower && !PowerState.IsOn)
         {
             Debug.Log("[PackAPunch] Power is off.");

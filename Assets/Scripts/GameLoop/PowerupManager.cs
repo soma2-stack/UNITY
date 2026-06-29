@@ -214,6 +214,11 @@ public class PowerupManager : MonoBehaviour
 
     private void HandleZombieKilled(Vector3 position)
     {
+        if (NetworkGameplayCoordinator.IsNetworkActive && !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
+
         if (Random.value > Mathf.Clamp01(dropChance))
         {
             return;
@@ -251,7 +256,15 @@ public class PowerupManager : MonoBehaviour
 
     private void SpawnPickup(PowerupType type, Vector3 position)
     {
-        Powerup.Spawn(type, position, pickupLifetime);
+        bool networked = NetworkGameplayCoordinator.IsNetworkActive;
+        int id = networked && NetworkGameplayCoordinator.IsServer
+            ? NetworkGameplayCoordinator.AllocatePowerupId()
+            : 0;
+        Powerup powerup = Powerup.Spawn(type, position, pickupLifetime, id, networked);
+        if (networked && NetworkGameplayCoordinator.IsServer)
+        {
+            NetworkGameplayCoordinator.BroadcastPowerupSpawn(powerup);
+        }
     }
 
     /// <summary>
@@ -261,12 +274,26 @@ public class PowerupManager : MonoBehaviour
     /// </summary>
     public void SpawnPowerupAt(PowerupType type, Vector3 position)
     {
+        if (NetworkGameplayCoordinator.IsNetworkActive && !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
         SpawnPickup(type, position);
     }
 
     /// <summary>Apply a power-up's effect. Called by a <see cref="Powerup"/> on collect.</summary>
     public void Apply(PowerupType type)
     {
+        Apply(type, ulong.MaxValue);
+    }
+
+    public void Apply(PowerupType type, ulong collectorClientId)
+    {
+        if (NetworkGameplayCoordinator.IsNetworkActive && !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
+
         switch (type)
         {
             case PowerupType.MaxAmmo:
@@ -276,12 +303,14 @@ public class PowerupManager : MonoBehaviour
                 {
                     wc.RefillAllAmmo();
                 }
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, 0f);
                 break;
             }
 
             case PowerupType.InstaKill:
                 InstaKillActive = true;
                 instaKillEndTime = Time.time + Mathf.Max(0f, instaKillDuration);
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, instaKillDuration);
                 break;
 
             case PowerupType.DoublePoints:
@@ -289,16 +318,19 @@ public class PowerupManager : MonoBehaviour
                 {
                     // Already active: just refresh the timer, never re-stack the multiplier.
                     doublePointsEndTime = Time.time + Mathf.Max(0f, doublePointsDuration);
+                    NetworkGameplayCoordinator.BroadcastPowerupEffect(type, doublePointsDuration);
                     Debug.Log("[PowerupManager] Double Points timer refreshed.");
                     return;
                 }
                 DoublePointsActive = true;
                 doublePointsEndTime = Time.time + Mathf.Max(0f, doublePointsDuration);
                 PlayerPoints.PointsMultiplier = DoublePointsMultiplier;
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, doublePointsDuration);
                 Debug.Log("[PowerupManager] Double Points activated.");
                 break;
 
             case PowerupType.Nuke:
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, 0.3f);
                 // Flash the screen, then kill all zombies staggered over ~1s, then
                 // award the bonus (handled in the coroutine).
                 StartCoroutine(NukeRoutine());
@@ -317,6 +349,49 @@ public class PowerupManager : MonoBehaviour
         }
 
         Debug.Log("[PowerupManager] Collected power-up: " + type);
+    }
+
+    public static void ApplyNetworkEffect(PowerupType type, float remaining)
+    {
+        switch (type)
+        {
+            case PowerupType.MaxAmmo:
+                LocalPlayer.Weapon?.RefillAllAmmo();
+                break;
+            case PowerupType.InstaKill:
+                InstaKillActive = true;
+                instaKillEndTime = Time.time + Mathf.Max(0f, remaining);
+                break;
+            case PowerupType.DoublePoints:
+                DoublePointsActive = true;
+                doublePointsEndTime = Time.time + Mathf.Max(0f, remaining);
+                PlayerPoints.PointsMultiplier = DoublePointsMultiplier;
+                break;
+            case PowerupType.Nuke:
+                if (Instance != null && Instance.nukeFlashEnabled)
+                {
+                    Instance.nukeFlashActive = true;
+                    Instance.nukeFlashEndTime = Time.time + 0.3f;
+                }
+                break;
+        }
+    }
+
+    public static void SendActiveEffectsToClient(ulong clientId)
+    {
+        if (!NetworkGameplayCoordinator.IsNetworkActive || !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
+
+        if (InstaKillActive)
+        {
+            NetworkGameplayCoordinator.SendPowerupEffectToClient(clientId, PowerupType.InstaKill, Mathf.Max(0f, instaKillEndTime - Time.time));
+        }
+        if (DoublePointsActive)
+        {
+            NetworkGameplayCoordinator.SendPowerupEffectToClient(clientId, PowerupType.DoublePoints, Mathf.Max(0f, doublePointsEndTime - Time.time));
+        }
     }
 
     /// <summary>Display name + base colour for a power-up type (shared by pickups + HUD).</summary>

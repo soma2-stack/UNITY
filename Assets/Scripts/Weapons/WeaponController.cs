@@ -24,7 +24,7 @@ public class WeaponController : NetworkBehaviour
     [Tooltip("Maximum weapon slots (classic Zombies = 2). When full, GiveWeapon replaces the current slot.")]
     public int maxWeaponSlots = 2;
 
-    [Tooltip("If no weapons are configured, automatically give the classic M1911 starting pistol so the player is never unarmed. Disable to configure weapons manually.")]
+    [Tooltip("Legacy toggle. Empty loadouts still receive fallback M1911 stats/ammo so players never spawn unarmed.")]
     public bool startWithPistol = true;
 
     [Header("Default Starting Weapon")]
@@ -45,7 +45,7 @@ public class WeaponController : NetworkBehaviour
     };
 
     [Header("Aiming")]
-    [Tooltip("Optional. If left null, Camera.main (then any Camera) is used as the aim ray origin.")]
+    [Tooltip("Optional. In multiplayer this must be a camera under the same owned player. Solo may fall back to Camera.main.")]
     public Transform aimCamera;
 
     [Tooltip("Optional layers the rays can hit. Leave as Everything to hit all.")]
@@ -94,11 +94,13 @@ public class WeaponController : NetworkBehaviour
     private int _cameraResolveAttempts;  // capped retries so we stop searching for a missing camera
     private readonly Queue<GameObject> _bloodPool = new Queue<GameObject>(); // pooled blood-effect instances
     private GameObject _spawnedViewModel; // first-person model currently spawned under the holder
+    private bool initialized;
 
     // Pack-a-Punch upgrade multipliers — adjust here rather than hunting magic numbers.
     private const float PAPDamageMultiplier = 2f;
     private const float PAPFireRateMultiplier = 1.5f;
     private const int PAPReserveMinMagazines = 5;
+    private const float MaxServerShotOriginDistance = 2.5f;
 
     /// <summary>True for a short window while a knife swing is in progress (HUD/animator can react).</summary>
     public bool IsKnifing { get; private set; }
@@ -307,17 +309,45 @@ public class WeaponController : NetworkBehaviour
 #endif
     }
 
+    private void OnEnable()
+    {
+        if (!IsSpawned || !IsOwner)
+        {
+            return;
+        }
+
+        InitializeRuntime();
+    }
+
     void Start()
     {
+        InitializeRuntime();
+    }
+
+    private void InitializeRuntime()
+    {
+        if (initialized)
+        {
+            ResolveCamera();
+            ResolveWeaponHolder();
+            return;
+        }
+
+        if (IsSpawned && !IsOwner)
+        {
+            return;
+        }
+
         ResolveCamera();
         ResolveWeaponHolder();
-        gunRecoil = GetComponentInChildren<SimpleGunRecoil>();
+        gunRecoil = GetComponentInChildren<SimpleGunRecoil>(true);
 
         // Cache the player's health (same GameObject or a parent) so we can block
         // firing/switching while downed or dead, and cancel reloads on the way down.
         playerHealth = GetComponentInParent<PlayerHealth>();
         if (playerHealth != null)
         {
+            playerHealth.OnPlayerDowned -= HandlePlayerDowned;
             playerHealth.OnPlayerDowned += HandlePlayerDowned;
         }
 
@@ -335,7 +365,7 @@ public class WeaponController : NetworkBehaviour
 
         // Guaranteed starting weapon: if nothing was configured, give the inspector-
         // configurable default pistol so the player never spawns unarmed.
-        if (startWithPistol && (weapons == null || weapons.Count == 0))
+        if (weapons == null || weapons.Count == 0 || AllWeaponsNull())
         {
 #if UNITY_EDITOR
             Debug.Log("[WeaponController] No weapons configured — giving default starting pistol.");
@@ -344,21 +374,15 @@ public class WeaponController : NetworkBehaviour
             {
                 weapons = new List<Weapon>();
             }
+            else
+            {
+                weapons.Clear();
+            }
 
             // Use the serialized defaultPistol; fall back to a hardcoded M1911 only if
             // it was cleared in the inspector so the player is never unarmed.
-            Weapon pistol = defaultPistol ?? new Weapon
-            {
-                weaponName = "M1911",
-                damage = 40,
-                fireRate = 3f,
-                automatic = false,
-                range = 80f,
-                spread = 1f,
-                magazineSize = 8,
-                reserveAmmo = 48,
-                reloadTime = 1.8f,
-            };
+            Weapon pistol = defaultPistol ?? CreateFallbackPistol();
+            SanitizeFallbackPistol(pistol);
             pistol.InitAmmo();
 
             // Clear, actionable warning instead of a silent invisible gun.
@@ -377,11 +401,19 @@ public class WeaponController : NetworkBehaviour
         if (weapons != null && weapons.Count > 0)
         {
             currentIndex = Mathf.Clamp(currentIndex, 0, weapons.Count - 1);
+            if (weapons[currentIndex] == null)
+            {
+                int firstWeaponIndex = FirstValidWeaponIndex();
+                if (firstWeaponIndex >= 0)
+                {
+                    currentIndex = firstWeaponIndex;
+                }
+            }
         }
         EquipCurrent();
 
         // Pre-warm the blood-effect pool so the first hits don't hitch on Instantiate.
-        if (bloodHitEffect != null)
+        if (bloodHitEffect != null && _bloodPool.Count == 0)
         {
             for (int i = 0; i < 5; i++)
             {
@@ -389,6 +421,97 @@ public class WeaponController : NetworkBehaviour
                 fx.SetActive(false);
                 _bloodPool.Enqueue(fx);
             }
+        }
+
+        initialized = true;
+    }
+
+    private bool AllWeaponsNull()
+    {
+        if (weapons == null)
+        {
+            return true;
+        }
+
+        foreach (Weapon weapon in weapons)
+        {
+            if (weapon != null)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private int FirstValidWeaponIndex()
+    {
+        if (weapons == null)
+        {
+            return -1;
+        }
+
+        for (int i = 0; i < weapons.Count; i++)
+        {
+            if (weapons[i] != null)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static Weapon CreateFallbackPistol()
+    {
+        return new Weapon
+        {
+            weaponName = "M1911",
+            damage = 40,
+            fireRate = 3f,
+            automatic = false,
+            range = 80f,
+            spread = 1f,
+            magazineSize = 8,
+            reserveAmmo = 48,
+            reloadTime = 1.8f,
+        };
+    }
+
+    private static void SanitizeFallbackPistol(Weapon pistol)
+    {
+        if (pistol == null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(pistol.weaponName))
+        {
+            pistol.weaponName = "M1911";
+        }
+        if (pistol.damage <= 0)
+        {
+            pistol.damage = 40;
+        }
+        if (pistol.fireRate <= 0f)
+        {
+            pistol.fireRate = 3f;
+        }
+        if (pistol.range <= 0f)
+        {
+            pistol.range = 80f;
+        }
+        if (pistol.magazineSize <= 0)
+        {
+            pistol.magazineSize = 8;
+        }
+        if (pistol.reserveAmmo < 0)
+        {
+            pistol.reserveAmmo = 48;
+        }
+        if (pistol.reloadTime <= 0f)
+        {
+            pistol.reloadTime = 1.8f;
         }
     }
 
@@ -412,6 +535,11 @@ public class WeaponController : NetworkBehaviour
 
     void Update()
     {
+        if (IsSpawned && !IsOwner)
+        {
+            return;
+        }
+
         // Retry resolving the camera only a capped number of times so a permanently
         // missing camera doesn't trigger an expensive scene search every frame.
         if (cam == null && _cameraResolveAttempts < 10)
@@ -425,27 +553,47 @@ public class WeaponController : NetworkBehaviour
         HandleFiring();
     }
 
-    // Resolve the aim camera: explicit field -> Camera.main -> any camera in scene.
+    // Resolve the aim camera: explicit same-player field -> same-player child camera.
+    // Solo/non-networked play may still fall back to scene cameras.
     private void ResolveCamera()
     {
         if (aimCamera != null)
         {
+            if (IsAllowedPlayerTransform(aimCamera))
+            {
+                cam = aimCamera;
+                _cameraResolveAttempts = 0;
+                return;
+            }
+
+            Debug.LogWarning("[WeaponController] Ignoring aimCamera outside this player: " + aimCamera.name);
+            aimCamera = null;
+            cam = null;
+        }
+
+        Camera localCamera = GetComponentInChildren<Camera>(true);
+        if (localCamera != null)
+        {
+            aimCamera = localCamera.transform;
             cam = aimCamera;
             _cameraResolveAttempts = 0;
             return;
         }
 
-        Camera main = Camera.main;
-        if (main == null)
+        if (!IsSpawned)
         {
-            main = FindFirstObjectByType<Camera>();
-        }
+            Camera main = Camera.main;
+            if (main == null)
+            {
+                main = FindFirstObjectByType<Camera>();
+            }
 
-        if (main != null)
-        {
-            cam = main.transform;
-            _cameraResolveAttempts = 0;
-            return;
+            if (main != null)
+            {
+                cam = main.transform;
+                _cameraResolveAttempts = 0;
+                return;
+            }
         }
 
         // No camera this attempt: count it, and after 10 tries warn once and stop
@@ -459,57 +607,80 @@ public class WeaponController : NetworkBehaviour
 
     private const string WeaponHolderName = "WeaponHolder";
 
-    // The camera transform the weapon holder lives under: explicit aim camera -> resolved
-    // aim transform -> Camera.main -> any camera.
+    // In a spawned network player, camera/holder references must belong to this
+    // player. Solo/non-networked play can still fall back to scene cameras.
     private Transform ResolveCameraTransform()
     {
-        if (aimCamera != null)
+        if (aimCamera != null && IsAllowedPlayerTransform(aimCamera))
         {
             return aimCamera;
         }
-        if (cam != null)
+
+        if (cam != null && IsAllowedPlayerTransform(cam))
         {
             return cam;
         }
-        Camera main = Camera.main;
-        if (main == null)
+
+        Camera localCamera = GetComponentInChildren<Camera>(true);
+        if (localCamera != null)
         {
-            main = FindFirstObjectByType<Camera>();
+            return localCamera.transform;
         }
-        return main != null ? main.transform : null;
+
+        if (!IsSpawned)
+        {
+            Camera sceneCamera = Camera.main;
+            if (sceneCamera == null)
+            {
+                sceneCamera = FindFirstObjectByType<Camera>();
+            }
+
+            return sceneCamera != null ? sceneCamera.transform : null;
+        }
+
+        return null;
     }
 
-    // Resolve (or create) the first-person weapon holder. Safe to call repeatedly; it
-    // only does work while weaponHolder is unset.
     private void ResolveWeaponHolder()
     {
         if (weaponHolder != null)
         {
-            return;
+            if (IsAllowedPlayerTransform(weaponHolder))
+            {
+                return;
+            }
+
+            Debug.LogWarning("[WeaponController] Ignoring WeaponHolder outside this player: " + weaponHolder.name);
+            weaponHolder = null;
         }
 
-        Transform camTransform = ResolveCameraTransform();
-        if (camTransform == null)
+        Transform cameraTransform = ResolveCameraTransform();
+        if (cameraTransform == null)
         {
             Debug.LogWarning("[WeaponController] WeaponHolder could not be resolved: no camera found yet.");
             return;
         }
 
-        Transform existing = FindDirectChild(camTransform, WeaponHolderName);
+        Transform existing = FindDirectChild(cameraTransform, WeaponHolderName);
         if (existing != null)
         {
             weaponHolder = existing;
-            Debug.Log("[WeaponController] WeaponHolder found under '" + camTransform.name + "'.");
+            Debug.Log("[WeaponController] WeaponHolder found under '" + cameraTransform.name + "'.");
             return;
         }
 
         GameObject holder = new GameObject(WeaponHolderName);
-        holder.transform.SetParent(camTransform, false);
+        holder.transform.SetParent(cameraTransform, false);
         holder.transform.localPosition = Vector3.zero;
         holder.transform.localRotation = Quaternion.identity;
         holder.transform.localScale = Vector3.one;
         weaponHolder = holder.transform;
-        Debug.Log("[WeaponController] WeaponHolder created under '" + camTransform.name + "'.");
+        Debug.Log("[WeaponController] WeaponHolder created under '" + cameraTransform.name + "'.");
+    }
+
+    private bool IsAllowedPlayerTransform(Transform candidate)
+    {
+        return candidate != null && (!IsSpawned || candidate == transform || candidate.IsChildOf(transform));
     }
 
     private static Transform FindDirectChild(Transform parent, string childName)
@@ -521,6 +692,7 @@ public class WeaponController : NetworkBehaviour
                 return child;
             }
         }
+
         return null;
     }
 
@@ -726,11 +898,36 @@ public class WeaponController : NetworkBehaviour
         knifeSwingEndTime = Time.time + 0.2f;
         IsKnifing = true;
 
-        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, Mathf.Max(0.1f, meleeRange), hitMask, QueryTriggerInteraction.Ignore))
+        if (IsSpawned && !IsServer)
+        {
+            MeleeServerRpc(cam.position, cam.forward);
+            return;
+        }
+
+        PerformMelee(cam.position, cam.forward, IsSpawned ? OwnerClientId : 0);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void MeleeServerRpc(Vector3 origin, Vector3 forward, ServerRpcParams rpcParams = default)
+    {
+        ulong shooter = rpcParams.Receive.SenderClientId;
+        if (!ValidateServerShotRequest(shooter, origin, forward, 1, meleeRange))
+        {
+            return;
+        }
+
+        PerformMelee(origin, forward, shooter);
+    }
+
+    private void PerformMelee(Vector3 origin, Vector3 forward, ulong shooterClientId)
+    {
+        forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : transform.forward;
+        if (Physics.Raycast(origin, forward, out RaycastHit hit, Mathf.Max(0.1f, meleeRange), hitMask, QueryTriggerInteraction.Ignore))
         {
             ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
             if (zombie != null)
             {
+                Debug.Log("[WeaponController] Melee by client " + shooterClientId + " killed zombie '" + zombie.name + "'.");
                 zombie.KillByMelee(); // instant kill; ZombieAgent.Die() awards the 130 melee reward
             }
         }
@@ -824,9 +1021,68 @@ public class WeaponController : NetworkBehaviour
     private void FireServerRpc(Vector3 origin, Vector3 forward, int baseDamage, float range, float spread, ServerRpcParams rpcParams = default)
     {
         ulong shooter = rpcParams.Receive.SenderClientId;
+        if (!ValidateServerShotRequest(shooter, origin, forward, baseDamage, range))
+        {
+            return;
+        }
+
         PerformShot(origin, forward, baseDamage, range, spread, shooter, false);
         // Other clients play this gun's muzzle/sound for the shot.
         FireEffectsClientRpc(shooter);
+    }
+
+    private bool ValidateServerShotRequest(ulong shooterClientId, Vector3 origin, Vector3 forward, int baseDamage, float range)
+    {
+        if (!IsSpawned)
+        {
+            return true;
+        }
+
+        if (shooterClientId != OwnerClientId)
+        {
+            Debug.LogWarning("[WeaponController] Rejected shot: sender client " + shooterClientId +
+                " tried to fire player owned by " + OwnerClientId + ".");
+            return false;
+        }
+
+        if (!IsFinite(origin) || !IsFinite(forward) || forward.sqrMagnitude < 0.0001f ||
+            baseDamage <= 0 || range <= 0f)
+        {
+            Debug.LogWarning("[WeaponController] Rejected malformed shot from client " + shooterClientId + ".");
+            return false;
+        }
+
+        Transform expectedOrigin = ResolveServerShotOrigin();
+        Vector3 expectedPosition = expectedOrigin != null
+            ? expectedOrigin.position
+            : transform.position + Vector3.up * 1.6f;
+
+        float distance = Vector3.Distance(origin, expectedPosition);
+        if (distance > MaxServerShotOriginDistance)
+        {
+            Debug.LogWarning("[WeaponController] Rejected shot from client " + shooterClientId +
+                ": origin was " + distance.ToString("0.00") + "m from that player's camera/root.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private Transform ResolveServerShotOrigin()
+    {
+        if (aimCamera != null && IsAllowedPlayerTransform(aimCamera))
+        {
+            return aimCamera;
+        }
+
+        Camera localCamera = GetComponentInChildren<Camera>(true);
+        return localCamera != null ? localCamera.transform : transform;
+    }
+
+    private static bool IsFinite(Vector3 value)
+    {
+        return !float.IsNaN(value.x) && !float.IsNaN(value.y) && !float.IsNaN(value.z) &&
+               !float.IsInfinity(value.x) && !float.IsInfinity(value.y) && !float.IsInfinity(value.z);
     }
 
     [ClientRpc]
@@ -852,6 +1108,8 @@ public class WeaponController : NetworkBehaviour
     private void PerformShot(Vector3 origin, Vector3 forward, int baseDamage, float range, float spread, ulong shooterClientId, bool localShooter)
     {
         forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : Vector3.forward;
+        Debug.Log("[WeaponController] Shot requested by client " + shooterClientId +
+            " origin=" + origin + " forward=" + forward + " range=" + range.ToString("0.0") + ".");
 
         Vector3 dir = forward;
         if (spread > 0f)
@@ -868,19 +1126,27 @@ public class WeaponController : NetworkBehaviour
 
         if (!Physics.Raycast(origin, dir, out RaycastHit hit, range, hitMask, QueryTriggerInteraction.Ignore))
         {
+            Debug.Log("[WeaponController] Shot by client " + shooterClientId + " hit nothing.");
             return;
         }
+
+        Debug.Log("[WeaponController] Shot by client " + shooterClientId +
+            " hit object '" + hit.collider.name + "' on '" + hit.collider.transform.root.name + "'.");
 
         ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
         if (zombie == null)
         {
+            Debug.Log("[WeaponController] Shot by client " + shooterClientId +
+                " found no ZombieAgent on hit object '" + hit.collider.name + "'.");
             return;
         }
 
         bool isHeadshot = hit.collider.CompareTag("Head");
-        int damage = ComputeDamage(baseDamage);
+        int damage = ComputeDamage(baseDamage, shooterClientId);
 
         // Authority applies damage directly (server in a session, or this peer in solo).
+        Debug.Log("[WeaponController] Applying " + damage + " damage to zombie '" + zombie.name +
+            "' from shooter client " + shooterClientId + " headshot=" + isHeadshot + ".");
         zombie.TakeDamage(damage, isHeadshot);
 
         // Hit feedback: in a session the server broadcasts blood to everyone and a hit
@@ -908,14 +1174,17 @@ public class WeaponController : NetworkBehaviour
     }
 
     // Damage with Insta-Kill / Rapid Ruin / downed-pistol modifiers (authority-side state).
-    private int ComputeDamage(int baseDamage)
+    private int ComputeDamage(int baseDamage, ulong shooterClientId)
     {
         if (PowerupManager.InstaKillActive)
         {
             return 99999;
         }
         int damage = baseDamage;
-        if (PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RapidRuin))
+        bool rapidRuin = IsSpawned
+            ? PerkManager.ClientHasPerk(shooterClientId, PerkType.RapidRuin)
+            : PerkManager.Instance != null && PerkManager.Instance.HasPerk(PerkType.RapidRuin);
+        if (rapidRuin)
         {
             damage = Mathf.RoundToInt(damage * 2f);
         }

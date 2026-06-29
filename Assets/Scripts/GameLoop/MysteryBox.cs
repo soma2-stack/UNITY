@@ -62,6 +62,12 @@ public class MysteryBox : InteractableBase
 
     protected override void OnInteract()
     {
+        if (NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.RequestMysteryBox(this);
+            return;
+        }
+
         if (requirePower && !PowerState.IsOn)
         {
             Debug.Log("[MysteryBox] Power is off.");
@@ -81,18 +87,51 @@ public class MysteryBox : InteractableBase
             return;
         }
 
-        // Teddy Bear: small chance the spin awards nothing and the box relocates.
-        if (Random.value < Mathf.Clamp01(teddyBearChance))
+        bool teddy = RollTeddy();
+        int weaponIndex = teddy ? -1 : RollWeaponIndex();
+        if (teddy)
         {
             Debug.Log("[MysteryBox] Teddy Bear! Box is moving.");
             RelocateBox();
             return; // no weapon - the player still paid, exactly like CoD
         }
 
-        // Use the inspector-configured pool when one is set; otherwise fall back to the
-        // built-in pool so the box always works even before a designer wires it up.
+        ApplyMysteryResult(weaponIndex);
+    }
+
+    public bool RollTeddy()
+    {
+        return Random.value < Mathf.Clamp01(teddyBearChance);
+    }
+
+    public int RollWeaponIndex()
+    {
         List<Weapon> pool = (weaponPool != null && weaponPool.Count > 0) ? weaponPool : BuildPool();
-        Weapon prize = pool[Random.Range(0, pool.Count)];
+        return pool.Count > 0 ? Random.Range(0, pool.Count) : -1;
+    }
+
+    public void ApplyMysteryResult(int weaponIndex)
+    {
+        if (weaponIndex < 0)
+        {
+            Debug.Log("[MysteryBox] Teddy Bear! Box is moving.");
+            return;
+        }
+
+        WeaponController wc = LocalPlayer.Weapon;
+        if (wc == null)
+        {
+            Debug.LogWarning("[MysteryBox] No WeaponController in scene; cannot grant a weapon.");
+            return;
+        }
+
+        List<Weapon> pool = (weaponPool != null && weaponPool.Count > 0) ? weaponPool : BuildPool();
+        if (pool.Count == 0)
+        {
+            return;
+        }
+
+        Weapon prize = pool[Mathf.Clamp(weaponIndex, 0, pool.Count - 1)];
         wc.GiveWeapon(prize);
         Debug.Log("[MysteryBox] Granted: " + prize.weaponName);
     }
@@ -101,7 +140,7 @@ public class MysteryBox : InteractableBase
     /// Teleports the box to a random configured location that isn't its current spot.
     /// Needs 2+ entries in <see cref="boxLocations"/>; otherwise it stays put and warns.
     /// </summary>
-    private void RelocateBox()
+    public void RelocateBox()
     {
         if (boxLocations == null || boxLocations.Length < 2)
         {
@@ -119,5 +158,10 @@ public class MysteryBox : InteractableBase
                 return;
             }
         }
+    }
+
+    public void ApplyNetworkTransform(Vector3 position, Quaternion rotation)
+    {
+        transform.SetPositionAndRotation(position, rotation);
     }
 }

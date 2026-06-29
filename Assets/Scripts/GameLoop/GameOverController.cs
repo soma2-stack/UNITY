@@ -17,6 +17,9 @@ public class GameOverController : MonoBehaviour
     private const string GameplayScene = "SchoolOfTheDead";
     private const string MainMenuScene = "MainMenu";
     private static GameOverController _runtimeInstance;
+    private static GameOverController Instance => _runtimeInstance != null
+        ? _runtimeInstance
+        : FindFirstObjectByType<GameOverController>();
 
     // All players in the scene (co-op aware). The game ends only when EVERY one is dead.
     private readonly List<PlayerHealth> trackedPlayers = new List<PlayerHealth>();
@@ -99,6 +102,7 @@ public class GameOverController : MonoBehaviour
             }
             trackedPlayers.Add(ph);
             ph.OnPlayerDied += HandlePlayerDied;
+            ph.OnPlayerDowned += HandlePlayerDied;
         }
     }
 
@@ -110,6 +114,7 @@ public class GameOverController : MonoBehaviour
             if (ph != null)
             {
                 ph.OnPlayerDied -= HandlePlayerDied;
+                ph.OnPlayerDowned -= HandlePlayerDied;
             }
         }
         trackedPlayers.Clear();
@@ -123,8 +128,13 @@ public class GameOverController : MonoBehaviour
             return;
         }
 
+        if (NetworkGameplayCoordinator.IsNetworkActive && !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
+
         // Co-op: one player going down must NOT end the game. Record dead players
-        // and only show GAME OVER once EVERY tracked player has finally died.
+        // and only show GAME OVER once EVERY tracked player is downed or finally died.
         int trackedTotal = 0;
         int aliveCount = 0;
         foreach (PlayerHealth ph in trackedPlayers)
@@ -134,7 +144,7 @@ public class GameOverController : MonoBehaviour
                 continue;
             }
             trackedTotal++;
-            if (ph.IsDead)
+            if (ph.IsDead || ph.IsDowned)
             {
                 deadPlayers.Add(ph);
             }
@@ -170,10 +180,36 @@ public class GameOverController : MonoBehaviour
         }
         PlayerPrefs.Save();
 
-        showScreen = true;
-        Time.timeScale = 0f;
+        if (NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.BroadcastGameOver(finalRound, finalScore, finalKills);
+        }
+        else
+        {
+            ShowLocalGameOver(finalRound, finalScore, finalKills, false);
+        }
+    }
 
-        // Free the cursor so the buttons are clickable.
+    public static void ShowLocalGameOver(int round, int score, int kills, bool networked)
+    {
+        GameOverController controller = Instance;
+        if (controller == null || controller.showScreen)
+        {
+            return;
+        }
+
+        controller.finalRound = round;
+        controller.finalScore = score;
+        controller.finalKills = kills;
+        controller.bestRound = PlayerPrefs.GetInt("BestRound", 0);
+        controller.bestScore = PlayerPrefs.GetInt("BestScore", 0);
+        controller.showScreen = true;
+
+        if (!networked)
+        {
+            Time.timeScale = 0f;
+        }
+
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
     }
