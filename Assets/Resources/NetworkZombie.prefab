@@ -3052,6 +3052,7 @@ GameObject:
   - component: {fileID: 4272672943450511702}
   - component: {fileID: 4348378656168864209}
   - component: {fileID: 1934308198247031181}
+  - component: {fileID: 7481092880529932490}
   m_Layer: 0
   m_Name: NetworkZombie
   m_TagString: Untagged
@@ -3211,6 +3212,7 @@ MonoBehaviour:
   killReward: 60
   awardHitPoints: 1
   repathInterval: 0.2
+  targetRecheckInterval: 0.75
   speedParam: Speed
   attackParam: Attack
   dieParam: Die
@@ -3240,6 +3242,42 @@ CapsuleCollider:
   m_Height: 2
   m_Direction: 2
   m_Center: {x: 0, y: 0, z: 1}
+--- !u!114 &7481092880529932490
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7073635436948727772}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e8d0727d5ae3244e3b569694d3912374, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.Components.NetworkAnimator
+  ShowTopMostFoldoutHeaderGroup: 1
+  NetworkAnimatorExpanded: 0
+  AuthorityMode: 0
+  m_Animator: {fileID: 6303650514281726666}
+  TransitionStateInfoList: []
+  AnimatorParameterEntries:
+    ParameterEntries:
+    - name: Speed
+      NameHash: -823668238
+      Synchronize: 1
+      ParameterType: 1
+    - name: Attack
+      NameHash: 1080829965
+      Synchronize: 1
+      ParameterType: 9
+    - name: Die
+      NameHash: 20298039
+      Synchronize: 1
+      ParameterType: 9
+    - name: Hit
+      NameHash: 1654612129
+      Synchronize: 1
+      ParameterType: 9
+  AnimatorParametersExpanded: 0
 --- !u!1 &7259888039481117860
 GameObject:
   m_ObjectHideFlags: 0
