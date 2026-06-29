@@ -1237,18 +1237,112 @@ public class WeaponController : NetworkBehaviour
             gunRecoil.Kick();
         }
 
+        // CLIENT-SIDE HIT DETECTION. The shooter raycasts in ITS OWN view, where the
+        // zombies are actually rendered, so a hit always matches what the player aimed at.
+        // (The previous design raycast on the SERVER using the client's aim, but against
+        // the server's authoritative zombie positions — which differ from the client's
+        // interpolated view — so remote clients' shots constantly missed.) The resolved
+        // target is then sent to the server, which applies the authoritative damage.
         Vector3 origin = cam.position;
-        Vector3 forward = cam.forward;
+        Vector3 dir = ApplySpread(cam.forward, w.spread);
 
-        // MP client: the authoritative shot (spread + raycast + damage) runs on the server.
-        if (IsSpawned && !IsServer)
+        bool ray = Physics.Raycast(origin, dir, out RaycastHit hit, Mathf.Max(0.1f, w.range),
+            hitMask, QueryTriggerInteraction.Ignore);
+        ZombieAgent zombie = ray ? hit.collider.GetComponentInParent<ZombieAgent>() : null;
+        bool isHeadshot = ray && hit.collider.CompareTag("Head");
+
+        // Instant hit-marker for the shooter (no round-trip).
+        if (zombie != null)
         {
-            FireServerRpc(origin, forward, w.damage, w.range, w.spread);
+            HitMarkerHud.Show();
+        }
+
+        // Solo: detect, apply damage, and show blood all locally.
+        if (!IsSpawned)
+        {
+            if (zombie != null)
+            {
+                zombie.TakeDamage(ComputeDamage(w.damage, 0), isHeadshot, 0);
+                SpawnBloodLocal(hit.point, hit.normal);
+            }
             return;
         }
 
-        // Solo or server (host): perform the authoritative shot directly.
-        PerformShot(origin, forward, w.damage, w.range, w.spread, 0, true);
+        // Host (server is also the shooter): apply authoritative damage directly and let
+        // every client (including the host) show blood + this gun's muzzle effects.
+        if (IsServer)
+        {
+            if (zombie != null)
+            {
+                zombie.TakeDamage(ComputeDamage(w.damage, OwnerClientId), isHeadshot, OwnerClientId);
+                SpawnBloodClientRpc(hit.point, hit.normal);
+            }
+            FireEffectsClientRpc(OwnerClientId);
+            return;
+        }
+
+        // Remote client: send the resolved target (by NetworkObjectId) to the server.
+        ulong targetId = 0;
+        bool hasTarget = false;
+        if (zombie != null)
+        {
+            NetworkObject zno = zombie.GetComponentInParent<NetworkObject>();
+            if (zno != null && zno.IsSpawned)
+            {
+                targetId = zno.NetworkObjectId;
+                hasTarget = true;
+            }
+        }
+        FireDamageServerRpc(hasTarget, targetId, isHeadshot, w.damage);
+    }
+
+    // Build a fire direction from the aim forward, applying the weapon's spread cone.
+    private Vector3 ApplySpread(Vector3 forward, float spread)
+    {
+        forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : transform.forward;
+        if (spread <= 0f)
+        {
+            return forward;
+        }
+
+        Vector3 right = Vector3.Cross(Vector3.up, forward);
+        right = right.sqrMagnitude > 0.0001f ? right.normalized : Vector3.right;
+        Vector3 up = Vector3.Cross(forward, right);
+
+        float maxRad = Mathf.Tan(spread * Mathf.Deg2Rad);
+        Vector2 offset = Random.insideUnitCircle * maxRad;
+        return (forward + right * offset.x + up * offset.y).normalized;
+    }
+
+    // A client reports which zombie it hit (resolved in its own view). The server validates
+    // the shooter owns this player, then applies the authoritative damage to that zombie and
+    // broadcasts blood / muzzle effects. Trusting the client's hit is fine for co-op PvE.
+    [ServerRpc(RequireOwnership = false)]
+    private void FireDamageServerRpc(bool hasTarget, ulong targetNetworkObjectId, bool isHeadshot, int baseDamage, ServerRpcParams rpcParams = default)
+    {
+        ulong shooter = rpcParams.Receive.SenderClientId;
+        if (shooter != OwnerClientId || baseDamage <= 0)
+        {
+            return;
+        }
+
+        if (hasTarget && NetworkManager != null && NetworkManager.SpawnManager != null &&
+            NetworkManager.SpawnManager.SpawnedObjects.TryGetValue(targetNetworkObjectId, out NetworkObject zno) &&
+            zno != null)
+        {
+            ZombieAgent zombie = zno.GetComponentInParent<ZombieAgent>();
+            if (zombie == null)
+            {
+                zombie = zno.GetComponentInChildren<ZombieAgent>();
+            }
+            if (zombie != null)
+            {
+                zombie.TakeDamage(ComputeDamage(baseDamage, shooter), isHeadshot, shooter);
+                SpawnBloodClientRpc(zombie.transform.position + Vector3.up, Vector3.up);
+            }
+        }
+
+        FireEffectsClientRpc(shooter);
     }
 
     // HUD drawing is handled centrally by GameHud (which reads the public getters above),
