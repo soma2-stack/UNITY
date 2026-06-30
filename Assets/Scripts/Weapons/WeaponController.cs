@@ -1258,10 +1258,14 @@ public class WeaponController : NetworkBehaviour
         ZombieAgent zombie = ray ? hit.collider.GetComponentInParent<ZombieAgent>() : null;
         bool isHeadshot = ray && hit.collider.CompareTag("Head");
 
-        // SHOOTING DIAGNOSTIC: shows whether the gun fired, what the ray hit, and the role.
-        Debug.Log("[ShootDiag] Fire: IsSpawned=" + IsSpawned + " IsServer=" + IsServer + " IsOwner=" + IsOwner +
-            " rayHit=" + ray + " collider=" + (ray ? hit.collider.name : "none") +
-            " zombie=" + (zombie != null ? zombie.name : "null") + " dmg=" + w.damage);
+        // SHOOTING DIAGNOSTIC: shows whether the gun fired, what the ray hit, the role,
+        // and (key) the camera position/aim + the hit point so we can see if the camera is
+        // pitched up or positioned near the ceiling.
+        Debug.Log("[ShootDiag] Fire: rayHit=" + ray + " collider=" + (ray ? hit.collider.name : "none") +
+            " zombie=" + (zombie != null ? zombie.name : "null") +
+            " camPos=" + cam.position.ToString("0.0") + " camFwd=" + cam.forward.ToString("0.00") +
+            " hitPoint=" + (ray ? hit.point.ToString("0.0") : "none") +
+            " camName=" + cam.name);
 
         // Instant hit-marker for the shooter (no round-trip).
         if (zombie != null)
