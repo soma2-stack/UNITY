@@ -1253,8 +1253,7 @@ public class WeaponController : NetworkBehaviour
         Vector3 origin = cam.position;
         Vector3 dir = ApplySpread(cam.forward, w.spread);
 
-        bool ray = Physics.Raycast(origin, dir, out RaycastHit hit, Mathf.Max(0.1f, w.range),
-            hitMask, QueryTriggerInteraction.Ignore);
+        bool ray = RaycastIgnoringSelf(origin, dir, Mathf.Max(0.1f, w.range), out RaycastHit hit);
         ZombieAgent zombie = ray ? hit.collider.GetComponentInParent<ZombieAgent>() : null;
         bool isHeadshot = ray && hit.collider.CompareTag("Head");
 
@@ -1310,6 +1309,42 @@ public class WeaponController : NetworkBehaviour
             }
         }
         FireDamageServerRpc(hasTarget, targetId, isHeadshot, w.damage);
+    }
+
+    // Reusable buffer so the shot raycast never allocates.
+    private static readonly RaycastHit[] _shotHits = new RaycastHit[16];
+
+    // Raycast that ignores the SHOOTER'S OWN colliders. The first-person camera sits
+    // inside this player's CharacterController capsule, so a naive Physics.Raycast
+    // self-blocks — most obviously when aiming downward, where the ray exits the bottom
+    // of the player's own capsule and "hits" it at point-blank range. We gather all hits
+    // and return the nearest one that is NOT part of this player.
+    private bool RaycastIgnoringSelf(Vector3 origin, Vector3 dir, float range, out RaycastHit best)
+    {
+        best = default;
+        int count = Physics.RaycastNonAlloc(origin, dir, _shotHits, range, hitMask, QueryTriggerInteraction.Ignore);
+        float bestDistance = float.MaxValue;
+        bool found = false;
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit candidate = _shotHits[i];
+            if (candidate.collider == null)
+            {
+                continue;
+            }
+            // Skip our own body (the player root and any of its children).
+            if (candidate.collider.transform.IsChildOf(transform))
+            {
+                continue;
+            }
+            if (candidate.distance < bestDistance)
+            {
+                bestDistance = candidate.distance;
+                best = candidate;
+                found = true;
+            }
+        }
+        return found;
     }
 
     // Build a fire direction from the aim forward, applying the weapon's spread cone.
