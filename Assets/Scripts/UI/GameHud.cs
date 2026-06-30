@@ -1,3 +1,4 @@
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -326,11 +327,47 @@ public class GameHud : MonoBehaviour
             top += 30f;
         }
 
-        if (spawner != null)
+        // On the server/solo the spawner knows the full count (alive + still-to-spawn).
+        // On a client the spawner doesn't run, so we count the replicated living zombies
+        // directly (throttled) — otherwise the client always shows "Zombies: 0".
+        int left = CountZombiesForHud();
+        if (left >= 0)
         {
-            int left = Mathf.Max(0, spawner.AliveCount + spawner.RemainingToSpawn);
             GUI.Label(new Rect(x, top, width, 24f), "Zombies: " + left, centerSmallStyle);
         }
+    }
+
+    private float nextZombieCountRefresh;
+    private int cachedZombieCount;
+
+    private int CountZombiesForHud()
+    {
+        bool networkedClient = NetworkManager.Singleton != null &&
+                               NetworkManager.Singleton.IsListening &&
+                               !NetworkManager.Singleton.IsServer;
+
+        if (!networkedClient)
+        {
+            return spawner != null ? Mathf.Max(0, spawner.AliveCount + spawner.RemainingToSpawn) : -1;
+        }
+
+        // Client: count replicated, still-living zombies. Throttled so we don't scan the
+        // scene on every OnGUI pass.
+        if (Time.unscaledTime >= nextZombieCountRefresh)
+        {
+            nextZombieCountRefresh = Time.unscaledTime + 0.3f;
+            int alive = 0;
+            ZombieAgent[] zombies = FindObjectsByType<ZombieAgent>(FindObjectsSortMode.None);
+            foreach (ZombieAgent z in zombies)
+            {
+                if (z != null && !z.IsDead)
+                {
+                    alive++;
+                }
+            }
+            cachedZombieCount = alive;
+        }
+        return cachedZombieCount;
     }
 
     // --- Weapon (bottom-right) ---------------------------------------------
