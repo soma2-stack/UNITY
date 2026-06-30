@@ -51,6 +51,11 @@ public class WeaponController : NetworkBehaviour
     [Tooltip("Optional layers the rays can hit. Leave as Everything to hit all.")]
     public LayerMask hitMask = ~0;
 
+    [Tooltip("Aim assist: the shot's 'thickness' (sphere radius) for forgiving hit " +
+             "registration on zombies, especially while moving. 0 = pinpoint raycast. " +
+             "~0.25-0.4 feels good for a Zombies-style game.")]
+    public float aimAssistRadius = 0.3f;
+
     [Header("View Model (First-Person)")]
     [Tooltip("Transform under the camera that the equipped weapon's model is spawned into. " +
              "Leave empty to auto-find a child named 'WeaponHolder' under the Main Camera " +
@@ -951,13 +956,6 @@ public class WeaponController : NetworkBehaviour
         Weapon w = Current;
         if (w == null || isReloading || cam == null)
         {
-            // SHOOTING DIAGNOSTIC: log (on click only, to avoid spam) why a shot is blocked.
-            if (Input.GetMouseButtonDown(0))
-            {
-                Debug.LogWarning("[ShootDiag] Fire blocked: weapon=" + (w == null ? "NULL" : w.weaponName) +
-                    " reloading=" + isReloading + " cam=" + (cam == null ? "NULL" : cam.name) +
-                    " IsOwner=" + IsOwner + " IsSpawned=" + IsSpawned);
-            }
             return;
         }
 
@@ -1257,15 +1255,6 @@ public class WeaponController : NetworkBehaviour
         ZombieAgent zombie = ray ? hit.collider.GetComponentInParent<ZombieAgent>() : null;
         bool isHeadshot = ray && hit.collider.CompareTag("Head");
 
-        // SHOOTING DIAGNOSTIC: shows whether the gun fired, what the ray hit, the role,
-        // and (key) the camera position/aim + the hit point so we can see if the camera is
-        // pitched up or positioned near the ceiling.
-        Debug.Log("[ShootDiag] Fire: rayHit=" + ray + " collider=" + (ray ? hit.collider.name : "none") +
-            " zombie=" + (zombie != null ? zombie.name : "null") +
-            " camPos=" + cam.position.ToString("0.0") + " camFwd=" + cam.forward.ToString("0.00") +
-            " hitPoint=" + (ray ? hit.point.ToString("0.0") : "none") +
-            " camName=" + cam.name);
-
         // Instant hit-marker for the shooter (no round-trip).
         if (zombie != null)
         {
@@ -1311,18 +1300,29 @@ public class WeaponController : NetworkBehaviour
         FireDamageServerRpc(hasTarget, targetId, isHeadshot, w.damage);
     }
 
-    // Reusable buffer so the shot raycast never allocates.
+    // Reusable buffer so the shot cast never allocates.
     private static readonly RaycastHit[] _shotHits = new RaycastHit[16];
 
-    // Raycast that ignores the SHOOTER'S OWN colliders. The first-person camera sits
-    // inside this player's CharacterController capsule, so a naive Physics.Raycast
-    // self-blocks — most obviously when aiming downward, where the ray exits the bottom
-    // of the player's own capsule and "hits" it at point-blank range. We gather all hits
-    // and return the nearest one that is NOT part of this player.
+    // The shot cast that ignores the SHOOTER'S OWN colliders, with optional aim assist.
+    //
+    // Two problems are handled here:
+    //  1) SELF-BLOCK: the first-person camera sits inside this player's CharacterController
+    //     capsule, so a naive ray self-hits — most obviously aiming downward, where the ray
+    //     exits the bottom of the player's own capsule at point-blank range.
+    //  2) THIN HITBOXES / MOVING: a pinpoint ray against a thin zombie collider misses on
+    //     the slightest aim error (which moving amplifies). When aimAssistRadius > 0 we use a
+    //     SphereCast so the shot has thickness and near-misses still register.
+    //
+    // In both cases we gather all hits and return the nearest one that is NOT part of this
+    // player. Walls still block normally (a nearer non-zombie hit wins).
     private bool RaycastIgnoringSelf(Vector3 origin, Vector3 dir, float range, out RaycastHit best)
     {
         best = default;
-        int count = Physics.RaycastNonAlloc(origin, dir, _shotHits, range, hitMask, QueryTriggerInteraction.Ignore);
+        float radius = Mathf.Max(0f, aimAssistRadius);
+        int count = radius > 0f
+            ? Physics.SphereCastNonAlloc(origin, radius, dir, _shotHits, range, hitMask, QueryTriggerInteraction.Ignore)
+            : Physics.RaycastNonAlloc(origin, dir, _shotHits, range, hitMask, QueryTriggerInteraction.Ignore);
+
         float bestDistance = float.MaxValue;
         bool found = false;
         for (int i = 0; i < count; i++)
@@ -1332,7 +1332,9 @@ public class WeaponController : NetworkBehaviour
             {
                 continue;
             }
-            // Skip our own body (the player root and any of its children).
+            // Skip our own body (the player root and any of its children). SphereCast also
+            // reports a degenerate distance-0 hit for any collider overlapping the start
+            // position; for our own capsule that's exactly what this skips.
             if (candidate.collider.transform.IsChildOf(transform))
             {
                 continue;
@@ -1374,17 +1376,14 @@ public class WeaponController : NetworkBehaviour
         ulong shooter = rpcParams.Receive.SenderClientId;
         if (shooter != OwnerClientId || baseDamage <= 0)
         {
-            Debug.LogWarning("[ShootDiag] SERVER rejected fire from " + shooter + " (owner=" + OwnerClientId +
-                ", dmg=" + baseDamage + ")");
             return;
         }
 
-        ZombieAgent zombie = null;
         if (hasTarget && NetworkManager != null && NetworkManager.SpawnManager != null &&
             NetworkManager.SpawnManager.SpawnedObjects.TryGetValue(targetNetworkObjectId, out NetworkObject zno) &&
             zno != null)
         {
-            zombie = zno.GetComponentInParent<ZombieAgent>();
+            ZombieAgent zombie = zno.GetComponentInParent<ZombieAgent>();
             if (zombie == null)
             {
                 zombie = zno.GetComponentInChildren<ZombieAgent>();
@@ -1395,10 +1394,6 @@ public class WeaponController : NetworkBehaviour
                 SpawnBloodClientRpc(zombie.transform.position + Vector3.up, Vector3.up);
             }
         }
-
-        // SHOOTING DIAGNOSTIC: confirms the server received the client's shot and resolved the target.
-        Debug.Log("[ShootDiag] SERVER FireDamageServerRpc from client " + shooter + " hasTarget=" + hasTarget +
-            " id=" + targetNetworkObjectId + " resolvedZombie=" + (zombie != null ? zombie.name : "null"));
 
         FireEffectsClientRpc(shooter);
     }
