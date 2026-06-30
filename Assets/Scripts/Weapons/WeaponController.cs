@@ -1251,9 +1251,8 @@ public class WeaponController : NetworkBehaviour
         Vector3 origin = cam.position;
         Vector3 dir = ApplySpread(cam.forward, w.spread);
 
-        bool ray = RaycastIgnoringSelf(origin, dir, Mathf.Max(0.1f, w.range), out RaycastHit hit);
-        ZombieAgent zombie = ray ? hit.collider.GetComponentInParent<ZombieAgent>() : null;
-        bool isHeadshot = ray && hit.collider.CompareTag("Head");
+        ResolveShot(origin, dir, Mathf.Max(0.1f, w.range),
+            out ZombieAgent zombie, out bool isHeadshot, out Vector3 point, out Vector3 normal);
 
         // Instant hit-marker for the shooter (no round-trip).
         if (zombie != null)
@@ -1267,7 +1266,7 @@ public class WeaponController : NetworkBehaviour
             if (zombie != null)
             {
                 zombie.TakeDamage(ComputeDamage(w.damage, 0), isHeadshot, 0);
-                SpawnBloodLocal(hit.point, hit.normal);
+                SpawnBloodLocal(point, normal);
             }
             return;
         }
@@ -1279,7 +1278,7 @@ public class WeaponController : NetworkBehaviour
             if (zombie != null)
             {
                 zombie.TakeDamage(ComputeDamage(w.damage, OwnerClientId), isHeadshot, OwnerClientId);
-                SpawnBloodClientRpc(hit.point, hit.normal);
+                SpawnBloodClientRpc(point, normal);
             }
             FireEffectsClientRpc(OwnerClientId);
             return;
@@ -1303,22 +1302,69 @@ public class WeaponController : NetworkBehaviour
     // Reusable buffer so the shot cast never allocates.
     private static readonly RaycastHit[] _shotHits = new RaycastHit[16];
 
-    // The shot cast that ignores the SHOOTER'S OWN colliders, with optional aim assist.
-    //
-    // Two problems are handled here:
+    // Resolve a shot into a zombie hit (if any) plus an impact point, handling the two
+    // problems that made shooting unreliable:
     //  1) SELF-BLOCK: the first-person camera sits inside this player's CharacterController
-    //     capsule, so a naive ray self-hits — most obviously aiming downward, where the ray
-    //     exits the bottom of the player's own capsule at point-blank range.
+    //     capsule, so a naive cast self-hits (worst aiming downward). We ignore our own
+    //     colliders everywhere.
     //  2) THIN HITBOXES / MOVING: a pinpoint ray against a thin zombie collider misses on
-    //     the slightest aim error (which moving amplifies). When aimAssistRadius > 0 we use a
-    //     SphereCast so the shot has thickness and near-misses still register.
-    //
-    // In both cases we gather all hits and return the nearest one that is NOT part of this
-    // player. Walls still block normally (a nearer non-zombie hit wins).
-    private bool RaycastIgnoringSelf(Vector3 origin, Vector3 dir, float range, out RaycastHit best)
+    //     the slightest aim error (which moving amplifies). So if the precise ray doesn't
+    //     hit a zombie, we do a forgiving zombie-only sphere sweep for aim assist.
+    // Walls still block: the sphere assist is limited to the distance of whatever solid the
+    // precise ray hit, so you can't shoot zombies through walls.
+    private bool ResolveShot(Vector3 origin, Vector3 dir, float range,
+        out ZombieAgent zombie, out bool isHeadshot, out Vector3 point, out Vector3 normal)
+    {
+        zombie = null;
+        isHeadshot = false;
+        point = origin + dir * range;
+        normal = -dir;
+
+        // Step 1: precise ray from the camera, ignoring our own body.
+        bool hit = CastNonSelf(origin, 0f, dir, range, false, out RaycastHit precise);
+        float blockDistance = range;
+        if (hit)
+        {
+            point = precise.point;
+            normal = precise.normal;
+            zombie = precise.collider.GetComponentInParent<ZombieAgent>();
+            if (zombie != null)
+            {
+                isHeadshot = precise.collider.CompareTag("Head");
+                return true; // direct, precise zombie hit
+            }
+            blockDistance = precise.distance; // hit a wall/prop — can't shoot a zombie past it
+        }
+
+        // Step 2: aim assist. Sphere-sweep for ZOMBIES ONLY, started just past our own
+        // capsule so the sphere never begins overlapping the player (which makes SphereCast
+        // unreliable). Capped at the wall distance so it can't reach through cover.
+        float radius = Mathf.Max(0f, aimAssistRadius);
+        if (radius > 0f)
+        {
+            float gap = Mathf.Min(0.6f, blockDistance);
+            Vector3 assistOrigin = origin + dir * gap;
+            float assistRange = Mathf.Max(0f, blockDistance - gap);
+            if (assistRange > 0f &&
+                CastNonSelf(assistOrigin, radius, dir, assistRange, true, out RaycastHit zHit))
+            {
+                zombie = zHit.collider.GetComponentInParent<ZombieAgent>();
+                isHeadshot = zHit.collider.CompareTag("Head");
+                point = zHit.point.sqrMagnitude > 0.0001f ? zHit.point : assistOrigin + dir * zHit.distance;
+                normal = zHit.normal.sqrMagnitude > 0.0001f ? zHit.normal : -dir;
+                return true;
+            }
+        }
+
+        return hit; // a wall/prop (or nothing)
+    }
+
+    // Nearest collider along a ray/sphere sweep that is NOT part of this player. When
+    // zombieOnly is true, only zombie colliders count (so the player's own body — never a
+    // zombie — is skipped even if the sphere starts overlapping it). radius 0 = raycast.
+    private bool CastNonSelf(Vector3 origin, float radius, Vector3 dir, float range, bool zombieOnly, out RaycastHit best)
     {
         best = default;
-        float radius = Mathf.Max(0f, aimAssistRadius);
         int count = radius > 0f
             ? Physics.SphereCastNonAlloc(origin, radius, dir, _shotHits, range, hitMask, QueryTriggerInteraction.Ignore)
             : Physics.RaycastNonAlloc(origin, dir, _shotHits, range, hitMask, QueryTriggerInteraction.Ignore);
@@ -1328,14 +1374,11 @@ public class WeaponController : NetworkBehaviour
         for (int i = 0; i < count; i++)
         {
             RaycastHit candidate = _shotHits[i];
-            if (candidate.collider == null)
+            if (candidate.collider == null || candidate.collider.transform.IsChildOf(transform))
             {
                 continue;
             }
-            // Skip our own body (the player root and any of its children). SphereCast also
-            // reports a degenerate distance-0 hit for any collider overlapping the start
-            // position; for our own capsule that's exactly what this skips.
-            if (candidate.collider.transform.IsChildOf(transform))
+            if (zombieOnly && candidate.collider.GetComponentInParent<ZombieAgent>() == null)
             {
                 continue;
             }
