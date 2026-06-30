@@ -70,14 +70,15 @@ public class PerkMachine : MonoBehaviour
 
     private void Update()
     {
+        // Always track the LOCAL player. In multiplayer the local player spawns/registers
+        // AFTER this machine's first Update, so re-resolving each frame prevents latching
+        // onto a stale/remote transform (or Camera.main) — which would leave the prompt
+        // never showing and the machine impossible to use.
+        FindPlayer();
         if (player == null)
         {
-            FindPlayer();
-            if (player == null)
-            {
-                playerInRange = false;
-                return;
-            }
+            playerInRange = false;
+            return;
         }
 
         float distance = Vector3.Distance(transform.position, player.position);

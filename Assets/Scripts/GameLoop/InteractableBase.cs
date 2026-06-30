@@ -66,14 +66,15 @@ public abstract class InteractableBase : MonoBehaviour
 
     protected virtual void Update()
     {
+        // Always track the LOCAL player. In multiplayer the local player spawns/registers
+        // AFTER this scene object's first Update, so we must keep re-resolving — otherwise
+        // we latch onto a stale/remote transform (or Camera.main) and the in-range check
+        // never matches the real player, so the prompt never shows and E does nothing.
+        FindPlayer();
         if (player == null)
         {
-            FindPlayer();
-            if (player == null)
-            {
-                playerInRange = false;
-                return;
-            }
+            playerInRange = false;
+            return;
         }
 
         playerInRange = Vector3.Distance(transform.position, player.position) <= interactionRange;

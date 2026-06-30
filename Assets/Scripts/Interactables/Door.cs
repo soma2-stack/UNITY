@@ -67,6 +67,7 @@ public class Door : MonoBehaviour
 
     private Transform[] players;
     private Transform nearestPlayer;
+    private float nextPlayerRefresh;
     private Collider doorCollider;
     private NavMeshObstacle navObstacle;
     private Vector3 closedLocalPosition;
@@ -155,8 +156,13 @@ public class Door : MonoBehaviour
             return;
         }
 
-        if (players == null || players.Length == 0)
+        // Re-scan for players periodically (not just once): in multiplayer the player
+        // avatars spawn AFTER this door's first Update, and more can join later. Without
+        // this, the door can latch onto an empty set or Camera.main and never detect the
+        // real players, so its prompt never appears and it can't be opened.
+        if (players == null || players.Length == 0 || Time.time >= nextPlayerRefresh)
         {
+            nextPlayerRefresh = Time.time + 0.5f;
             FindPlayers();
             if (players == null || players.Length == 0)
             {
