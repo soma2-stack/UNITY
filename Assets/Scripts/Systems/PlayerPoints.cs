@@ -131,6 +131,21 @@ public class PlayerPoints : MonoBehaviour
         }
     }
 
+    private float nextRebroadcast;
+
+    private void Update()
+    {
+        // Periodically re-publish the authoritative per-player table so any client that
+        // missed the one-shot catch-up (a handler-registration vs message race on scene
+        // load) self-heals within ~1s instead of showing stale/blank points. Also re-seeds
+        // any client that connected since the last change. Server-only; no-op in solo.
+        if (NetworkActive && IsServerRole && Time.unscaledTime >= nextRebroadcast)
+        {
+            nextRebroadcast = Time.unscaledTime + 1f;
+            AfterServerChange();
+        }
+    }
+
     // --- Server balance helpers ------------------------------------------
 
     private int GetBalance(ulong clientId)

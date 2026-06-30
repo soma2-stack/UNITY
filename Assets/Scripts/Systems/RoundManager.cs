@@ -299,6 +299,8 @@ public class RoundManager : MonoBehaviour
         messaging.SendNamedMessage(RoundSyncMessage, clientId, writer, NetworkDelivery.ReliableSequenced);
     }
 
+    private float nextRoundRebroadcast;
+
     private void Update()
     {
         // Clients in a networked session do not run the authoritative round loop; their
@@ -306,6 +308,15 @@ public class RoundManager : MonoBehaviour
         if (!IsRoundAuthority)
         {
             return;
+        }
+
+        // Periodically re-broadcast the current round so any client that missed the
+        // one-shot catch-up (a registration-vs-message race on scene load) self-heals
+        // within ~1s instead of showing a stale/zero round.
+        if (NetworkSessionActive && IsServerRole && Time.unscaledTime >= nextRoundRebroadcast)
+        {
+            nextRoundRebroadcast = Time.unscaledTime + 1f;
+            BroadcastRound();
         }
 
         switch (state)
