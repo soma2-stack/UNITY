@@ -951,6 +951,13 @@ public class WeaponController : NetworkBehaviour
         Weapon w = Current;
         if (w == null || isReloading || cam == null)
         {
+            // SHOOTING DIAGNOSTIC: log (on click only, to avoid spam) why a shot is blocked.
+            if (Input.GetMouseButtonDown(0))
+            {
+                Debug.LogWarning("[ShootDiag] Fire blocked: weapon=" + (w == null ? "NULL" : w.weaponName) +
+                    " reloading=" + isReloading + " cam=" + (cam == null ? "NULL" : cam.name) +
+                    " IsOwner=" + IsOwner + " IsSpawned=" + IsSpawned);
+            }
             return;
         }
 
@@ -1251,6 +1258,11 @@ public class WeaponController : NetworkBehaviour
         ZombieAgent zombie = ray ? hit.collider.GetComponentInParent<ZombieAgent>() : null;
         bool isHeadshot = ray && hit.collider.CompareTag("Head");
 
+        // SHOOTING DIAGNOSTIC: shows whether the gun fired, what the ray hit, and the role.
+        Debug.Log("[ShootDiag] Fire: IsSpawned=" + IsSpawned + " IsServer=" + IsServer + " IsOwner=" + IsOwner +
+            " rayHit=" + ray + " collider=" + (ray ? hit.collider.name : "none") +
+            " zombie=" + (zombie != null ? zombie.name : "null") + " dmg=" + w.damage);
+
         // Instant hit-marker for the shooter (no round-trip).
         if (zombie != null)
         {
@@ -1323,14 +1335,17 @@ public class WeaponController : NetworkBehaviour
         ulong shooter = rpcParams.Receive.SenderClientId;
         if (shooter != OwnerClientId || baseDamage <= 0)
         {
+            Debug.LogWarning("[ShootDiag] SERVER rejected fire from " + shooter + " (owner=" + OwnerClientId +
+                ", dmg=" + baseDamage + ")");
             return;
         }
 
+        ZombieAgent zombie = null;
         if (hasTarget && NetworkManager != null && NetworkManager.SpawnManager != null &&
             NetworkManager.SpawnManager.SpawnedObjects.TryGetValue(targetNetworkObjectId, out NetworkObject zno) &&
             zno != null)
         {
-            ZombieAgent zombie = zno.GetComponentInParent<ZombieAgent>();
+            zombie = zno.GetComponentInParent<ZombieAgent>();
             if (zombie == null)
             {
                 zombie = zno.GetComponentInChildren<ZombieAgent>();
@@ -1341,6 +1356,10 @@ public class WeaponController : NetworkBehaviour
                 SpawnBloodClientRpc(zombie.transform.position + Vector3.up, Vector3.up);
             }
         }
+
+        // SHOOTING DIAGNOSTIC: confirms the server received the client's shot and resolved the target.
+        Debug.Log("[ShootDiag] SERVER FireDamageServerRpc from client " + shooter + " hasTarget=" + hasTarget +
+            " id=" + targetNetworkObjectId + " resolvedZombie=" + (zombie != null ? zombie.name : "null"));
 
         FireEffectsClientRpc(shooter);
     }
