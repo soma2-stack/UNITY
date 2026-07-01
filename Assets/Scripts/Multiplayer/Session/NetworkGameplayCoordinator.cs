@@ -882,7 +882,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         SendPerkStateToClient(clientId);
 
         // Books already collected by the team: hide them and advance the joiner's progress.
-        foreach (string bookKey in collectedBookKeys)
+        foreach (string bookKey in instance.collectedBookKeys)
         {
             using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
             WriteString(writer, bookKey);
