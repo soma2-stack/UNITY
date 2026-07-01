@@ -69,7 +69,6 @@ public class GameHud : MonoBehaviour
     private GUIStyle centerSmallStyle;
     private GUIStyle playerLabelStyle;
     private GUIStyle playerPointsStyle;
-    private GUIStyle perkIconLabelStyle;
     private Texture2D whiteTex;
 
     // Gameplay scene the HUD should appear in.
@@ -245,17 +244,6 @@ public class GameHud : MonoBehaviour
                 normal    = { textColor = Color.white },
             };
         }
-
-        if (perkIconLabelStyle == null)
-        {
-            perkIconLabelStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize  = Mathf.Max(9, smallFontSize - 6),
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter,
-                normal    = { textColor = Color.white },
-            };
-        }
     }
 
     private void ResolveReferences()
@@ -289,8 +277,9 @@ public class GameHud : MonoBehaviour
         DrawCrosshair();
         DrawRoundAndZombies();
         DrawWeapon();
-        int drawnPlayers = DrawPlayerPoints();
-        DrawPerkIcons(drawnPlayers);
+        DrawPlayerPoints();
+        // NOTE: the owned-perk icon row is drawn by PerkManager (bottom-center). The old
+        // top-left perk strip that used to be drawn here was a duplicate and has been removed.
     }
 
     // --- Crosshair (screen center) -----------------------------------------
@@ -467,91 +456,9 @@ public class GameHud : MonoBehaviour
         return drawn;
     }
 
-    // --- Perk icon strip (below the player rows) ---------------------------
-
-    // Per perk, in enum order: its icon color and a short 2-4 char abbreviation.
-    // Uses the renamed School-Of-The-Dead perks (no legacy CoD names).
-    private static readonly PerkType[] PerkOrder =
-    {
-        PerkType.VitalBoost,
-        PerkType.ClipKick,
-        PerkType.RapidRuin,
-        PerkType.RescueRush,
-        PerkType.SprintSurge,
-        PerkType.ArmoryAmp,
-    };
-
-    private static Color PerkColor(PerkType perk)
-    {
-        switch (perk)
-        {
-            case PerkType.VitalBoost:  return new Color(0.85f, 0.15f, 0.15f); // red
-            case PerkType.ClipKick:    return new Color(0.15f, 0.75f, 0.30f); // green
-            case PerkType.RapidRuin:   return new Color(0.90f, 0.65f, 0.10f); // amber
-            case PerkType.SprintSurge: return new Color(0.20f, 0.55f, 0.90f); // blue
-            case PerkType.RescueRush:  return new Color(0.70f, 0.20f, 0.85f); // purple
-            case PerkType.ArmoryAmp:   return new Color(0.80f, 0.50f, 0.15f); // orange
-            default:                   return Color.gray;
-        }
-    }
-
-    private static string PerkAbbrev(PerkType perk)
-    {
-        switch (perk)
-        {
-            case PerkType.VitalBoost:  return "VITL";
-            case PerkType.ClipKick:    return "CLIP";
-            case PerkType.RapidRuin:   return "RUIN";
-            case PerkType.RescueRush:  return "RESC";
-            case PerkType.SprintSurge: return "SPRT";
-            case PerkType.ArmoryAmp:   return "ARMY";
-            default:                   return "?";
-        }
-    }
-
-    private void DrawPerkIcons(int drawnPlayers)
-    {
-        PerkManager pm = PerkManager.Instance;
-        if (pm == null)
-        {
-            return;
-        }
-
-        const float iconSize = 26f;
-        const float iconGap  = 6f;
-        float x = 10f;
-        float perkY = 10f + drawnPlayers * (28f + 5f) + 10f;
-
-        GUIStyle iconLabel = perkIconLabelStyle;
-
-        int drawnIcons = 0;
-        foreach (PerkType perk in PerkOrder)
-        {
-            if (!pm.HasPerk(perk))
-            {
-                continue;
-            }
-
-            float iconX = x + drawnIcons * (iconSize + iconGap);
-
-            Color prev = GUI.color;
-
-            // 1px dark border behind the colored square.
-            GUI.color = new Color(0f, 0f, 0f, 0.85f);
-            GUI.DrawTexture(new Rect(iconX - 1f, perkY - 1f, iconSize + 2f, iconSize + 2f), whiteTex);
-
-            // Colored perk square.
-            GUI.color = PerkColor(perk);
-            GUI.DrawTexture(new Rect(iconX, perkY, iconSize, iconSize), whiteTex);
-            GUI.color = prev;
-
-            // Tiny abbreviation label beneath the icon.
-            GUI.Label(new Rect(iconX - 4f, perkY + iconSize + 1f, iconSize + 8f, 14f),
-                PerkAbbrev(perk), iconLabel);
-
-            drawnIcons++;
-        }
-    }
+    // NOTE: the owned-perk icon strip that used to be drawn here (top-left) was a duplicate
+    // of PerkManager's bottom-center perk row and has been removed. Perk UI now lives only in
+    // PerkManager.OnGUI. Perk effects/ownership are unaffected — this was display-only.
 
     private PlayerPoints GetPlayerSource(int slot)
     {
