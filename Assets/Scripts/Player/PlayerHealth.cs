@@ -106,8 +106,10 @@ public class PlayerHealth : NetworkBehaviour
     {
         CurrentHealth = maxHealth;
 
-        // CoD Zombies: losing a random perk each time you are revived.
-        OnPlayerRevived += HandleRevivedLosePerk;
+        // CoD Zombies-style perk loss: you lose a perk when you go DOWN. Driven off the
+        // downed event (not revive) and by the LOCAL owner, since PerkManager.Instance is the
+        // local player's own perk manager.
+        OnPlayerDowned += HandleDownedLosePerk;
     }
 
     public override void OnNetworkSpawn()
@@ -180,10 +182,13 @@ public class PlayerHealth : NetworkBehaviour
         }
     }
 
-    private void HandleRevivedLosePerk()
+    private void HandleDownedLosePerk()
     {
-        // Perk loss is decided by the authority so clients don't drop perks independently.
-        if (!HasAuthority)
+        // Only the LOCAL owner drops its own perks — PerkManager.Instance is the local
+        // player's manager, so each peer loses its OWN perks when its own player goes down.
+        // Skipped on remote copies (including the server's copy of a client's player), so a
+        // client going down no longer makes the host lose a perk (and vice-versa).
+        if (!IsLocalPlayer)
         {
             return;
         }

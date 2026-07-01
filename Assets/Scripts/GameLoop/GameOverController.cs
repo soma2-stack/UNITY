@@ -133,10 +133,13 @@ public class GameOverController : MonoBehaviour
             return;
         }
 
-        // Co-op: one player going down must NOT end the game. Record dead players
-        // and only show GAME OVER once EVERY tracked player is downed or finally died.
+        // A player is only "out" when TRULY DEAD (bled out). A downed-but-not-dead player is
+        // still in the game: they can be revived by a teammate (co-op), self-revive with Quick
+        // Revive, or are simply bleeding out (solo). Counting a merely-downed player as game
+        // over caused a premature GAME OVER the instant a player went down (esp. with Quick
+        // Revive). Game over now only shows once EVERY tracked player is finally dead.
         int trackedTotal = 0;
-        int aliveCount = 0;
+        int inPlayCount = 0;
         foreach (PlayerHealth ph in trackedPlayers)
         {
             if (ph == null)
@@ -144,19 +147,19 @@ public class GameOverController : MonoBehaviour
                 continue;
             }
             trackedTotal++;
-            if (ph.IsDead || ph.IsDowned)
+            if (ph.IsDead)
             {
                 deadPlayers.Add(ph);
             }
             else
             {
-                aliveCount++;
+                inPlayCount++; // alive OR downed-but-not-dead
             }
         }
 
-        if (trackedTotal == 0 || aliveCount > 0)
+        if (trackedTotal == 0 || inPlayCount > 0)
         {
-            return; // at least one player is still alive
+            return; // at least one player is still in the game (alive or recoverable)
         }
 
         RoundManager rm = FindFirstObjectByType<RoundManager>();

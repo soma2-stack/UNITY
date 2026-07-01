@@ -289,10 +289,10 @@ public class PerkManager : MonoBehaviour
     }
 
     /// <summary>
-    /// CoD Zombies: when the player is revived they lose one random perk. Removes a
-    /// random owned perk and reverts its gameplay effect. In <see cref="SoloMode"/>
-    /// Quick Revive is protected (it drives the solo self-revive) - if it is the only
-    /// perk owned, nothing is lost. Fires <see cref="OnPerksChanged"/> on removal.
+    /// CoD Zombies: when the player goes DOWN they lose one random perk. Removes a random
+    /// owned perk and reverts its gameplay effect. In <see cref="SoloMode"/> Quick Revive is
+    /// protected (it drives the solo self-revive) - if it is the only perk owned, nothing is
+    /// lost. Fires <see cref="OnPerksChanged"/> on removal.
     /// </summary>
     public void LoseRandomPerk()
     {
@@ -320,7 +320,7 @@ public class PerkManager : MonoBehaviour
         PerkType lost = pool[UnityEngine.Random.Range(0, pool.Count)];
         ownedPerks.Remove(lost);
         RevertEffect(lost);
-        Debug.Log("[PerkManager] Lost perk on revive: " + lost);
+        Debug.Log("[PerkManager] Lost perk on down: " + lost);
         OnPerksChanged?.Invoke();
     }
 
