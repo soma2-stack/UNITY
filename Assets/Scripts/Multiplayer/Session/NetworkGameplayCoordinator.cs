@@ -39,55 +39,6 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
 
     private int nextPowerupId = 1;
 
-    // SERVER-ONLY: which weapon names each connected client owns. Populated when weapons are
-    // granted (wall buy / mystery box) and seeded lazily from the player's starting loadout.
-    // Used to price wall buys (first purchase vs cheaper ammo refill) WITHOUT trusting the
-    // client's self-reported ownership, which can be stale or spoofed.
-    private readonly Dictionary<ulong, HashSet<string>> ownedWeaponsByClient = new Dictionary<ulong, HashSet<string>>();
-
-    private HashSet<string> GetOwnedWeaponSet(ulong clientId)
-    {
-        if (!ownedWeaponsByClient.TryGetValue(clientId, out HashSet<string> owned))
-        {
-            owned = new HashSet<string>();
-            ownedWeaponsByClient[clientId] = owned;
-
-            // Seed with the player's starting loadout. The serialized `weapons` list is present
-            // on the server's copy of the player object, so this captures the M1911 (etc.) the
-            // player spawns with — a wall buy for a starting weapon is then priced as ammo.
-            if (NetworkManager.Singleton != null &&
-                NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out NetworkClient client) &&
-                client.PlayerObject != null)
-            {
-                WeaponController controller = client.PlayerObject.GetComponent<WeaponController>();
-                if (controller != null && controller.weapons != null)
-                {
-                    foreach (Weapon weapon in controller.weapons)
-                    {
-                        if (weapon != null && !string.IsNullOrEmpty(weapon.weaponName))
-                        {
-                            owned.Add(weapon.weaponName);
-                        }
-                    }
-                }
-            }
-        }
-        return owned;
-    }
-
-    private bool ServerClientOwnsWeapon(ulong clientId, string weaponName)
-    {
-        return !string.IsNullOrEmpty(weaponName) && GetOwnedWeaponSet(clientId).Contains(weaponName);
-    }
-
-    private void ServerMarkWeaponOwned(ulong clientId, string weaponName)
-    {
-        if (!string.IsNullOrEmpty(weaponName))
-        {
-            GetOwnedWeaponSet(clientId).Add(weaponName);
-        }
-    }
-
     private static bool NetworkActive =>
         NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
@@ -149,9 +100,6 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     private void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         TryRegisterMessages();
-        // Fresh match / restart: forget server-side weapon ownership so wall-buy pricing
-        // starts from each player's starting loadout again.
-        ownedWeaponsByClient.Clear();
     }
 
     private void TryRegisterMessages()
@@ -480,39 +428,31 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
             box.RelocateBox();
             BroadcastBoxTransform(box);
         }
-        else
-        {
-            // Record the granted weapon so a later wall buy for the same gun is priced as ammo.
-            ServerMarkWeaponOwned(senderClientId, box.WeaponNameAt(weaponIndex));
-        }
 
         SendPurchaseGrant(senderClientId, PurchaseKind.MysteryBox, key, weaponIndex);
     }
 
-    private void ServerTryWallBuy(ulong senderClientId, string key, bool clientClaimedOwnership)
+    private void ServerTryWallBuy(ulong senderClientId, string key, bool ownsWeapon)
     {
         if (!InteractableBase.TryFind(key, out WallBuy wallBuy))
         {
             return;
         }
 
-        // SERVER-AUTHORITATIVE ownership: ignore the client's claimed ownership and decide from
-        // our own owned-weapon set, so a stale/spoofed client inventory can't get the wrong price.
-        bool ownsWeapon = ServerClientOwnsWeapon(senderClientId, wallBuy.weaponName);
+        // PRICING NOTE: `ownsWeapon` is the buyer's report of its OWN current inventory. That
+        // is the only accurate source: weapon slots are capped, so buying a new gun REPLACES
+        // an owned one, and only the owning client sees that. A server-side "owned weapons"
+        // set was tried here and broke purchases: it could never observe replacements, so it
+        // would price a buy as an "ammo refill" for a gun the player no longer had — the
+        // refill no-opped and the points simply vanished. Trusting the buyer's own inventory
+        // report is safe for co-op PvE (worst case a player refunds themselves a cheaper
+        // price); the spend itself stays server-authoritative.
         int price = ownsWeapon ? wallBuy.ammoCost : wallBuy.buyCost;
         if (!TrySpend(senderClientId, price))
         {
             return;
         }
 
-        // First purchase: record ownership so subsequent buys are priced as ammo refills.
-        if (!ownsWeapon)
-        {
-            ServerMarkWeaponOwned(senderClientId, wallBuy.weaponName);
-        }
-
-        // The grant's aux carries the SERVER's decision, so the requesting client applies the
-        // right action (give weapon on first buy vs refill reserves when already owned).
         SendPurchaseGrant(senderClientId, PurchaseKind.WallBuy, key, ownsWeapon ? 1 : 0);
     }
 

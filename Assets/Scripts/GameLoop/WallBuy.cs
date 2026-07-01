@@ -143,7 +143,13 @@ public class WallBuy : InteractableBase
             return;
         }
 
-        if (owns)
+        // SELF-CORRECT against the buyer's ACTUAL inventory rather than blindly trusting the
+        // requested action: the purchase is already PAID by the time this runs, so it must
+        // never no-op. If we're told "refill" but the gun isn't actually carried any more
+        // (e.g. it was replaced via the weapon slot cap between request and grant), give the
+        // weapon instead; if we're told "give" but it IS carried, top up its reserves.
+        bool actuallyOwns = Owns(wc);
+        if (actuallyOwns)
         {
             // Already own it: top up RESERVES only (CoD wall-buy ammo never reloads
             // the current magazine).

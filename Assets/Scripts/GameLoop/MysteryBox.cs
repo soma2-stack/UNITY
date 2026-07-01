@@ -110,18 +110,6 @@ public class MysteryBox : InteractableBase
         return pool.Count > 0 ? Random.Range(0, pool.Count) : -1;
     }
 
-    /// <summary>Name of the weapon at a rolled pool index (null for teddy / empty pool).
-    /// Used by the server to record wall-buy ownership when the box grants a weapon.</summary>
-    public string WeaponNameAt(int weaponIndex)
-    {
-        if (weaponIndex < 0)
-        {
-            return null;
-        }
-        List<Weapon> pool = (weaponPool != null && weaponPool.Count > 0) ? weaponPool : BuildPool();
-        return pool.Count > 0 ? pool[Mathf.Clamp(weaponIndex, 0, pool.Count - 1)].weaponName : null;
-    }
-
     public void ApplyMysteryResult(int weaponIndex)
     {
         if (weaponIndex < 0)
