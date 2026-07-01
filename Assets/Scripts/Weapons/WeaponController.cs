@@ -853,18 +853,101 @@ public class WeaponController : NetworkBehaviour
             gunRecoil = GetComponentInChildren<SimpleGunRecoil>(true);
         }
 
-        // Rebind the MUZZLE FLASH from the newly spawned view model so each weapon uses ITS
-        // OWN muzzle particle. Previously a weapon whose model lacked a SimpleGunRecoil (or had
-        // an unassigned muzzleFlash) fell back to a rig still pointing at the pistol's particle,
-        // so only the pistol flashed. SimpleGunRecoil.Kick() plays gunRecoil.muzzleFlash each
-        // shot, so pointing it at the current model's particle makes every gun flash correctly.
-        if (gunRecoil != null && _spawnedViewModel != null)
+        // Rebind the MUZZLE FLASH from the newly spawned view model so each weapon flashes with
+        // ITS OWN particle (not the pistol's).
+        BindMuzzleFlash(cur);
+    }
+
+    // Conventional node names a designer might use for the muzzle particle inside a weapon
+    // model. Matched loosely (case / spaces / underscores ignored) so "MuzzleFlash",
+    // "Muzzle Flash", "Muzzle", "muzzle_flash" and "FirePoint" all resolve.
+    private static bool IsMuzzleNodeName(string nodeName)
+    {
+        if (string.IsNullOrEmpty(nodeName))
         {
-            ParticleSystem modelMuzzle = _spawnedViewModel.GetComponentInChildren<ParticleSystem>(true);
-            if (modelMuzzle != null)
+            return false;
+        }
+        string s = nodeName.Replace(" ", string.Empty).Replace("_", string.Empty).ToLowerInvariant();
+        return s.Contains("muzzle") || s.Contains("firepoint");
+    }
+
+    /// <summary>
+    /// Find the muzzle ParticleSystem inside a spawned weapon model, INCLUDING inactive
+    /// children (a muzzle flash prefab is usually disabled until it plays, so a plain active
+    /// search misses it). Prefers a particle on/under a conventionally named node
+    /// (MuzzleFlash / Muzzle / FirePoint); otherwise falls back to the first particle found.
+    /// </summary>
+    private ParticleSystem FindMuzzleParticle(GameObject model)
+    {
+        if (model == null)
+        {
+            return null;
+        }
+
+        ParticleSystem[] systems = model.GetComponentsInChildren<ParticleSystem>(true);
+        if (systems == null || systems.Length == 0)
+        {
+            return null;
+        }
+
+        // Prefer a particle whose own node (or an ancestor within the model) is muzzle-named.
+        foreach (ParticleSystem ps in systems)
+        {
+            if (ps == null)
             {
-                gunRecoil.muzzleFlash = modelMuzzle;
+                continue;
             }
+            Transform t = ps.transform;
+            while (t != null)
+            {
+                if (IsMuzzleNodeName(t.name))
+                {
+                    return ps;
+                }
+                if (t == model.transform)
+                {
+                    break;
+                }
+                t = t.parent;
+            }
+        }
+
+        // No named muzzle node: use the first particle the model carries.
+        return systems[0];
+    }
+
+    /// <summary>
+    /// Point the recoil rig's muzzle flash at the CURRENT weapon model's own particle. Always
+    /// clears the previous reference first so a destroyed/previous model's particle is never
+    /// reused (which is why only the pistol used to flash — every other weapon fell back to a
+    /// rig still pointing at the pistol's now-destroyed particle). No-ops safely when there is
+    /// no recoil rig, and never blocks shooting when a weapon simply has no particle.
+    /// </summary>
+    private void BindMuzzleFlash(Weapon cur)
+    {
+        string weaponName = cur != null ? cur.weaponName : "<none>";
+
+        if (gunRecoil == null)
+        {
+            // No recoil rig to route a flash through; shooting still works, just no muzzle FX.
+            return;
+        }
+
+        // Clear the stale reference before rebinding so we never play a destroyed model's
+        // particle or leave the pistol's particle bound for a different gun.
+        gunRecoil.muzzleFlash = null;
+
+        ParticleSystem muzzle = FindMuzzleParticle(_spawnedViewModel);
+        if (muzzle != null)
+        {
+            gunRecoil.muzzleFlash = muzzle;
+            Debug.Log("[WeaponController] Muzzle particle bound for '" + weaponName + "' -> " + muzzle.name +
+                      " (model: " + (_spawnedViewModel != null ? _spawnedViewModel.name : "<none>") + ").");
+        }
+        else
+        {
+            Debug.LogWarning("[WeaponController] No muzzle ParticleSystem found in the view model for '" +
+                             weaponName + "'; muzzle flash disabled for this weapon (shooting still works).");
         }
     }
 
