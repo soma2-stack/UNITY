@@ -24,6 +24,8 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     private const string PowerupEffectMessage = "SOTD_POWERUP_EFFECT";
     private const string GameOverMessage = "SOTD_GAME_OVER";
     private const string RestartRequestMessage = "SOTD_RESTART_REQUEST";
+    private const string BookCollectRequestMessage = "SOTD_BOOK_REQUEST";
+    private const string BookCollectedMessage = "SOTD_BOOK_COLLECTED";
 
     private enum PurchaseKind : byte
     {
@@ -38,6 +40,11 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     private static bool registered;
 
     private int nextPowerupId = 1;
+
+    // Server-authoritative set of collected book keys (secret Pack-a-Punch easter egg).
+    // Dedups collections team-wide so each book counts exactly once. Only meaningful on the
+    // server; cleared on each gameplay scene load so a restarted match starts fresh.
+    private readonly HashSet<string> collectedBookKeys = new HashSet<string>();
 
     private static bool NetworkActive =>
         NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
@@ -100,6 +107,13 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     private void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         TryRegisterMessages();
+
+        // Fresh match / fresh scene: forget which books were collected so a restarted run's
+        // books are collectable again (books are re-created by the reloaded scene).
+        if (scene.name == "SchoolOfTheDead")
+        {
+            collectedBookKeys.Clear();
+        }
     }
 
     private void TryRegisterMessages()
@@ -130,6 +144,8 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.RegisterNamedMessageHandler(PowerupEffectMessage, ReceivePowerupEffect);
         messaging.RegisterNamedMessageHandler(GameOverMessage, ReceiveGameOver);
         messaging.RegisterNamedMessageHandler(RestartRequestMessage, ReceiveRestartRequest);
+        messaging.RegisterNamedMessageHandler(BookCollectRequestMessage, ReceiveBookCollectRequest);
+        messaging.RegisterNamedMessageHandler(BookCollectedMessage, ReceiveBookCollected);
         registered = true;
         registeredManager = NetworkManager.Singleton;
     }
@@ -158,6 +174,8 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.UnregisterNamedMessageHandler(PowerupEffectMessage);
         messaging.UnregisterNamedMessageHandler(GameOverMessage);
         messaging.UnregisterNamedMessageHandler(RestartRequestMessage);
+        messaging.UnregisterNamedMessageHandler(BookCollectRequestMessage);
+        messaging.UnregisterNamedMessageHandler(BookCollectedMessage);
         registered = false;
         registeredManager = null;
     }
@@ -862,6 +880,86 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         }
         PowerupManager.SendActiveEffectsToClient(clientId);
         SendPerkStateToClient(clientId);
+
+        // Books already collected by the team: hide them and advance the joiner's progress.
+        foreach (string bookKey in collectedBookKeys)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+            WriteString(writer, bookKey);
+            SendToClient(BookCollectedMessage, clientId, writer);
+        }
+    }
+
+    // --- Secret book pickup (team-wide easter egg progress) --------------
+
+    /// <summary>
+    /// Collect a secret book. TEAM-WIDE and server-authoritative: the server counts each
+    /// book key exactly once and tells every peer to hide that book and advance its local
+    /// <see cref="SecretBookManager"/>, so progress is shared instead of per-player. Solo
+    /// (not networked) applies the collection directly.
+    /// </summary>
+    public static void RequestBookCollect(BookPickup book)
+    {
+        if (book == null)
+        {
+            return;
+        }
+
+        Ensure();
+        if (!NetworkActive)
+        {
+            book.ApplyCollected();
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            instance.ServerTryCollectBook(book.NetworkKey);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, book.NetworkKey);
+        SendToServer(BookCollectRequestMessage, writer);
+    }
+
+    private void ReceiveBookCollectRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+        ServerTryCollectBook(ReadString(reader));
+    }
+
+    private void ServerTryCollectBook(string key)
+    {
+        // First collection of this book for the whole team wins; later ones are ignored.
+        if (string.IsNullOrEmpty(key) || !collectedBookKeys.Add(key))
+        {
+            return;
+        }
+
+        // Apply on the host directly, then tell the remote clients (SendToAll does not loop
+        // back to the server, mirroring the door / power-up collection paths).
+        ApplyBookCollected(key);
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, key);
+        SendToAll(BookCollectedMessage, writer);
+    }
+
+    private void ReceiveBookCollected(ulong senderId, FastBufferReader reader)
+    {
+        ApplyBookCollected(ReadString(reader));
+    }
+
+    private static void ApplyBookCollected(string key)
+    {
+        if (BookPickup.TryFind(key, out BookPickup book))
+        {
+            book.ApplyCollected();
+        }
     }
 
     // --- Match restart (from the game-over screen) -----------------------

@@ -1,9 +1,15 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
 /// A collectible book for the secret Pack-a-Punch easter egg. Press E within range
 /// to pick it up; it reports to <see cref="SecretBookManager"/> and disappears.
 /// Gently spins and bobs so the player can spot it.
+///
+/// In multiplayer the pickup is TEAM-WIDE: collecting is routed through
+/// <see cref="NetworkGameplayCoordinator"/> so the server counts each book once for the
+/// whole team and every peer hides the same book and advances the same progress. Solo
+/// keeps collecting directly (the coordinator falls back to a local apply).
 /// </summary>
 [RequireComponent(typeof(Collider))]
 public class BookPickup : MonoBehaviour
@@ -19,14 +25,77 @@ public class BookPickup : MonoBehaviour
     public float bobSpeed = 2f;
 
     private Transform player;
-    private bool collected;
+    private bool collected;   // this book has been picked up (input disabled)
+    private bool counted;     // this book has been counted with SecretBookManager (once)
     private bool playerInRange;
     private Vector3 basePosition;
 
+    // Stable, cross-peer key so the server/clients agree on WHICH book was collected.
+    // Every peer loads the identical scene, so the hierarchy path + authored position
+    // resolve to the same key on all machines.
+    private static readonly Dictionary<string, BookPickup> Registry = new Dictionary<string, BookPickup>();
+    private string networkKey;
+
+    public string NetworkKey
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(networkKey))
+            {
+                networkKey = BuildNetworkKey();
+            }
+            return networkKey;
+        }
+    }
+
+    private void Awake()
+    {
+        // Capture the authored position BEFORE the idle bob moves it, so the key is stable.
+        basePosition = transform.position;
+        networkKey = BuildNetworkKey();
+        Registry[networkKey] = this;
+    }
+
+    private void OnDestroy()
+    {
+        if (!string.IsNullOrEmpty(networkKey) &&
+            Registry.TryGetValue(networkKey, out BookPickup registered) &&
+            registered == this)
+        {
+            Registry.Remove(networkKey);
+        }
+    }
+
     private void Start()
     {
-        basePosition = transform.position;
         FindPlayer();
+    }
+
+    public static bool TryFind(string key, out BookPickup book)
+    {
+        if (!string.IsNullOrEmpty(key) && Registry.TryGetValue(key, out book) && book != null)
+        {
+            return true;
+        }
+        book = null;
+        return false;
+    }
+
+    private string BuildNetworkKey()
+    {
+        string path = name;
+        Transform parent = transform.parent;
+        while (parent != null)
+        {
+            path = parent.name + "/" + path;
+            parent = parent.parent;
+        }
+        // Append the rounded authored position so books that share a name/parent path are
+        // still distinct (and identical across peers).
+        return "BOOK:" + path + "@" +
+               Mathf.RoundToInt(basePosition.x * 10f) + "," +
+               Mathf.RoundToInt(basePosition.y * 10f) + "," +
+               Mathf.RoundToInt(basePosition.z * 10f);
     }
 
     private void Update()
@@ -66,15 +135,44 @@ public class BookPickup : MonoBehaviour
 
     private void Collect()
     {
+        if (collected)
+        {
+            return;
+        }
+
+        // Stop this book re-triggering while the request is in flight. The AUTHORITATIVE,
+        // team-wide count + hide comes back through ApplyCollected (via the coordinator),
+        // which dedups so a book is only ever counted once for the whole team. In solo the
+        // coordinator applies it immediately.
+        collected = true;
+        playerInRange = false;
+        NetworkGameplayCoordinator.RequestBookCollect(this);
+    }
+
+    /// <summary>
+    /// Apply the (team-wide) collected state to THIS peer: count the book with the local
+    /// <see cref="SecretBookManager"/> exactly once and hide it. Called by the coordinator
+    /// on every peer when the server confirms the collection (and directly in solo).
+    /// Idempotent — safe to call more than once (e.g. late-join catch-up).
+    /// </summary>
+    public void ApplyCollected()
+    {
         collected = true;
         playerInRange = false;
 
-        if (SecretBookManager.Instance != null)
+        if (!counted)
         {
-            SecretBookManager.Instance.CollectBook(this);
+            counted = true;
+            if (SecretBookManager.Instance != null)
+            {
+                SecretBookManager.Instance.CollectBook(this);
+            }
         }
 
-        gameObject.SetActive(false);
+        if (gameObject.activeSelf)
+        {
+            gameObject.SetActive(false);
+        }
     }
 
     private GUIStyle promptStyle;
