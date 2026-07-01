@@ -85,8 +85,10 @@ public class ReviveInteraction : MonoBehaviour
     {
         if (target.IsSpawned)
         {
-            // Networked: the server authorizes and performs the revive on the target.
-            target.ReviveServerRpc();
+            // Networked: the server authorizes and performs the revive on the target. We pass
+            // our revive range, but the SERVER re-validates range/state and resolves the
+            // reviver from the RPC sender — it does not trust this client's decision.
+            target.ReviveServerRpc(reviveRange);
         }
         else
         {

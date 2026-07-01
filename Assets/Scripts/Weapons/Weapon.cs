@@ -28,6 +28,32 @@ public class Weapon
     [System.NonSerialized] public int ammoInReserve = -1;
     [System.NonSerialized] public bool isUpgraded = false; // true once Pack-a-Punched
 
+    /// <summary>
+    /// Create a fresh runtime copy of this weapon's CONFIG, with runtime state (current ammo,
+    /// upgraded flag) left uninitialised so <see cref="InitAmmo"/> seeds it fresh. Used by the
+    /// Mystery Box (and any pool-based granter) so the shared template/pool weapon is never
+    /// mutated by a player's usage — otherwise a later roll would inherit spent ammo or a
+    /// prior Pack-a-Punch. The weaponModel reference is shared intentionally (it's an asset).
+    /// </summary>
+    public Weapon Clone()
+    {
+        return new Weapon
+        {
+            weaponName = weaponName,
+            damage = damage,
+            fireRate = fireRate,
+            automatic = automatic,
+            range = range,
+            spread = spread,
+            magazineSize = magazineSize,
+            reserveAmmo = reserveAmmo,
+            reloadTime = reloadTime,
+            weaponModel = weaponModel,
+            // ammoInMag / ammoInReserve stay at -1 and isUpgraded at false (fresh);
+            // InitAmmo() seeds the runtime ammo when the weapon is granted.
+        };
+    }
+
     // Call once before the weapon is first used to seed runtime ammo from the inspector values.
     public void InitAmmo()
     {

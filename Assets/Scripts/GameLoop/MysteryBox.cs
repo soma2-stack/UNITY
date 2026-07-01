@@ -110,6 +110,18 @@ public class MysteryBox : InteractableBase
         return pool.Count > 0 ? Random.Range(0, pool.Count) : -1;
     }
 
+    /// <summary>Name of the weapon at a rolled pool index (null for teddy / empty pool).
+    /// Used by the server to record wall-buy ownership when the box grants a weapon.</summary>
+    public string WeaponNameAt(int weaponIndex)
+    {
+        if (weaponIndex < 0)
+        {
+            return null;
+        }
+        List<Weapon> pool = (weaponPool != null && weaponPool.Count > 0) ? weaponPool : BuildPool();
+        return pool.Count > 0 ? pool[Mathf.Clamp(weaponIndex, 0, pool.Count - 1)].weaponName : null;
+    }
+
     public void ApplyMysteryResult(int weaponIndex)
     {
         if (weaponIndex < 0)
@@ -131,7 +143,9 @@ public class MysteryBox : InteractableBase
             return;
         }
 
-        Weapon prize = pool[Mathf.Clamp(weaponIndex, 0, pool.Count - 1)];
+        // Give a FRESH COPY, never the shared pool object, so the player firing / reloading
+        // (or a later Pack-a-Punch) can't mutate the template and taint future rolls.
+        Weapon prize = pool[Mathf.Clamp(weaponIndex, 0, pool.Count - 1)].Clone();
         wc.GiveWeapon(prize);
         Debug.Log("[MysteryBox] Granted: " + prize.weaponName);
     }

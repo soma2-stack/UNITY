@@ -84,6 +84,13 @@ public class PlayerHealth : NetworkBehaviour
     private readonly NetworkVariable<bool> networkIsDead =
         new NetworkVariable<bool>(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
+    // Absolute SERVER time (NetworkManager.ServerTime.Time) at which the current downed
+    // player bleeds out. Replicated so clients can run a DISPLAY-ONLY countdown that stays
+    // in sync with the server instead of freezing at the starting value. The server remains
+    // authoritative for the actual death (see UpdateDowned); this is HUD-only for clients.
+    private readonly NetworkVariable<double> networkBleedOutEndServerTime =
+        new NetworkVariable<double>(0d, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
     private float lastDamageTime;
     private float regenAccumulator; // fractional health carried between frames
     private float downedAtTime;     // Time.time when the player went down
@@ -188,6 +195,15 @@ public class PlayerHealth : NetworkBehaviour
         // Only the authority simulates health (regen + bleed-out). Clients mirror state.
         if (!HasAuthority)
         {
+            // Display-only downed countdown for clients: derive the remaining time from the
+            // server-synced bleed-out end time so the HUD counts down accurately instead of
+            // freezing. Clients NEVER decide death here — the server does (UpdateDowned).
+            if (IsSpawned && IsDowned && !IsDead && networkBleedOutEndServerTime.Value > 0d &&
+                NetworkManager.Singleton != null)
+            {
+                double remaining = networkBleedOutEndServerTime.Value - NetworkManager.Singleton.ServerTime.Time;
+                BleedOutRemaining = Mathf.Max(0f, (float)remaining);
+            }
             return;
         }
 
@@ -356,15 +372,77 @@ public class PlayerHealth : NetworkBehaviour
         SyncState();
     }
 
+    /// <summary>Hard cap on the revive range the server will honour, regardless of what the
+    /// reviving client reports, plus a small tolerance for lag/interpolation.</summary>
+    private const float MaxServerReviveRange = 5f;
+    private const float ReviveRangeTolerance = 0.75f;
+
     /// <summary>
-    /// Co-op revive entry point: a reviving client calls this so the SERVER authorizes and
-    /// performs the revive on this (the downed) player. RequireOwnership=false because the
-    /// reviver is a different player. Solo / not-networked callers should use Revive() directly.
+    /// Co-op revive entry point: a reviving client calls this (on the DOWNED target's
+    /// PlayerHealth) so the SERVER authorizes and performs the revive. RequireOwnership=false
+    /// because the reviver is a different player. The SERVER re-validates everything — it
+    /// never trusts the client's local range/state decision. Solo / not-networked callers
+    /// should use Revive() directly.
     /// </summary>
+    /// <param name="reviverRange">The reviving client's revive range (clamped server-side).</param>
     [ServerRpc(RequireOwnership = false)]
-    public void ReviveServerRpc()
+    public void ReviveServerRpc(float reviverRange, ServerRpcParams rpcParams = default)
     {
+        ulong reviverClientId = rpcParams.Receive.SenderClientId;
+
+        // Target = this player. Must actually be down and not already dead.
+        if (!IsDowned || IsDead)
+        {
+            return;
+        }
+
+        // A player cannot revive themselves through the co-op interaction (self-revive is the
+        // solo RescueRush path). Reject if the reviver owns this same (downed) player.
+        if (reviverClientId == OwnerClientId)
+        {
+            return;
+        }
+
+        // Resolve the reviver's player object + health on the server.
+        if (!TryGetPlayerHealth(reviverClientId, out PlayerHealth reviver) || reviver == null)
+        {
+            return;
+        }
+
+        // Reviver must be alive and on their feet.
+        if (reviver.IsDead || reviver.IsDowned)
+        {
+            return;
+        }
+
+        // Range check against the SERVER's authoritative positions (clamp the client-reported
+        // range to a sane maximum so a stale/spoofed value can't allow a cross-map revive).
+        float allowedRange = Mathf.Clamp(reviverRange, 0f, MaxServerReviveRange) + ReviveRangeTolerance;
+        float distance = Vector3.Distance(reviver.transform.position, transform.position);
+        if (distance > allowedRange)
+        {
+            return;
+        }
+
         Revive();
+    }
+
+    // Server-only: find a connected client's player-object PlayerHealth (the reviver).
+    private static bool TryGetPlayerHealth(ulong clientId, out PlayerHealth health)
+    {
+        health = null;
+        NetworkManager manager = NetworkManager.Singleton;
+        if (manager == null || !manager.IsServer)
+        {
+            return false;
+        }
+        if (!manager.ConnectedClients.TryGetValue(clientId, out NetworkClient client) ||
+            client.PlayerObject == null)
+        {
+            return false;
+        }
+        health = client.PlayerObject.GetComponent<PlayerHealth>();
+        return health != null;
     }
 
     private void EnterDowned()
@@ -378,6 +456,14 @@ public class PlayerHealth : NetworkBehaviour
         downedAtTime = Time.time;
         BleedOutRemaining = Mathf.Max(0f, bleedOutTime);
         regenAccumulator = 0f;
+
+        // Publish the absolute server time the player will bleed out at, so clients can run
+        // an accurate display-only countdown (set before SyncState so both replicate together).
+        if (IsSpawned && IsServer && NetworkManager.Singleton != null)
+        {
+            networkBleedOutEndServerTime.Value =
+                NetworkManager.Singleton.ServerTime.Time + Mathf.Max(0f, bleedOutTime);
+        }
 
         Debug.Log("[PlayerHealth] Player DOWNED - bleed-out in " + BleedOutRemaining.ToString("0") + "s");
         OnPlayerDowned?.Invoke();

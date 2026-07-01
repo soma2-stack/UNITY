@@ -82,13 +82,18 @@ public class Powerup : MonoBehaviour
         p.lifetime = Mathf.Max(1f, lifetime);
         p.networkId = networkId;
         p.networked = networked;
+        // Initialise spawnTime HERE (not in Start, which runs a frame later) so that
+        // RemainingLifetime is already valid when the server broadcasts this powerup's spawn
+        // on the same frame. Otherwise the broadcast reads spawnTime=0 and sends a bogus
+        // (near-zero) lifetime, causing clients to despawn the pickup almost immediately.
+        p.spawnTime = Time.time;
+        p.spawnPosition = position;
         p.RegisterNetworked();
         return p;
     }
 
     private void Start()
     {
-        spawnTime = Time.time;
         rend = GetComponent<Renderer>();
         // Capture the spawn position ONCE so the bob oscillates around it instead of
         // accumulating (which would make the pickup drift upward forever).
