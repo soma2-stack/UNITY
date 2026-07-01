@@ -88,6 +88,12 @@ public class PlayerMovement : MonoBehaviour
         standingHeight = controller.height;
         originalControllerCenter = controller.center;
 
+        // Stairs: the generated steps rise up to ~0.4m (the zombie NavMesh agent climbs them
+        // with agentClimb 0.4). The prefab's default stepOffset (0.3) is smaller than that
+        // rise, so the player can't walk up and has to jump. Raise it so the player climbs the
+        // same steps the zombies do. stepOffset must stay below the controller height.
+        controller.stepOffset = Mathf.Min(Mathf.Max(controller.stepOffset, 0.4f), standingHeight - 0.05f);
+
         if (animator == null)
             animator = GetComponentInChildren<Animator>();
 
