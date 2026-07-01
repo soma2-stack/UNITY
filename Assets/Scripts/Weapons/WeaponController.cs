@@ -852,6 +852,20 @@ public class WeaponController : NetworkBehaviour
         {
             gunRecoil = GetComponentInChildren<SimpleGunRecoil>(true);
         }
+
+        // Rebind the MUZZLE FLASH from the newly spawned view model so each weapon uses ITS
+        // OWN muzzle particle. Previously a weapon whose model lacked a SimpleGunRecoil (or had
+        // an unassigned muzzleFlash) fell back to a rig still pointing at the pistol's particle,
+        // so only the pistol flashed. SimpleGunRecoil.Kick() plays gunRecoil.muzzleFlash each
+        // shot, so pointing it at the current model's particle makes every gun flash correctly.
+        if (gunRecoil != null && _spawnedViewModel != null)
+        {
+            ParticleSystem modelMuzzle = _spawnedViewModel.GetComponentInChildren<ParticleSystem>(true);
+            if (modelMuzzle != null)
+            {
+                gunRecoil.muzzleFlash = modelMuzzle;
+            }
+        }
     }
 
     private void HandleReloadInput()
