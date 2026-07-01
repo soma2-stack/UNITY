@@ -98,6 +98,8 @@ public class ZombieAgent : MonoBehaviour
     private NavMeshPath targetPathScratch;
     private bool isDead;
     private bool pointsAwarded; // guard: the kill reward may be granted at most once
+    private bool isClientReplica; // true on non-server peers: no AI, only a death collider watch
+    private bool clientDeathHandled; // guard: disable the corpse's colliders at most once on a client
 
     private void Awake()
     {
@@ -117,14 +119,17 @@ public class ZombieAgent : MonoBehaviour
     private void Start()
     {
         // In a networked session only the SERVER runs zombie AI. Clients let the
-        // NetworkTransform drive the body and disable the agent/AI so it doesn't fight.
+        // NetworkTransform drive the body and disable the agent so it doesn't fight.
         if (NetworkActive && !IsServerRole)
         {
             if (agent != null)
             {
                 agent.enabled = false;
             }
-            enabled = false;
+            // Keep this component ENABLED (don't disable it) purely so it can watch for the
+            // replicated death and drop the corpse's colliders locally — otherwise a dead
+            // body keeps blocking client movement/bullets until the server despawns it.
+            isClientReplica = true;
             return;
         }
 
@@ -134,6 +139,14 @@ public class ZombieAgent : MonoBehaviour
 
     private void Update()
     {
+        // Client replicas run no AI — only a death watch that disables the corpse's colliders
+        // once the server-driven death animation ("Death") has replicated here.
+        if (isClientReplica)
+        {
+            ClientDeathWatch();
+            return;
+        }
+
         if (isDead)
         {
             return;
@@ -405,10 +418,7 @@ public class ZombieAgent : MonoBehaviour
             }
             agent.enabled = false;
         }
-        foreach (Collider c in GetComponentsInChildren<Collider>())
-        {
-            c.enabled = false;
-        }
+        DisableDeadColliders();
 
         float despawnDelay = Mathf.Max(0f, deathDestroyDelay);
         NetworkObject netObj = NetworkActive ? GetComponent<NetworkObject>() : null;
@@ -431,6 +441,43 @@ public class ZombieAgent : MonoBehaviour
         {
             netObj.Despawn(true);
         }
+    }
+
+    // Disable every collider on the zombie so a dead body stops blocking player movement,
+    // absorbing bullets, or registering further hits. Used on the server (in Die) and on
+    // clients (via ClientDeathWatch) so dead hitboxes deactivate on every peer.
+    private void DisableDeadColliders()
+    {
+        foreach (Collider c in GetComponentsInChildren<Collider>())
+        {
+            if (c != null)
+            {
+                c.enabled = false;
+            }
+        }
+    }
+
+    // Client-only: the server drives death via the "Die" trigger (replicated by
+    // NetworkAnimator). Once this replica enters/transitions to the "Death" state we drop
+    // its colliders locally so the corpse stops blocking movement/bullets before the server
+    // despawns it. No AI, points, or death logic runs here — those stay server-authoritative.
+    private void ClientDeathWatch()
+    {
+        if (clientDeathHandled || animator == null)
+        {
+            return;
+        }
+
+        bool dying = animator.GetCurrentAnimatorStateInfo(0).IsName("Death") ||
+                     (animator.IsInTransition(0) && animator.GetNextAnimatorStateInfo(0).IsName("Death"));
+        if (!dying)
+        {
+            return;
+        }
+
+        clientDeathHandled = true;
+        DisableDeadColliders();
+        enabled = false; // nothing left to watch; the server despawns the body shortly
     }
 
     private void ApplyAgentSpeed()
