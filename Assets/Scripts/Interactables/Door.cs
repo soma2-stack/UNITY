@@ -190,6 +190,22 @@ public class Door : MonoBehaviour
         }
 
         playerInRange = nearestPlayer != null;
+
+        if (Input.GetKeyDown(interactKey))
+        {
+            float nearest = float.MaxValue;
+            foreach (Transform p in players)
+            {
+                if (p != null)
+                {
+                    nearest = Mathf.Min(nearest, Vector3.Distance(transform.position, p.position));
+                }
+            }
+            Debug.Log("[InteractDiag] Door '" + name + "': E pressed nearestDist=" + nearest.ToString("0.0") +
+                " range=" + interactionRange + " inRange=" + playerInRange + " players=" + players.Length +
+                " selfPos=" + transform.position.ToString("0.0"));
+        }
+
         if (!playerInRange)
         {
             return;

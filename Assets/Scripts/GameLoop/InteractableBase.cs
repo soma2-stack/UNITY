@@ -74,10 +74,23 @@ public abstract class InteractableBase : MonoBehaviour
         if (player == null)
         {
             playerInRange = false;
+            if (Input.GetKeyDown(interactKey))
+            {
+                Debug.LogWarning("[InteractDiag] " + GetType().Name + ": E pressed but no local player found.");
+            }
             return;
         }
 
-        playerInRange = Vector3.Distance(transform.position, player.position) <= interactionRange;
+        float dist = Vector3.Distance(transform.position, player.position);
+        playerInRange = dist <= interactionRange;
+
+        if (Input.GetKeyDown(interactKey))
+        {
+            Debug.Log("[InteractDiag] " + GetType().Name + ": E pressed dist=" + dist.ToString("0.0") +
+                " range=" + interactionRange + " inRange=" + playerInRange +
+                " playerPos=" + player.position.ToString("0.0") + " selfPos=" + transform.position.ToString("0.0"));
+        }
+
         if (!playerInRange)
         {
             return;

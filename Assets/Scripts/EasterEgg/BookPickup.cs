@@ -40,17 +40,25 @@ public class BookPickup : MonoBehaviour
         transform.Rotate(0f, spinSpeed * Time.deltaTime, 0f, Space.World);
         transform.position = basePosition + Vector3.up * (Mathf.Sin(Time.time * bobSpeed) * bobHeight);
 
+        // Re-resolve the LOCAL player every frame — in multiplayer the player spawns after
+        // this pickup, so a one-time cache latches onto nothing/Camera.main and the book
+        // can never be collected.
+        FindPlayer();
         if (player == null)
         {
-            FindPlayer();
-            if (player == null)
-            {
-                playerInRange = false;
-                return;
-            }
+            playerInRange = false;
+            return;
         }
 
-        playerInRange = Vector3.Distance(transform.position, player.position) <= interactionRange;
+        float dist = Vector3.Distance(transform.position, player.position);
+        playerInRange = dist <= interactionRange;
+
+        if (Input.GetKeyDown(interactKey))
+        {
+            Debug.Log("[InteractDiag] Book '" + name + "': E pressed dist=" + dist.ToString("0.0") +
+                " range=" + interactionRange + " inRange=" + playerInRange);
+        }
+
         if (!playerInRange)
         {
             return;
