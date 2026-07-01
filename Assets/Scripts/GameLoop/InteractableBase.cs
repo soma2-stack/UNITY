@@ -74,23 +74,10 @@ public abstract class InteractableBase : MonoBehaviour
         if (player == null)
         {
             playerInRange = false;
-            if (Input.GetKeyDown(interactKey))
-            {
-                Debug.LogWarning("[InteractDiag] " + GetType().Name + ": E pressed but no local player found.");
-            }
             return;
         }
 
-        float dist = Vector3.Distance(transform.position, player.position);
-        playerInRange = dist <= interactionRange;
-
-        if (Input.GetKeyDown(interactKey))
-        {
-            Debug.Log("[InteractDiag] " + GetType().Name + ": E pressed dist=" + dist.ToString("0.0") +
-                " range=" + interactionRange + " inRange=" + playerInRange +
-                " playerPos=" + player.position.ToString("0.0") + " selfPos=" + transform.position.ToString("0.0"));
-        }
-
+        playerInRange = InRange(transform.position, player.position, interactionRange);
         if (!playerInRange)
         {
             return;
@@ -158,6 +145,22 @@ public abstract class InteractableBase : MonoBehaviour
         GUI.color = new Color(0.96f, 0.93f, 0.86f, 1f);
         GUI.Label(rect, label, style);
         GUI.color = prev;
+    }
+
+    /// <summary>
+    /// Interaction proximity that tolerates the interactable's pivot being at a very
+    /// different height than the floor-standing player. Door / machine pivots sit 1.5-6m
+    /// up (or even below the floor), while the player stands at ~y=0, so a plain 3D
+    /// distance blows past the small interaction range even when you're right next to it.
+    /// This uses HORIZONTAL (XZ) distance against the range, plus a vertical tolerance so
+    /// you still can't reach an interactable a whole floor above/below you.
+    /// </summary>
+    public static bool InRange(Vector3 selfPos, Vector3 playerPos, float range, float verticalTolerance = 4f)
+    {
+        float dx = selfPos.x - playerPos.x;
+        float dz = selfPos.z - playerPos.z;
+        float horizontal = Mathf.Sqrt(dx * dx + dz * dz);
+        return horizontal <= range && Mathf.Abs(selfPos.y - playerPos.y) <= verticalTolerance;
     }
 
     protected void FindPlayer()

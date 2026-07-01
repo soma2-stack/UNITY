@@ -50,15 +50,9 @@ public class BookPickup : MonoBehaviour
             return;
         }
 
-        float dist = Vector3.Distance(transform.position, player.position);
-        playerInRange = dist <= interactionRange;
-
-        if (Input.GetKeyDown(interactKey))
-        {
-            Debug.Log("[InteractDiag] Book '" + name + "': E pressed dist=" + dist.ToString("0.0") +
-                " range=" + interactionRange + " inRange=" + playerInRange);
-        }
-
+        // Horizontal distance + vertical tolerance so the book's bob height / elevated
+        // placement doesn't push the floor-standing player out of range.
+        playerInRange = InteractableBase.InRange(transform.position, player.position, interactionRange);
         if (!playerInRange)
         {
             return;

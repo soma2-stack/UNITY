@@ -172,40 +172,33 @@ public class Door : MonoBehaviour
             }
         }
 
-        // Co-op aware: check every player and keep the closest one within range.
+        // Co-op aware: keep the closest player that is within range. Uses horizontal
+        // distance + a vertical tolerance (InteractableBase.InRange) because the door's
+        // pivot sits well above the floor-standing player, which a plain 3D distance would
+        // wrongly treat as out of range even when the player is right at the door.
         nearestPlayer = null;
-        float bestDistance = float.MaxValue;
+        float bestHorizontal = float.MaxValue;
         foreach (Transform p in players)
         {
             if (p == null)
             {
                 continue;
             }
-            float distance = Vector3.Distance(transform.position, p.position);
-            if (distance <= interactionRange && distance < bestDistance)
+            if (!InteractableBase.InRange(transform.position, p.position, interactionRange))
             {
-                bestDistance = distance;
+                continue;
+            }
+            float dx = transform.position.x - p.position.x;
+            float dz = transform.position.z - p.position.z;
+            float horizontal = dx * dx + dz * dz;
+            if (horizontal < bestHorizontal)
+            {
+                bestHorizontal = horizontal;
                 nearestPlayer = p;
             }
         }
 
         playerInRange = nearestPlayer != null;
-
-        if (Input.GetKeyDown(interactKey))
-        {
-            float nearest = float.MaxValue;
-            foreach (Transform p in players)
-            {
-                if (p != null)
-                {
-                    nearest = Mathf.Min(nearest, Vector3.Distance(transform.position, p.position));
-                }
-            }
-            Debug.Log("[InteractDiag] Door '" + name + "': E pressed nearestDist=" + nearest.ToString("0.0") +
-                " range=" + interactionRange + " inRange=" + playerInRange + " players=" + players.Length +
-                " selfPos=" + transform.position.ToString("0.0"));
-        }
-
         if (!playerInRange)
         {
             return;

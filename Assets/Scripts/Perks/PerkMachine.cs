@@ -81,8 +81,9 @@ public class PerkMachine : MonoBehaviour
             return;
         }
 
-        float distance = Vector3.Distance(transform.position, player.position);
-        playerInRange = distance <= interactionRange;
+        // Horizontal distance + vertical tolerance so the machine's elevated pivot doesn't
+        // push the floor-standing player out of range (see InteractableBase.InRange).
+        playerInRange = InteractableBase.InRange(transform.position, player.position, interactionRange);
         if (!playerInRange)
         {
             return;
