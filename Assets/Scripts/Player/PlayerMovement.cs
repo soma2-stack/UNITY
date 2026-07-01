@@ -88,11 +88,14 @@ public class PlayerMovement : MonoBehaviour
         standingHeight = controller.height;
         originalControllerCenter = controller.center;
 
-        // Stairs: the generated steps rise up to ~0.4m (the zombie NavMesh agent climbs them
-        // with agentClimb 0.4). The prefab's default stepOffset (0.3) is smaller than that
-        // rise, so the player can't walk up and has to jump. Raise it so the player climbs the
-        // same steps the zombies do. stepOffset must stay below the controller height.
-        controller.stepOffset = Mathf.Min(Mathf.Max(controller.stepOffset, 0.4f), standingHeight - 0.05f);
+        // Stairs: measured world step rises are ~0.275-0.30m for most staircases, but one
+        // irregular stairwell has steps up to ~0.45m. stepOffset must EXCEED the tallest step
+        // for the CharacterController to auto-climb it, so raise it to 0.5 (the prefab default
+        // 0.3 and the previous 0.4 were both below that 0.45 step). Must stay below the
+        // controller height. NOTE: the real cause of "having to jump" was the movement code
+        // applying horizontal and vertical motion in two separate Move() calls (see
+        // HandleMovement) — that is fixed there; this just guarantees the step height is covered.
+        controller.stepOffset = Mathf.Min(Mathf.Max(controller.stepOffset, 0.5f), standingHeight - 0.05f);
 
         if (animator == null)
             animator = GetComponentInChildren<Animator>();
@@ -191,8 +194,6 @@ public class PlayerMovement : MonoBehaviour
         if (!isGrounded)
             move *= airControl;
 
-        controller.Move(move * CurrentSpeed * Time.deltaTime);
-
         bool jumpedThisFrame = false;
 
         if (Input.GetButtonDown("Jump") && isGrounded && !isCrouching && !isDowned)
@@ -202,7 +203,16 @@ public class PlayerMovement : MonoBehaviour
         }
 
         velocity.y += gravity * Time.deltaTime;
-        controller.Move(velocity * Time.deltaTime);
+
+        // Apply horizontal + vertical motion in a SINGLE CharacterController.Move so the
+        // controller resolves the step-up and grounding together. Previously these were two
+        // separate Move() calls: the vertical (gravity) move made isGrounded flicker off at a
+        // step edge, which then triggered the airControl 35% speed cut on the next horizontal
+        // move and stalled the step-up — so the player had to jump up stairs even though the
+        // steps were well within stepOffset. `velocity` only carries the vertical (y) component;
+        // horizontal speed is in `move * CurrentSpeed`.
+        Vector3 horizontalVelocity = move * CurrentSpeed;
+        controller.Move((horizontalVelocity + velocity) * Time.deltaTime);
 
         UpdateAnimator(isMoving, wantsToSprint, jumpedThisFrame);
     }
