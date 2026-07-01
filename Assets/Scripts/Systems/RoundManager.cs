@@ -49,10 +49,10 @@ public class RoundManager : MonoBehaviour
     public int zombiesPerRound = 2;
     [Tooltip("Hard ceiling on how many zombies a single round can spawn (CoD caps at 24).")]
     public int maxZombiesPerRound = 24;
-    [Tooltip("Round 1 base health (default 150). Rounds 1-9 add healthPerRound each; " +
-             "round 10+ ramps multiplicatively so late rounds stay hard.")]
+    [Tooltip("LEGACY (no longer read): the per-round zombie health curve is defined in code " +
+             "in CalculateZombieHealth() so the tuned early-round values apply everywhere.")]
     public int baseZombieHealth = 150;
-    [Tooltip("Health added per round during rounds 1-9 (R1=150, R2=200, ...).")]
+    [Tooltip("LEGACY (no longer read): see CalculateZombieHealth() for the health curve.")]
     public int healthPerRound = 50;
     [Tooltip("Base zombie speed in round 1.")]
     public float baseZombieSpeed = 3.0f;
@@ -414,10 +414,14 @@ public class RoundManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Zombie health for the given round:
-    ///   rounds 1-9 : baseZombieHealth + (round-1) * healthPerRound   (R1=150, R2=200, ...)
-    ///   rounds 10+ : the round-9 value ramped x1.1 per round          (keeps late rounds hard)
-    /// Rounded to the nearest integer and clamped so it can't overflow int.
+    /// Zombie health for the given round. Hand-tuned so the early rounds stay playable and
+    /// fun: the old curve (150 + 50*(round-1)) made round 4-5 zombies ~300-350 HP, which felt
+    /// far too tanky. New targets:
+    ///   R1 100, R2 125, R3 150, R4 190, R5 230, R6 270, R7 310, R8 350, R9 390,
+    ///   round 10+ : the round-9 value ramped x1.1 per round (keeps late rounds hard).
+    /// This is computed in-code (not from the serialized baseZombieHealth / healthPerRound
+    /// fields) so the tuned curve applies even where a scene-placed RoundManager still has the
+    /// old high values serialized. Rounded and clamped so it can't overflow int.
     /// </summary>
     private int CalculateZombieHealth(int round)
     {
@@ -425,10 +429,11 @@ public class RoundManager : MonoBehaviour
 
         if (round <= 9)
         {
-            return Mathf.Max(1, baseZombieHealth + (round - 1) * healthPerRound);
+            // +25 per round, with a small extra bump from round 4 onward.
+            return 100 + (round - 1) * 25 + Mathf.Max(0, round - 3) * 15;
         }
 
-        int round9Health = baseZombieHealth + 8 * healthPerRound;
+        const int round9Health = 100 + 8 * 25 + 6 * 15; // 390
         double health = round9Health * System.Math.Pow(1.1, round - 9);
         double rounded = System.Math.Round(System.Math.Min(health, int.MaxValue));
         return Mathf.Max(1, (int)rounded);
