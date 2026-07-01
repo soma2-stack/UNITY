@@ -64,6 +64,16 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     private PlayerAnimator playerAnimator;
     private TMP_Text worldName;
 
+    // --- Spectator (Checkpoint 2) ---
+    // When a player FINALLY dies (bled out, not merely downed) they soft-despawn: the body
+    // is hidden and its collider disabled on every peer, and the LOCAL owner switches to a
+    // spectator camera following a living teammate.
+    private PlayerHealth health;
+    private CharacterController characterController;
+    private bool deathHandled;
+    private bool spectating;
+    private PlayerHealth spectateTarget;
+
     public string DisplayName => displayName.Value.ToString();
 
     private void Awake()
@@ -90,6 +100,19 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
             SetDisplayNameServerRpc(MultiplayerSessionController.SanitizeDisplayName(preferredName));
         }
 
+        // Soft-despawn / spectate hook: every copy reacts to this player's FINAL death.
+        health = GetComponent<PlayerHealth>();
+        characterController = GetComponent<CharacterController>();
+        if (health != null)
+        {
+            health.OnPlayerDied += HandleDeath;
+            // Late-join safety: if we spawned into an already-dead player, reflect it now.
+            if (health.IsDead)
+            {
+                HandleDeath();
+            }
+        }
+
         RefreshForScene(SceneManager.GetActiveScene());
     }
 
@@ -97,6 +120,10 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
         displayName.OnValueChanged -= OnDisplayNameChanged;
+        if (health != null)
+        {
+            health.OnPlayerDied -= HandleDeath;
+        }
         if (IsOwner)
         {
             LocalPlayer.Unregister(gameObject);
@@ -131,10 +158,138 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         }
     }
 
+    // Drive the spectator camera AFTER everything else has moved this frame, so the view
+    // tracks the living teammate's final position instead of lagging a frame behind.
+    private void LateUpdate()
+    {
+        if (spectating)
+        {
+            UpdateSpectate();
+        }
+    }
+
     [ServerRpc]
     private void SetDisplayNameServerRpc(FixedString64Bytes value)
     {
         displayName.Value = value;
+    }
+
+    /// <summary>
+    /// A player who has FINALLY died (not merely downed) soft-despawns. Runs on EVERY copy:
+    /// the body's collider is disabled and its renderers/nameplate hidden so the corpse stops
+    /// blocking zombies, teammates and shots. The LOCAL owner additionally enters spectator
+    /// mode (see <see cref="EnterSpectate"/>). Downed players never reach here — this is wired
+    /// to OnPlayerDied only, so a revivable teammate keeps their normal body and view.
+    /// </summary>
+    private void HandleDeath()
+    {
+        if (deathHandled)
+        {
+            return;
+        }
+        deathHandled = true;
+
+        // Remove the dead body from the world on every peer.
+        if (characterController != null)
+        {
+            characterController.enabled = false;
+        }
+        if (survivorRenderers != null)
+        {
+            foreach (Renderer survivorRenderer in survivorRenderers)
+            {
+                if (survivorRenderer != null)
+                {
+                    survivorRenderer.enabled = false;
+                }
+            }
+        }
+        if (worldName != null)
+        {
+            worldName.gameObject.SetActive(false);
+        }
+
+        if (IsOwner)
+        {
+            EnterSpectate();
+        }
+    }
+
+    // Switch the LOCAL dead player into spectator mode: stop movement and first-person
+    // camera control, but keep the Camera + AudioListener enabled so they can keep watching
+    // and hearing the match. Weapon firing/melee is already blocked by PlayerHealth.IsDead
+    // inside WeaponController, so no weapon handling is needed here.
+    private void EnterSpectate()
+    {
+        spectating = true;
+
+        if (movement != null)
+        {
+            movement.enabled = false;
+        }
+        if (playerCamera != null)
+        {
+            CoDCamera cameraController = playerCamera.GetComponent<CoDCamera>();
+            if (cameraController != null)
+            {
+                cameraController.enabled = false;
+            }
+        }
+    }
+
+    // Follow a living teammate with an over-the-shoulder view. If none are left the method
+    // does nothing and the (all-dead) game-over screen takes over.
+    private void UpdateSpectate()
+    {
+        if (playerCamera == null)
+        {
+            return;
+        }
+
+        // Keep the current target while it lives; re-pick when it dies or leaves.
+        if (spectateTarget == null || spectateTarget.IsDead)
+        {
+            spectateTarget = FindLivingTeammate();
+        }
+        if (spectateTarget == null)
+        {
+            return;
+        }
+
+        Transform targetRoot = spectateTarget.transform;
+        Camera targetCam = spectateTarget.GetComponentInChildren<Camera>(true);
+        Vector3 eye = targetCam != null
+            ? targetCam.transform.position
+            : targetRoot.position + Vector3.up * 1.6f;
+        Vector3 forward = targetRoot.forward;
+
+        Vector3 camPos = eye - forward * 3f + Vector3.up * 1.1f;
+        Vector3 lookAt = eye + forward * 2f;
+        playerCamera.transform.SetPositionAndRotation(camPos, Quaternion.LookRotation(lookAt - camPos));
+    }
+
+    // Nearest still-living player that isn't this (dead) one.
+    private PlayerHealth FindLivingTeammate()
+    {
+        PlayerHealth best = null;
+        float bestSqr = float.MaxValue;
+        Vector3 here = transform.position;
+
+        PlayerHealth[] all = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        foreach (PlayerHealth ph in all)
+        {
+            if (ph == null || ph == health || ph.IsDead)
+            {
+                continue;
+            }
+            float sqr = (ph.transform.position - here).sqrMagnitude;
+            if (sqr < bestSqr)
+            {
+                bestSqr = sqr;
+                best = ph;
+            }
+        }
+        return best;
     }
 
     // Per-player model variety: pick one body based on OwnerClientId and disable the
