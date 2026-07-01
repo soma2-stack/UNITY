@@ -272,10 +272,26 @@ public class PlayerHealth : NetworkBehaviour
         ApplyDamage(amount);
     }
 
+    /// <summary>Grace window (seconds) after a hit lands during which further hits are
+    /// ignored, so a crowd of zombies all connecting in the same instant can't chunk the
+    /// player from full to dead in one frame. A lone zombie (attackInterval ~1.2s) is
+    /// unaffected — only stacked/simultaneous hits are capped.</summary>
+    private const float DamageGraceWindow = 0.5f;
+
     // Authority-side damage application (server in a session, or local in solo).
     private void ApplyDamage(int amount)
     {
         if (IsDead || amount <= 0)
+        {
+            return;
+        }
+
+        // Per-player damage grace: ignore hits that arrive within DamageGraceWindow of the
+        // last one that actually landed. Rejected hits do NOT refresh the timer, so a crowd
+        // can still whittle the player down at a fair rate (~one hit per window) instead of
+        // applying five simultaneous hits at once. Enforced here on the authority so host and
+        // client share the exact same rule.
+        if (Time.time - lastDamageTime < DamageGraceWindow)
         {
             return;
         }
