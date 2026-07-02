@@ -262030,7 +262030,7 @@ MonoBehaviour:
   reserveAmmo: 256
   reloadTime: 2
   weaponModel: {fileID: 851652609436101254, guid: ae56add955b981e44b0184224f4fa2cf, type: 3}
-  chalkSprite: {fileID: 21300000, guid: 81828bc5c9bb618479a63b3d6fdf383f, type: 3}
+  chalkSprite: {fileID: 0}
   chalkLocalOffset: {x: 0, y: 1.2, z: 0.03}
   chalkLocalEuler: {x: 0, y: 0, z: 0}
   chalkScale: 1
