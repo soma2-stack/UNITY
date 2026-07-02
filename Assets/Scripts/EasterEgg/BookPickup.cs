@@ -83,16 +83,10 @@ public class BookPickup : MonoBehaviour
 
     private string BuildNetworkKey()
     {
-        string path = name;
-        Transform parent = transform.parent;
-        while (parent != null)
-        {
-            path = parent.name + "/" + path;
-            parent = parent.parent;
-        }
-        // Append the rounded authored position so books that share a name/parent path are
-        // still distinct (and identical across peers).
-        return "BOOK:" + path + "@" +
+        // Reuse the shared hierarchy-path key builder, then append the rounded authored
+        // position so books that share a name/parent path stay distinct (and identical
+        // across peers, since every peer loads the same scene).
+        return "BOOK:" + InteractableBase.BuildNetworkKey(transform) + "@" +
                Mathf.RoundToInt(basePosition.x * 10f) + "," +
                Mathf.RoundToInt(basePosition.y * 10f) + "," +
                Mathf.RoundToInt(basePosition.z * 10f);

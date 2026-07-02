@@ -202,7 +202,7 @@ public abstract class InteractableBase : MonoBehaviour
         }
     }
 
-    protected static string BuildNetworkKey(Transform target)
+    public static string BuildNetworkKey(Transform target)
     {
         if (target == null)
         {

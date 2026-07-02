@@ -73,6 +73,7 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     private bool deathHandled;
     private bool spectating;
     private PlayerHealth spectateTarget;
+    private float nextTeammateScanTime;
 
     public string DisplayName => displayName.Value.ToString();
 
@@ -246,12 +247,18 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
             return;
         }
 
-        // Keep the current target while it lives; re-pick when it dies or leaves.
+        // Keep the current target while it lives; re-pick when it dies or leaves. The scan is
+        // throttled so that if nobody is alive (the brief window before the game-over screen)
+        // we don't run FindObjectsByType every frame.
         if (spectateTarget == null || spectateTarget.IsDead)
         {
-            spectateTarget = FindLivingTeammate();
+            if (Time.time >= nextTeammateScanTime)
+            {
+                nextTeammateScanTime = Time.time + 0.5f;
+                spectateTarget = FindLivingTeammate();
+            }
         }
-        if (spectateTarget == null)
+        if (spectateTarget == null || spectateTarget.IsDead)
         {
             return;
         }

@@ -90,12 +90,13 @@ public class PlayerMovement : MonoBehaviour
 
         // Stairs: measured world step rises are ~0.275-0.30m for most staircases, but one
         // irregular stairwell has steps up to ~0.45m. stepOffset must EXCEED the tallest step
-        // for the CharacterController to auto-climb it, so raise it to 0.5 (the prefab default
-        // 0.3 and the previous 0.4 were both below that 0.45 step). Must stay below the
-        // controller height. NOTE: the real cause of "having to jump" was the movement code
-        // applying horizontal and vertical motion in two separate Move() calls (see
-        // HandleMovement) — that is fixed there; this just guarantees the step height is covered.
-        controller.stepOffset = Mathf.Min(Mathf.Max(controller.stepOffset, 0.5f), standingHeight - 0.05f);
+        // for the CharacterController to auto-climb it, so raise it to 0.6 (the prefab default
+        // 0.3 and the earlier 0.4 were both below that 0.45 step, and 0.6 leaves comfortable
+        // margin). Must stay below the controller height. NOTE: the real cause of "having to
+        // jump" was the movement code applying horizontal and vertical motion in two separate
+        // Move() calls (see HandleMovement) — that is fixed there; this just guarantees the
+        // step height is covered.
+        controller.stepOffset = Mathf.Min(Mathf.Max(controller.stepOffset, 0.6f), standingHeight - 0.05f);
 
         if (animator == null)
             animator = GetComponentInChildren<Animator>();
