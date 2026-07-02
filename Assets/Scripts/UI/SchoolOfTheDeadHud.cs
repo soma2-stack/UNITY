@@ -394,7 +394,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         RectTransform panel = MakePanel("RoundPanel", root, DarkSlate,
             new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
             new Vector2(16f, -16f), new Vector2(230f, 92f));
-        ApplyPanelSprite(panel.GetComponent<Image>(), "round_panel");
+        ApplyPanelSprite(panel.GetComponent<Image>(), "round", "round_panel");
 
         MakeLabel("RoundCaption", panel, "ROUND", MutedYellow, 20, TextAlignmentOptions.TopLeft,
             new Vector2(12f, -8f), new Vector2(120f, 24f), new Vector2(0f, 1f));
@@ -431,7 +431,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         RectTransform panel = MakePanel("StatusCard", root, DirtyBeige,
             new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f),
             new Vector2(16f, 16f), new Vector2(270f, 100f));
-        ApplyPanelSprite(panel.GetComponent<Image>(), "status_panel");
+        ApplyPanelSprite(panel.GetComponent<Image>(), "status", "status_panel");
 
         // Little "ID" tab accent.
         RectTransform tab = MakeChildImage("IDTab", panel, RedAccent);
@@ -487,7 +487,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         Image rowBg = rowGo.AddComponent<Image>();
         rowBg.raycastTarget = false;
         rowBg.enabled = false; // toggled on in RefreshPerks only when art loaded + perks owned
-        perkRowBackground = ApplyPanelSprite(rowBg, "perk_row") ? rowBg : null;
+        perkRowBackground = ApplyPanelSprite(rowBg, "Perk", "perk_row", "perk") ? rowBg : null;
 
         HorizontalLayoutGroup layout = rowGo.AddComponent<HorizontalLayoutGroup>();
         layout.spacing = 8f;
@@ -543,7 +543,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         RectTransform panel = MakePanel("AmmoPanel", root, OffWhite,
             new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f),
             new Vector2(-16f, 16f), new Vector2(250f, 86f));
-        ApplyPanelSprite(panel.GetComponent<Image>(), "ammo_panel");
+        ApplyPanelSprite(panel.GetComponent<Image>(), "ammo", "ammo_panel");
 
         // Red "margin line" accent like notebook paper.
         RectTransform margin = MakeChildImage("Margin", panel, RedAccent);
@@ -592,21 +592,33 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         return rt;
     }
 
-    // Try to swap a panel's placeholder colour for an optional PNG in Resources/HUD. Returns
-    // true if the sprite was found and applied. On miss it logs ONE warning and leaves the
-    // existing placeholder colour untouched, so the HUD never breaks when art is absent.
-    private static bool ApplyPanelSprite(Image img, string spriteName)
+    // Try to swap a panel's placeholder colour for an optional PNG in Resources/HUD. Tries each
+    // candidate name in order (so it works whether the art is named e.g. "round" or
+    // "round_panel") and uses the first that loads. Returns true if a sprite was applied. On a
+    // full miss it logs ONE warning and leaves the placeholder colour untouched, so the HUD
+    // never breaks when art is absent.
+    private static bool ApplyPanelSprite(Image img, params string[] spriteNames)
     {
-        if (img == null)
+        if (img == null || spriteNames == null)
         {
             return false;
         }
 
-        Sprite sprite = Resources.Load<Sprite>("HUD/" + spriteName);
+        Sprite sprite = null;
+        foreach (string spriteName in spriteNames)
+        {
+            sprite = Resources.Load<Sprite>("HUD/" + spriteName);
+            if (sprite != null)
+            {
+                break;
+            }
+        }
+
         if (sprite == null)
         {
-            Debug.LogWarning("[SchoolOfTheDeadHud] Optional HUD art 'Resources/HUD/" + spriteName +
-                             "' not found (import the PNG as Sprite (2D and UI)); keeping placeholder panel.");
+            Debug.LogWarning("[SchoolOfTheDeadHud] Optional HUD art not found in Resources/HUD (tried: " +
+                             string.Join(", ", spriteNames) +
+                             "; import the PNG as Sprite (2D and UI)); keeping placeholder panel.");
             return false;
         }
 
