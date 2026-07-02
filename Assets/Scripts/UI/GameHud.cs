@@ -26,6 +26,13 @@ public class GameHud : MonoBehaviour
 {
     private const int MaxPlayers = 4;
 
+    /// <summary>
+    /// Display-only kill switch. When true this legacy IMGUI HUD draws nothing — set by the
+    /// Canvas-based <see cref="SchoolOfTheDeadHud"/> once it is active so the two HUDs never
+    /// draw at once. Does not affect any gameplay logic or value tracking.
+    /// </summary>
+    public static bool SuppressDrawing;
+
     [Header("Player Point Sources (up to 4)")]
     [Tooltip("Optional explicit point sources per player slot (P1..P4). " +
              "Slot 0 falls back to PlayerPoints.Instance when left empty. " +
@@ -271,6 +278,11 @@ public class GameHud : MonoBehaviour
 
     private void OnGUI()
     {
+        if (SuppressDrawing)
+        {
+            return;
+        }
+
         EnsureStyles();
         ResolveReferences();
 

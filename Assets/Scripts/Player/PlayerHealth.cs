@@ -76,6 +76,13 @@ public class PlayerHealth : NetworkBehaviour
     /// <summary>Seconds remaining before bleed-out while downed (0 when not downed).</summary>
     public float BleedOutRemaining { get; private set; }
 
+    /// <summary>
+    /// Display-only kill switch for the legacy IMGUI health bar / DOWNED / DEAD box drawn in
+    /// <see cref="OnGUI"/>. Set by <see cref="SchoolOfTheDeadHud"/>, which renders those states
+    /// on the Canvas HUD instead. Health logic (damage, downed, revive) is unaffected.
+    /// </summary>
+    public static bool SuppressHud;
+
     // --- Networked authoritative state (server-write, everyone-read) ---
     private readonly NetworkVariable<int> networkHealth =
         new NetworkVariable<int>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
@@ -570,8 +577,9 @@ public class PlayerHealth : NetworkBehaviour
 
     private void OnGUI()
     {
-        // Only the local player draws their own health HUD.
-        if (!showHud || !IsLocalPlayer)
+        // Only the local player draws their own health HUD. Suppressed entirely when the
+        // Canvas HUD is active (it renders health + DOWNED/DEAD itself).
+        if (SuppressHud || !showHud || !IsLocalPlayer)
         {
             return;
         }

@@ -27,6 +27,14 @@ using UnityEngine.SceneManagement;
 public class PerkManager : MonoBehaviour
 {
     public static PerkManager Instance { get; private set; }
+
+    /// <summary>
+    /// Display-only kill switch for the bottom-center perk icon row drawn in <see cref="OnGUI"/>.
+    /// Set by <see cref="SchoolOfTheDeadHud"/> so the perk row is shown ONCE (by the Canvas HUD).
+    /// Perk ownership and effects are unaffected — this only hides the legacy IMGUI drawing.
+    /// </summary>
+    public static bool SuppressHud;
+
     private static readonly Dictionary<ulong, HashSet<PerkType>> serverPerksByClient = new Dictionary<ulong, HashSet<PerkType>>();
 
     public static IReadOnlyDictionary<ulong, HashSet<PerkType>> ServerPerks => serverPerksByClient;
@@ -401,7 +409,7 @@ public class PerkManager : MonoBehaviour
 
     private void OnGUI()
     {
-        if (ownedPerks.Count == 0)
+        if (SuppressHud || ownedPerks.Count == 0)
         {
             return;
         }
