@@ -43,14 +43,14 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     // --- Layout tuning (1920x1080 reference resolution; adjust these to taste) ------------
     private const float ScreenMargin = 24f;   // safe gap from the screen edges
     private const float PanelPad     = 24f;   // inner inset so text never touches panel edges
-    private static readonly Vector2 RoundPanelSize  = new Vector2(362f, 150f); // +~13% for breathing room
+    private static readonly Vector2 RoundPanelSize  = new Vector2(362f, 160f); // slightly taller so the lower row can rise without touching the number
     private static readonly Vector2 StatusPanelSize = new Vector2(552f, 216f); // +20% (bigger, more readable)
     private static readonly Vector2 AmmoPanelSize   = new Vector2(250f, 86f);  // unchanged
 
     // --- Round panel content regions (nudge to line up with the chalkboard art frame) -----
-    private const float RoundInsetX      = 36f; // horizontal inset from the chalkboard frame (in from edges)
+    private const float RoundInsetX      = 40f; // horizontal inset from the chalkboard frame (in from edges)
     private const float RoundTopInset    = 24f; // gap from the top frame to the upper row (pushes ROUND/number down)
-    private const float RoundBotInset    = 22f; // gap from the bottom frame to the lower row (pushes ZOMBIES LEFT/count up)
+    private const float RoundBotInset    = 30f; // gap from the bottom frame to the lower row (pushes ZOMBIES LEFT/count up)
     private const int   RoundCaptionFont = 22;  // "ROUND" / "ZOMBIES LEFT" caption size
     private const int   RoundNumberFont  = 50;  // big round number
     private const int   RoundZombiesFont = 34;  // zombie count
@@ -64,7 +64,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const int   StatusPointsFont  = 40;   // points value size (bigger = more readable)
     private const float StatusPointsW     = 300f; // points box width (measured leftward from the right edge)
     private const float StatusPointsH     = 54f;  // points box height
-    private const float StatusPointsTop   = 28f;  // gap from the panel top to the points box
+    private const float StatusPointsTop   = 36f;  // gap from the panel top to the points box (lowered to seat the value inside the box)
     private const int   StatusHealthFont  = 22;   // health-number size (small box)
     private const float StatusHealthRowY  = 52f;  // health row centre height above the panel bottom (raised to sit IN the slot)
     private const float StatusHealthBarH  = 18f;  // health bar/slot thickness (thinner to fit inside the slot)
