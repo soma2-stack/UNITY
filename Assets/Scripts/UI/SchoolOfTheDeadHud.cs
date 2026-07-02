@@ -63,6 +63,9 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private Image[] perkSquares;
     private TMP_Text[] perkLabels;
     private GameObject[] perkSlots;
+    // Optional perk-row background art; null when no perk_row.png was found (row stays
+    // transparent, as before). Only shown when at least one perk is owned.
+    private Image perkRowBackground;
 
     // Client-side zombie count throttle (mirrors GameHud's approach).
     private float nextZombieCountRefresh;
@@ -306,6 +309,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         }
 
         PerkManager pm = PerkManager.Instance;
+        int ownedCount = 0;
         for (int i = 0; i < PerkOrder.Length; i++)
         {
             PerkType perk = PerkOrder[i];
@@ -316,10 +320,18 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             }
             if (owned)
             {
+                ownedCount++;
                 // Placeholder square coloured per perk; swap for a PNG on perkSquares[i].sprite.
                 perkSquares[i].color = PerkManager.PerkColor(perk);
                 perkLabels[i].text = PerkManager.PerkAbbreviation(perk);
             }
+        }
+
+        // Show the perk-strip background art only when art exists AND at least one perk is
+        // owned, so an empty strip never shows a stray panel.
+        if (perkRowBackground != null && perkRowBackground.enabled != (ownedCount > 0))
+        {
+            perkRowBackground.enabled = ownedCount > 0;
         }
     }
 
@@ -382,6 +394,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         RectTransform panel = MakePanel("RoundPanel", root, DarkSlate,
             new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
             new Vector2(16f, -16f), new Vector2(230f, 92f));
+        ApplyPanelSprite(panel.GetComponent<Image>(), "round_panel");
 
         MakeLabel("RoundCaption", panel, "ROUND", MutedYellow, 20, TextAlignmentOptions.TopLeft,
             new Vector2(12f, -8f), new Vector2(120f, 24f), new Vector2(0f, 1f));
@@ -418,6 +431,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         RectTransform panel = MakePanel("StatusCard", root, DirtyBeige,
             new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f),
             new Vector2(16f, 16f), new Vector2(270f, 100f));
+        ApplyPanelSprite(panel.GetComponent<Image>(), "status_panel");
 
         // Little "ID" tab accent.
         RectTransform tab = MakeChildImage("IDTab", panel, RedAccent);
@@ -466,8 +480,20 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         row.pivot = new Vector2(0.5f, 0f);
         row.anchoredPosition = new Vector2(0f, 16f);
 
+        // Optional background art for the whole perk strip. Placed on the row object itself so
+        // it sits BEHIND the perk slots (the layout group arranges the slots, not this graphic)
+        // and auto-sizes to the row via the ContentSizeFitter + layout padding. If perk_row.png
+        // is missing it is disabled, leaving the row transparent exactly as before.
+        Image rowBg = rowGo.AddComponent<Image>();
+        rowBg.raycastTarget = false;
+        rowBg.enabled = false; // toggled on in RefreshPerks only when art loaded + perks owned
+        perkRowBackground = ApplyPanelSprite(rowBg, "perk_row") ? rowBg : null;
+
         HorizontalLayoutGroup layout = rowGo.AddComponent<HorizontalLayoutGroup>();
         layout.spacing = 8f;
+        // Padding gives the background art a small margin around the perk squares. It only adds
+        // (invisible) space when no art is present, so the compact layout is preserved.
+        layout.padding = new RectOffset(12, 12, 8, 8);
         layout.childAlignment = TextAnchor.LowerCenter;
         layout.childControlWidth = true;
         layout.childControlHeight = true;
@@ -517,6 +543,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         RectTransform panel = MakePanel("AmmoPanel", root, OffWhite,
             new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f),
             new Vector2(-16f, 16f), new Vector2(250f, 86f));
+        ApplyPanelSprite(panel.GetComponent<Image>(), "ammo_panel");
 
         // Red "margin line" accent like notebook paper.
         RectTransform margin = MakeChildImage("Margin", panel, RedAccent);
@@ -563,6 +590,32 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         rt.anchoredPosition = anchoredPos;
         go.GetComponent<Image>().color = color;
         return rt;
+    }
+
+    // Try to swap a panel's placeholder colour for an optional PNG in Resources/HUD. Returns
+    // true if the sprite was found and applied. On miss it logs ONE warning and leaves the
+    // existing placeholder colour untouched, so the HUD never breaks when art is absent.
+    private static bool ApplyPanelSprite(Image img, string spriteName)
+    {
+        if (img == null)
+        {
+            return false;
+        }
+
+        Sprite sprite = Resources.Load<Sprite>("HUD/" + spriteName);
+        if (sprite == null)
+        {
+            Debug.LogWarning("[SchoolOfTheDeadHud] Optional HUD art 'Resources/HUD/" + spriteName +
+                             "' not found (import the PNG as Sprite (2D and UI)); keeping placeholder panel.");
+            return false;
+        }
+
+        img.sprite = sprite;
+        img.color = Color.white;       // show the art's own colours + alpha (preserve transparency)
+        img.preserveAspect = false;    // panels fill their anchored rect
+        // Use 9-slice only when the sprite actually defines borders; otherwise stretch simply.
+        img.type = sprite.border.sqrMagnitude > 0f ? Image.Type.Sliced : Image.Type.Simple;
+        return true;
     }
 
     private static RectTransform MakeChildImage(string name, RectTransform parent, Color color)
