@@ -38,8 +38,14 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private static readonly Color DirtyBeige = new Color(0.78f, 0.72f, 0.58f, 0.92f);
     private static readonly Color MutedYellow= new Color(0.86f, 0.74f, 0.30f, 1f);
     private static readonly Color RedAccent  = new Color(0.72f, 0.20f, 0.18f, 1f);
-    private static readonly Color Teal       = new Color(0.30f, 0.62f, 0.55f, 1f);
     private static readonly Color InkDark    = new Color(0.11f, 0.12f, 0.13f, 1f);
+
+    // --- Layout tuning (1920x1080 reference resolution; adjust these to taste) ------------
+    private const float ScreenMargin = 24f;   // safe gap from the screen edges
+    private const float PanelPad     = 24f;   // inner inset so text never touches panel edges
+    private static readonly Vector2 RoundPanelSize  = new Vector2(320f, 130f); // ~1.4x old 230x92
+    private static readonly Vector2 StatusPanelSize = new Vector2(460f, 180f); // ~1.7x old 270x100
+    private static readonly Vector2 AmmoPanelSize   = new Vector2(250f, 86f);  // unchanged
 
     // --- Cached gameplay sources (READ ONLY; re-resolved each frame if missing) -----------
     private WeaponController weapon;
@@ -50,7 +56,6 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     // --- Bound UI elements ----------------------------------------------------------------
     private TMP_Text roundNumberText;
     private TMP_Text zombiesLeftText;
-    private TMP_Text compassText;
     private TMP_Text pointsText;
     private TMP_Text healthText;
     private RectTransform healthFill;
@@ -156,7 +161,6 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
 
         ResolveReferences();
         RefreshRoundAndZombies();
-        RefreshCompass();
         RefreshStatusCard();
         RefreshPerks();
         RefreshWeapon();
@@ -230,25 +234,6 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             cachedZombieCount = alive;
         }
         return cachedZombieCount;
-    }
-
-    private void RefreshCompass()
-    {
-        if (compassText == null)
-        {
-            return;
-        }
-        Transform t = LocalPlayer.Transform;
-        if (t == null)
-        {
-            compassText.text = "N";
-            return;
-        }
-        // 8-point heading from the player's yaw (display only).
-        float yaw = t.eulerAngles.y;
-        string[] dirs = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
-        int idx = Mathf.RoundToInt(yaw / 45f) & 7;
-        compassText.text = dirs[idx];
     }
 
     private void RefreshStatusCard()
@@ -381,7 +366,6 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         RectTransform root = canvas.GetComponent<RectTransform>();
 
         BuildRoundPanel(root);
-        BuildCompass(root);
         BuildStatusCard(root);
         BuildPerkRow(root);
         BuildAmmoPanel(root);
@@ -393,36 +377,20 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     {
         RectTransform panel = MakePanel("RoundPanel", root, DarkSlate,
             new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
-            new Vector2(16f, -16f), new Vector2(230f, 92f));
+            new Vector2(ScreenMargin, -ScreenMargin), RoundPanelSize);
         ApplyPanelSprite(panel.GetComponent<Image>(), "round", "round_panel");
 
-        MakeLabel("RoundCaption", panel, "ROUND", MutedYellow, 20, TextAlignmentOptions.TopLeft,
-            new Vector2(12f, -8f), new Vector2(120f, 24f), new Vector2(0f, 1f));
-        roundNumberText = MakeLabel("RoundValue", panel, "--", OffWhite, 34, TextAlignmentOptions.TopLeft,
-            new Vector2(12f, -28f), new Vector2(120f, 40f), new Vector2(0f, 1f));
+        // ROUND caption upper-left; large round number upper-right.
+        MakeLabel("RoundCaption", panel, "ROUND", MutedYellow, 24, TextAlignmentOptions.TopLeft,
+            new Vector2(PanelPad, -14f), new Vector2(160f, 28f), new Vector2(0f, 1f));
+        roundNumberText = MakeLabel("RoundValue", panel, "--", OffWhite, 54, TextAlignmentOptions.TopRight,
+            new Vector2(-PanelPad, -6f), new Vector2(130f, 66f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
 
-        MakeLabel("ZombiesCaption", panel, "ZOMBIES LEFT", OffWhite, 13, TextAlignmentOptions.BottomRight,
-            new Vector2(-10f, 8f), new Vector2(150f, 18f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
-        zombiesLeftText = MakeLabel("ZombiesValue", panel, "--", RedAccent, 26, TextAlignmentOptions.TopRight,
-            new Vector2(-10f, 30f), new Vector2(80f, 30f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
-    }
-
-    // Top-center compass strip (simple heading letter).
-    private void BuildCompass(RectTransform root)
-    {
-        RectTransform panel = MakePanel("CompassPanel", root, DarkSlate,
-            new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-            new Vector2(0f, -16f), new Vector2(160f, 34f));
-        // Center tick (teal highlight).
-        RectTransform tick = MakeChildImage("Tick", panel, Teal);
-        tick.anchorMin = new Vector2(0.5f, 0f);
-        tick.anchorMax = new Vector2(0.5f, 1f);
-        tick.pivot = new Vector2(0.5f, 0.5f);
-        tick.sizeDelta = new Vector2(2f, 0f);
-        tick.anchoredPosition = Vector2.zero;
-
-        compassText = MakeLabel("CompassHeading", panel, "N", OffWhite, 18, TextAlignmentOptions.Center,
-            Vector2.zero, new Vector2(60f, 26f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+        // ZOMBIES LEFT lower-left; count lower-right in red.
+        MakeLabel("ZombiesCaption", panel, "ZOMBIES LEFT", OffWhite, 16, TextAlignmentOptions.BottomLeft,
+            new Vector2(PanelPad, 16f), new Vector2(190f, 22f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f));
+        zombiesLeftText = MakeLabel("ZombiesValue", panel, "--", RedAccent, 36, TextAlignmentOptions.BottomRight,
+            new Vector2(-PanelPad, 12f), new Vector2(120f, 46f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
     }
 
     // Bottom-left student-ID status card: points, health text, one health bar.
@@ -430,42 +398,37 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     {
         RectTransform panel = MakePanel("StatusCard", root, DirtyBeige,
             new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f),
-            new Vector2(16f, 16f), new Vector2(270f, 100f));
+            new Vector2(ScreenMargin, ScreenMargin), StatusPanelSize);
         ApplyPanelSprite(panel.GetComponent<Image>(), "status", "status_panel");
 
-        // Little "ID" tab accent.
-        RectTransform tab = MakeChildImage("IDTab", panel, RedAccent);
-        tab.anchorMin = new Vector2(0f, 1f);
-        tab.anchorMax = new Vector2(0f, 1f);
-        tab.pivot = new Vector2(0f, 1f);
-        tab.sizeDelta = new Vector2(70f, 20f);
-        tab.anchoredPosition = new Vector2(10f, -6f);
-        MakeLabel("IDLabel", tab.GetComponent<RectTransform>(), "STUDENT", OffWhite, 11, TextAlignmentOptions.Center,
-            Vector2.zero, new Vector2(70f, 20f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+        float innerW = StatusPanelSize.x - PanelPad * 2f;
 
-        pointsText = MakeLabel("Points", panel, "$ 0", InkDark, 24, TextAlignmentOptions.TopLeft,
-            new Vector2(12f, -30f), new Vector2(180f, 30f), new Vector2(0f, 1f));
+        // Points near the top of the card.
+        pointsText = MakeLabel("Points", panel, "$ 0", InkDark, 38, TextAlignmentOptions.TopLeft,
+            new Vector2(PanelPad, -20f), new Vector2(innerW, 50f), new Vector2(0f, 1f));
 
-        healthText = MakeLabel("HealthText", panel, "-- / --", InkDark, 16, TextAlignmentOptions.BottomLeft,
-            new Vector2(12f, 30f), new Vector2(160f, 20f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f));
+        // Health text sits just above the bar.
+        healthText = MakeLabel("HealthText", panel, "-- / --", InkDark, 26, TextAlignmentOptions.BottomLeft,
+            new Vector2(PanelPad, 70f), new Vector2(innerW, 32f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f));
 
-        // Health bar: dark track + red fill whose right anchor is driven by health fraction.
+        // Health bar near the bottom: dark track + red fill driven by the health fraction.
         RectTransform track = MakeChildImage("HealthTrack", panel, InkDark);
         track.anchorMin = new Vector2(0f, 0f);
         track.anchorMax = new Vector2(0f, 0f);
         track.pivot = new Vector2(0f, 0f);
-        track.sizeDelta = new Vector2(246f, 16f);
-        track.anchoredPosition = new Vector2(12f, 10f);
+        track.sizeDelta = new Vector2(innerW, 26f);
+        track.anchoredPosition = new Vector2(PanelPad, 30f);
 
         healthFill = MakeChildImage("HealthFill", track, RedAccent);
         healthFill.anchorMin = new Vector2(0f, 0f);
         healthFill.anchorMax = new Vector2(1f, 1f);
         healthFill.pivot = new Vector2(0f, 0f);
-        healthFill.offsetMin = new Vector2(2f, 2f);
-        healthFill.offsetMax = new Vector2(-2f, -2f);
+        healthFill.offsetMin = new Vector2(3f, 3f);
+        healthFill.offsetMax = new Vector2(-3f, -3f);
 
-        statusStateText = MakeLabel("StatusState", panel, "", RedAccent, 18, TextAlignmentOptions.Center,
-            new Vector2(0f, 6f), new Vector2(200f, 24f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
+        // DOWNED / DEAD banner ABOVE the card so it never covers the status art.
+        statusStateText = MakeLabel("StatusState", panel, "", RedAccent, 26, TextAlignmentOptions.Left,
+            new Vector2(PanelPad, 8f), new Vector2(StatusPanelSize.x, 32f), new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 1f));
         statusStateText.gameObject.SetActive(false);
     }
 
@@ -542,21 +505,16 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     {
         RectTransform panel = MakePanel("AmmoPanel", root, OffWhite,
             new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f),
-            new Vector2(-16f, 16f), new Vector2(250f, 86f));
+            new Vector2(-ScreenMargin, ScreenMargin), AmmoPanelSize);
         ApplyPanelSprite(panel.GetComponent<Image>(), "ammo", "ammo_panel");
 
-        // Red "margin line" accent like notebook paper.
-        RectTransform margin = MakeChildImage("Margin", panel, RedAccent);
-        margin.anchorMin = new Vector2(0f, 0f);
-        margin.anchorMax = new Vector2(0f, 1f);
-        margin.pivot = new Vector2(0f, 0.5f);
-        margin.sizeDelta = new Vector2(3f, -12f);
-        margin.anchoredPosition = new Vector2(14f, 0f);
+        float innerW = AmmoPanelSize.x - 24f;
 
-        weaponNameText = MakeLabel("WeaponName", panel, "—", InkDark, 20, TextAlignmentOptions.TopLeft,
-            new Vector2(24f, -10f), new Vector2(214f, 28f), new Vector2(0f, 1f));
-        ammoText = MakeLabel("Ammo", panel, "-- / --", RedAccent, 30, TextAlignmentOptions.BottomRight,
-            new Vector2(-12f, 10f), new Vector2(214f, 38f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        // Weapon name across the top, ammo centered below — both centered inside the art.
+        weaponNameText = MakeLabel("WeaponName", panel, "—", InkDark, 20, TextAlignmentOptions.Top,
+            new Vector2(0f, -8f), new Vector2(innerW, 26f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+        ammoText = MakeLabel("Ammo", panel, "-- / --", RedAccent, 34, TextAlignmentOptions.Center,
+            new Vector2(0f, 12f), new Vector2(innerW, 44f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
     }
 
     private void BuildCrosshair(RectTransform root)
