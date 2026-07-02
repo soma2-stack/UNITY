@@ -48,12 +48,14 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private static readonly Vector2 AmmoPanelSize   = new Vector2(250f, 86f);  // unchanged
 
     // --- Round panel content regions (nudge to line up with the chalkboard art frame) -----
-    private const float RoundInsetX      = 52f; // horizontal inset from the chalkboard frame (in from edges)
-    private const float RoundTopInset    = 32f; // gap from the top frame to the upper row (pushes ROUND/number down)
-    private const float RoundBotInset    = 30f; // gap from the bottom frame to the lower row (pushes ZOMBIES LEFT/count up)
-    private const int   RoundCaptionFont = 22;  // "ROUND" / "ZOMBIES LEFT" caption size
-    private const int   RoundNumberFont  = 50;  // big round number
-    private const int   RoundZombiesFont = 34;  // zombie count
+    private const float RoundInsetX        = 58f; // horizontal inset from the chalkboard frame (in from edges)
+    private const float RoundTopInset      = 32f; // gap from the top frame to the round NUMBER's row (unchanged; number stays put)
+    private const float RoundCaptionTopInset = 56f; // gap from the top frame to the ROUND label (decoupled from the number so the
+                                                      // label can sit lower/more-centred in the upper area without moving the number)
+    private const float RoundBotInset      = 30f; // gap from the bottom frame to the lower row (pushes ZOMBIES LEFT/count up)
+    private const int   RoundCaptionFont   = 28;  // "ROUND" label size (bigger); ZOMBIES LEFT uses RoundCaptionFont-6
+    private const int   RoundNumberFont    = 50;  // big round number
+    private const int   RoundZombiesFont   = 34;  // zombie count
 
     // --- Status card content regions (nudge to line up with the student-ID art) -----------
     // The left portion of the art is the portrait + STUDENT tab, so all live content sits in
@@ -62,13 +64,13 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const float StatusContentLeft = 204f; // health bar start X (independent of points; portrait sits left of it)
     private const float StatusRightPad    = 24f;  // gap from the panel's right edge
     private const int   StatusPointsFont  = 40;   // points value size (bigger = more readable)
-    private const float StatusPointsW     = 200f; // points box width (centre-aligned value sits in the middle of this box)
+    private const float StatusPointsW     = 210f; // points box width (centre-aligned value sits in the middle of this box)
     private const float StatusPointsH     = 54f;  // points box height
-    private const float StatusPointsTop   = 48f;  // gap from the panel top to the points box (lowered so the centred value sits in the black box)
+    private const float StatusPointsTop   = 52f;  // gap from the panel top to the points box (small nudge to seat the value in the black box)
     private const int   StatusHealthFont  = 22;   // health-number size (small box)
     private const float StatusHealthRowY  = 52f;  // health row centre height above the panel bottom (raised to sit IN the slot)
     private const float StatusHealthBarH  = 18f;  // health bar/slot thickness (thinner to fit inside the slot)
-    private const float StatusHealthBarW  = 188f; // health bar width (fills the slot, clamped to leave room for the number box)
+    private const float StatusHealthBarW  = 204f; // health bar width (fills the slot, clamped to leave room for the number box)
     private const float StatusHealthNumW  = 110f; // small health-number box width at the right end
 
     // --- Cached gameplay sources (READ ONLY; re-resolved each frame if missing) -----------
@@ -404,11 +406,11 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             new Vector2(ScreenMargin, -ScreenMargin), RoundPanelSize);
         ApplyPanelSprite(panel.GetComponent<Image>(), "round", "round_panel");
 
-        // ROUND caption upper-left; large round number upper-right. Insets keep the text off
-        // the chalkboard frame; the number is right-aligned in its own box so it never collides
-        // with the caption.
+        // ROUND caption sits lower/more-centred in the upper area (its own RoundCaptionTopInset,
+        // decoupled from the round number's row) so it doesn't hug the top-left corner; the
+        // round number stays on the right, unmoved, at RoundTopInset.
         MakeLabel("RoundCaption", panel, "ROUND", MutedYellow, RoundCaptionFont, TextAlignmentOptions.TopLeft,
-            new Vector2(RoundInsetX, -RoundTopInset), new Vector2(150f, 26f), new Vector2(0f, 1f));
+            new Vector2(RoundInsetX, -RoundCaptionTopInset), new Vector2(140f, 34f), new Vector2(0f, 1f));
         roundNumberText = MakeLabel("RoundValue", panel, "--", OffWhite, RoundNumberFont, TextAlignmentOptions.Right,
             new Vector2(-RoundInsetX, -RoundTopInset), new Vector2(120f, 58f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
 
