@@ -47,6 +47,30 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private static readonly Vector2 StatusPanelSize = new Vector2(460f, 180f); // ~1.7x old 270x100
     private static readonly Vector2 AmmoPanelSize   = new Vector2(250f, 86f);  // unchanged
 
+    // --- Round panel content regions (nudge to line up with the chalkboard art frame) -----
+    private const float RoundInsetX      = 30f; // horizontal inset from the chalkboard frame
+    private const float RoundTopInset    = 18f; // gap from the top frame to the upper row
+    private const float RoundBotInset    = 18f; // gap from the bottom frame to the lower row
+    private const int   RoundCaptionFont = 22;  // "ROUND" / "ZOMBIES LEFT" caption size
+    private const int   RoundNumberFont  = 50;  // big round number
+    private const int   RoundZombiesFont = 34;  // zombie count
+
+    // --- Status card content regions (nudge to line up with the student-ID art) -----------
+    // The left portion of the art is the portrait + STUDENT tab, so all live content sits in
+    // the RIGHT region (x >= StatusContentLeft). Points go in the upper-right box; the health
+    // bar + a small health-number box share the lower-right row.
+    private const float StatusContentLeft = 150f; // right-side content starts here (portrait is left of it)
+    private const float StatusRightPad    = 20f;  // gap from the panel's right edge
+    private const int   StatusPointsFont  = 34;   // points value size
+    private const float StatusPointsW     = 250f; // points box width (measured leftward from the right edge)
+    private const float StatusPointsH     = 46f;  // points box height
+    private const float StatusPointsTop   = 24f;  // gap from the panel top to the points box
+    private const int   StatusHealthFont  = 19;   // health-number size (small box)
+    private const float StatusHealthRowY  = 32f;  // health row centre height above the panel bottom
+    private const float StatusHealthBarH  = 20f;  // health bar/slot thickness
+    private const float StatusHealthBarW  = 190f; // health bar width (kept narrow to sit inside the art slot)
+    private const float StatusHealthNumW  = 96f;  // small health-number box width at the right end
+
     // --- Cached gameplay sources (READ ONLY; re-resolved each frame if missing) -----------
     private WeaponController weapon;
     private PlayerHealth health;
@@ -380,17 +404,19 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             new Vector2(ScreenMargin, -ScreenMargin), RoundPanelSize);
         ApplyPanelSprite(panel.GetComponent<Image>(), "round", "round_panel");
 
-        // ROUND caption upper-left; large round number upper-right.
-        MakeLabel("RoundCaption", panel, "ROUND", MutedYellow, 24, TextAlignmentOptions.TopLeft,
-            new Vector2(PanelPad, -14f), new Vector2(160f, 28f), new Vector2(0f, 1f));
-        roundNumberText = MakeLabel("RoundValue", panel, "--", OffWhite, 54, TextAlignmentOptions.TopRight,
-            new Vector2(-PanelPad, -6f), new Vector2(130f, 66f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
+        // ROUND caption upper-left; large round number upper-right. Insets keep the text off
+        // the chalkboard frame; the number is right-aligned in its own box so it never collides
+        // with the caption.
+        MakeLabel("RoundCaption", panel, "ROUND", MutedYellow, RoundCaptionFont, TextAlignmentOptions.TopLeft,
+            new Vector2(RoundInsetX, -RoundTopInset), new Vector2(150f, 26f), new Vector2(0f, 1f));
+        roundNumberText = MakeLabel("RoundValue", panel, "--", OffWhite, RoundNumberFont, TextAlignmentOptions.Right,
+            new Vector2(-RoundInsetX, -RoundTopInset), new Vector2(120f, 58f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
 
         // ZOMBIES LEFT lower-left; count lower-right in red.
-        MakeLabel("ZombiesCaption", panel, "ZOMBIES LEFT", OffWhite, 16, TextAlignmentOptions.BottomLeft,
-            new Vector2(PanelPad, 16f), new Vector2(190f, 22f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f));
-        zombiesLeftText = MakeLabel("ZombiesValue", panel, "--", RedAccent, 36, TextAlignmentOptions.BottomRight,
-            new Vector2(-PanelPad, 12f), new Vector2(120f, 46f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        MakeLabel("ZombiesCaption", panel, "ZOMBIES LEFT", OffWhite, RoundCaptionFont - 6, TextAlignmentOptions.BottomLeft,
+            new Vector2(RoundInsetX, RoundBotInset), new Vector2(180f, 22f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f));
+        zombiesLeftText = MakeLabel("ZombiesValue", panel, "--", RedAccent, RoundZombiesFont, TextAlignmentOptions.BottomRight,
+            new Vector2(-RoundInsetX, RoundBotInset - 4f), new Vector2(110f, 44f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
     }
 
     // Bottom-left student-ID status card: points, health text, one health bar.
@@ -401,34 +427,43 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             new Vector2(ScreenMargin, ScreenMargin), StatusPanelSize);
         ApplyPanelSprite(panel.GetComponent<Image>(), "status", "status_panel");
 
-        float innerW = StatusPanelSize.x - PanelPad * 2f;
+        // Health-bar width, clamped so it always leaves room for the number box on the right
+        // and never runs into the portrait region on the left.
+        float healthBarRight = StatusContentLeft + StatusHealthBarW;                 // bar's right edge (from left)
+        float numberBoxLeft  = StatusPanelSize.x - StatusRightPad - StatusHealthNumW; // number box's left edge
+        float healthBarW = Mathf.Min(StatusHealthBarW, numberBoxLeft - 8f - StatusContentLeft);
 
-        // Points near the top of the card.
-        pointsText = MakeLabel("Points", panel, "$ 0", InkDark, 38, TextAlignmentOptions.TopLeft,
-            new Vector2(PanelPad, -20f), new Vector2(innerW, 50f), new Vector2(0f, 1f));
+        // POINTS — upper-right box, vertically centred, right-aligned so long values grow
+        // leftward and stay inside the box.
+        pointsText = MakeLabel("Points", panel, "$ 0", InkDark, StatusPointsFont, TextAlignmentOptions.Right,
+            new Vector2(-StatusRightPad, -StatusPointsTop), new Vector2(StatusPointsW, StatusPointsH),
+            new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
 
-        // Health text sits just above the bar.
-        healthText = MakeLabel("HealthText", panel, "-- / --", InkDark, 26, TextAlignmentOptions.BottomLeft,
-            new Vector2(PanelPad, 70f), new Vector2(innerW, 32f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f));
-
-        // Health bar near the bottom: dark track + red fill driven by the health fraction.
+        // HEALTH BAR — narrow track in the lower-right row (left of the number box), fill inset
+        // so it never spills outside the frame.
         RectTransform track = MakeChildImage("HealthTrack", panel, InkDark);
         track.anchorMin = new Vector2(0f, 0f);
         track.anchorMax = new Vector2(0f, 0f);
         track.pivot = new Vector2(0f, 0f);
-        track.sizeDelta = new Vector2(innerW, 26f);
-        track.anchoredPosition = new Vector2(PanelPad, 30f);
+        track.sizeDelta = new Vector2(Mathf.Max(60f, healthBarW), StatusHealthBarH);
+        track.anchoredPosition = new Vector2(StatusContentLeft, StatusHealthRowY);
 
         healthFill = MakeChildImage("HealthFill", track, RedAccent);
         healthFill.anchorMin = new Vector2(0f, 0f);
         healthFill.anchorMax = new Vector2(1f, 1f);
         healthFill.pivot = new Vector2(0f, 0f);
-        healthFill.offsetMin = new Vector2(3f, 3f);
-        healthFill.offsetMax = new Vector2(-3f, -3f);
+        healthFill.offsetMin = new Vector2(2f, 2f);
+        healthFill.offsetMax = new Vector2(-2f, -2f);
+
+        // HEALTH NUMBER — small box at the right end of the health row, vertically centred on
+        // the bar (bottom -6, height +12 puts its centre on the bar's centre).
+        healthText = MakeLabel("HealthText", panel, "-- / --", InkDark, StatusHealthFont, TextAlignmentOptions.Center,
+            new Vector2(-StatusRightPad, StatusHealthRowY - 6f), new Vector2(StatusHealthNumW, StatusHealthBarH + 12f),
+            new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
 
         // DOWNED / DEAD banner ABOVE the card so it never covers the status art.
         statusStateText = MakeLabel("StatusState", panel, "", RedAccent, 26, TextAlignmentOptions.Left,
-            new Vector2(PanelPad, 8f), new Vector2(StatusPanelSize.x, 32f), new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 1f));
+            new Vector2(0f, 8f), new Vector2(StatusPanelSize.x, 32f), new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 1f));
         statusStateText.gameObject.SetActive(false);
     }
 
