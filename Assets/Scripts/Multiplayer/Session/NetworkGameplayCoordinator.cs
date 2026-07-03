@@ -26,6 +26,8 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     private const string RestartRequestMessage = "SOTD_RESTART_REQUEST";
     private const string BookCollectRequestMessage = "SOTD_BOOK_REQUEST";
     private const string BookCollectedMessage = "SOTD_BOOK_COLLECTED";
+    private const string FireAlarmRequestMessage = "SOTD_FIREALARM_REQUEST";
+    private const string FireAlarmActivatedMessage = "SOTD_FIREALARM_ACTIVATED";
 
     private enum PurchaseKind : byte
     {
@@ -45,6 +47,12 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     // Dedups collections team-wide so each book counts exactly once. Only meaningful on the
     // server; cleared on each gameplay scene load so a restarted match starts fresh.
     private readonly HashSet<string> collectedBookKeys = new HashSet<string>();
+
+    // Server-authoritative set of activated fire alarm keys ("False Alarm / Fire Drill" easter
+    // egg). Dedups activations team-wide so each alarm counts exactly once; the reward is granted
+    // once when the set reaches FireAlarmEasterEgg.TotalAlarms. Cleared on each gameplay scene load.
+    private readonly HashSet<string> activatedFireAlarmKeys = new HashSet<string>();
+    private bool fireAlarmRewarded;
 
     private static bool NetworkActive =>
         NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
@@ -113,6 +121,11 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         if (scene.name == "SchoolOfTheDead")
         {
             collectedBookKeys.Clear();
+
+            // Fresh match: forget which fire alarms were pulled and re-arm the reward so a
+            // restarted run's Fire Drill egg starts from 0/5 again.
+            activatedFireAlarmKeys.Clear();
+            fireAlarmRewarded = false;
         }
     }
 
@@ -146,6 +159,8 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.RegisterNamedMessageHandler(RestartRequestMessage, ReceiveRestartRequest);
         messaging.RegisterNamedMessageHandler(BookCollectRequestMessage, ReceiveBookCollectRequest);
         messaging.RegisterNamedMessageHandler(BookCollectedMessage, ReceiveBookCollected);
+        messaging.RegisterNamedMessageHandler(FireAlarmRequestMessage, ReceiveFireAlarmRequest);
+        messaging.RegisterNamedMessageHandler(FireAlarmActivatedMessage, ReceiveFireAlarmActivated);
         registered = true;
         registeredManager = NetworkManager.Singleton;
     }
@@ -176,6 +191,8 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.UnregisterNamedMessageHandler(RestartRequestMessage);
         messaging.UnregisterNamedMessageHandler(BookCollectRequestMessage);
         messaging.UnregisterNamedMessageHandler(BookCollectedMessage);
+        messaging.UnregisterNamedMessageHandler(FireAlarmRequestMessage);
+        messaging.UnregisterNamedMessageHandler(FireAlarmActivatedMessage);
         registered = false;
         registeredManager = null;
     }
@@ -888,6 +905,15 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
             WriteString(writer, bookKey);
             SendToClient(BookCollectedMessage, clientId, writer);
         }
+
+        // Fire alarms already pulled by the team: mark them activated on the joiner so its alarms
+        // match the shared Fire Drill progress (the reward itself was already granted server-side).
+        foreach (string alarmKey in instance.activatedFireAlarmKeys)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+            WriteString(writer, alarmKey);
+            SendToClient(FireAlarmActivatedMessage, clientId, writer);
+        }
     }
 
     // --- Secret book pickup (team-wide easter egg progress) --------------
@@ -960,6 +986,90 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         {
             book.ApplyCollected();
         }
+    }
+
+    // --- Fire alarm activation ("False Alarm / Fire Drill" team-wide egg) -
+
+    /// <summary>
+    /// Activate a fire alarm. TEAM-WIDE and server-authoritative: the server counts each alarm
+    /// key exactly once, tells every peer to mark that alarm activated, and — when all alarms are
+    /// pulled — awards <see cref="FireAlarmEasterEgg.RewardPoints"/> to every player exactly once.
+    /// Solo (not networked) applies the activation directly.
+    /// </summary>
+    public static void RequestFireAlarmActivate(FireAlarmInteractable alarm)
+    {
+        if (alarm == null)
+        {
+            return;
+        }
+
+        Ensure();
+        if (!NetworkActive)
+        {
+            instance.ServerTryActivateFireAlarm(alarm.AlarmKey);
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            instance.ServerTryActivateFireAlarm(alarm.AlarmKey);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, alarm.AlarmKey);
+        SendToServer(FireAlarmRequestMessage, writer);
+    }
+
+    private void ReceiveFireAlarmRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+        ServerTryActivateFireAlarm(ReadString(reader));
+    }
+
+    private void ServerTryActivateFireAlarm(string key)
+    {
+        // First activation of this alarm for the whole team wins; later ones are ignored.
+        if (string.IsNullOrEmpty(key) || !activatedFireAlarmKeys.Add(key))
+        {
+            return;
+        }
+
+        // Mark it on the host directly, then tell the remote clients (SendToAll does not loop back
+        // to the server, mirroring the book / door collection paths). Skips the send in solo.
+        ApplyFireAlarmActivated(key);
+        if (NetworkActive)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+            WriteString(writer, key);
+            SendToAll(FireAlarmActivatedMessage, writer);
+        }
+
+        int count = activatedFireAlarmKeys.Count;
+        FireAlarmEasterEgg.LogProgress(count);
+
+        if (count >= FireAlarmEasterEgg.TotalAlarms && !fireAlarmRewarded)
+        {
+            fireAlarmRewarded = true;
+            FireAlarmEasterEgg.AwardCompletion();
+        }
+    }
+
+    private void ReceiveFireAlarmActivated(ulong senderId, FastBufferReader reader)
+    {
+        ApplyFireAlarmActivated(ReadString(reader));
+    }
+
+    private static void ApplyFireAlarmActivated(string key)
+    {
+        if (FireAlarmInteractable.TryFind(key, out FireAlarmInteractable alarm))
+        {
+            alarm.ApplyActivated();
+        }
+        FireAlarmEasterEgg.LogAlarmActivated();
     }
 
     // --- Match restart (from the game-over screen) -----------------------
