@@ -44,8 +44,8 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const float ScreenMargin = 24f;   // safe gap from the screen edges
     private const float PanelPad     = 24f;   // inner inset so text never touches panel edges
     private static readonly Vector2 RoundPanelSize  = new Vector2(362f, 160f); // slightly taller so the lower row can rise without touching the number
-    private static readonly Vector2 StatusPanelSize = new Vector2(620f, 244f); // +~13% (bigger again, still bottom-left/compact)
-    private static readonly Vector2 AmmoPanelSize   = new Vector2(250f, 86f);  // unchanged
+    private static readonly Vector2 StatusPanelSize = new Vector2(576f, 226f); // ~7% smaller than before (was too big)
+    private static readonly Vector2 AmmoPanelSize   = new Vector2(280f, 96f);  // +12% (was too small/cramped)
 
     // --- Round panel content regions (nudge to line up with the chalkboard art frame) -----
     private const float RoundInsetX        = 58f; // horizontal inset from the chalkboard frame (in from edges)
@@ -61,17 +61,17 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     // The left portion of the art is the portrait + STUDENT tab, so all live content sits in
     // the RIGHT region (x >= StatusContentLeft). Points go in the upper-right box; the health
     // bar + a small health-number box share the lower-right row.
-    private const float StatusContentLeft = 230f; // health bar start X (independent of points; portrait sits left of it) - scaled with the bigger card
-    private const float StatusRightPad    = 26f;  // gap from the panel's right edge
+    private const float StatusContentLeft = 214f; // health bar start X (independent of points; portrait sits left of it) - scaled with the smaller card
+    private const float StatusRightPad    = 24f;  // gap from the panel's right edge
     private const int   StatusPointsFont  = 40;   // points value size (bigger = more readable)
-    private const float StatusPointsW     = 256f; // points box width (centre-aligned value sits in the middle of this box) - wider so the centre moves LEFT, off the right edge
-    private const float StatusPointsH     = 60f;  // points box height
-    private const float StatusPointsTop   = 70f;  // gap from the panel top to the points box - pushed DOWN into the black points rectangle
-    private const int   StatusHealthFont  = 24;   // health-number size (small box) - scaled up with the bigger card
-    private const float StatusHealthRowY  = 60f;  // health row centre height above the panel bottom (scaled up with the bigger card)
-    private const float StatusHealthBarH  = 22f;  // health bar/slot thickness - slightly taller
-    private const float StatusHealthBarW  = 230f; // health bar width - wider, fills more of the slot (still clamped to leave room for the number box)
-    private const float StatusHealthNumW  = 122f; // small health-number box width at the right end - scaled up with the bigger card
+    private const float StatusPointsW     = 252f; // points box width (centre-aligned value sits in the middle of this box) - a touch wider so the centre sits slightly further LEFT in the black rectangle
+    private const float StatusPointsH     = 56f;  // points box height
+    private const float StatusPointsTop   = 65f;  // gap from the panel top to the points box (seats the value in the black points rectangle)
+    private const int   StatusHealthFont  = 24;   // health-number size (small box)
+    private const float StatusHealthRowY  = 56f;  // health row centre height above the panel bottom - scaled with the smaller card
+    private const float StatusHealthBarH  = 20f;  // health bar/slot thickness
+    private const float StatusHealthBarW  = 216f; // health bar width - extended to fill the slot better (still clamped to leave an 8px gap before the number box)
+    private const float StatusHealthNumW  = 114f; // small health-number box width at the right end - scaled with the smaller card
 
     // --- Cached gameplay sources (READ ONLY; re-resolved each frame if missing) -----------
     private WeaponController weapon;
@@ -268,7 +268,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         if (pointsText != null)
         {
             int pts = PlayerPoints.Instance != null ? PlayerPoints.Instance.Points : 0;
-            pointsText.text = "$ " + pts.ToString("N0");
+            pointsText.text = pts.ToString("N0"); // no "$" - the art already has a points icon/label
         }
 
         if (health == null)
@@ -436,7 +436,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         float healthBarW = Mathf.Min(StatusHealthBarW, numberBoxLeft - 8f - StatusContentLeft);
 
         // POINTS — centred (both axes) inside the upper-right points box.
-        pointsText = MakeLabel("Points", panel, "$ 0", InkDark, StatusPointsFont, TextAlignmentOptions.Center,
+        pointsText = MakeLabel("Points", panel, "0", InkDark, StatusPointsFont, TextAlignmentOptions.Center,
             new Vector2(-StatusRightPad, -StatusPointsTop), new Vector2(StatusPointsW, StatusPointsH),
             new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
 
