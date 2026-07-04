@@ -509,6 +509,7 @@ public class PauseMenuController : MonoBehaviour
         _dim.SetActive(false);
 
         BuildPausePanel(root);
+        _pausePanel.SetActive(false); // hidden until the player presses Escape (was left visible at load)
         BuildHostPausedBanner(root);
     }
 

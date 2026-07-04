@@ -94,8 +94,16 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private TMP_Text roundNumberText;
     private TMP_Text zombiesLeftText;
     private TMP_Text pointsText;
-    private TMP_Text healthText;
+    private TMP_Text healthText; // numeric readout removed from the card; kept null (bar only)
     private RectTransform healthFill;
+
+    // Health bar visual smoothing: the displayed fill eases toward the real value so damage/heal
+    // drains the bar gradually instead of snapping. Purely cosmetic — the authoritative health is
+    // never changed. HealthDrainSpeed is in bar-fraction per second (unscaled).
+    private const float HealthDrainSpeed = 1.2f;
+    private float displayedHealth01 = 1f;
+    private float targetHealth01 = 1f;
+    private bool healthInitialized;
     private TMP_Text statusStateText; // DOWNED / DEAD banner on the status card
     private TMP_Text weaponNameText;
     private TMP_Text ammoText;
@@ -301,14 +309,19 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
 
         int cur = Mathf.Max(0, health.CurrentHealth);
         int max = Mathf.Max(1, health.maxHealth);
-        if (healthText != null)
-        {
-            healthText.text = cur + " / " + max;
-        }
+        // Health bar only (numeric readout removed). Ease the displayed fill toward the real value
+        // so it drains smoothly. Unscaled time so it still animates while paused. First valid read
+        // snaps so the bar doesn't drain from full at spawn.
         if (healthFill != null)
         {
-            float frac = Mathf.Clamp01((float)cur / max);
-            healthFill.anchorMax = new Vector2(frac, 1f);
+            targetHealth01 = Mathf.Clamp01((float)cur / max);
+            if (!healthInitialized)
+            {
+                displayedHealth01 = targetHealth01;
+                healthInitialized = true;
+            }
+            displayedHealth01 = Mathf.MoveTowards(displayedHealth01, targetHealth01, HealthDrainSpeed * Time.unscaledDeltaTime);
+            healthFill.anchorMax = new Vector2(displayedHealth01, 1f);
         }
 
         // DOWNED / DEAD banner (replaces PlayerHealth's IMGUI status box, which is suppressed).
@@ -538,11 +551,9 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         portraitImage.raycastTarget = false;
         portraitImage.enabled = false; // shown by RefreshPortrait when a real portrait loads
 
-        // Health-bar width, clamped so it always leaves room for the number box on the right
-        // and never runs into the portrait region on the left.
-        float healthBarRight = StatusContentLeft + StatusHealthBarW;                 // bar's right edge (from left)
-        float numberBoxLeft  = StatusPanelSize.x - StatusRightPad - StatusHealthNumW; // number box's left edge
-        float healthBarW = Mathf.Min(StatusHealthBarW, numberBoxLeft - 8f - StatusContentLeft);
+        // Health-bar width. The numeric readout was removed, so the bar now fills the row from the
+        // content-left edge to the panel's right padding (still clear of the portrait on the left).
+        float healthBarW = (StatusPanelSize.x - StatusRightPad) - StatusContentLeft;
 
         // POINTS — centred (both axes) inside the upper-right points box.
         pointsText = MakeLabel("Points", panel, "0", InkDark, StatusPointsFont, TextAlignmentOptions.Center,
@@ -565,11 +576,8 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         healthFill.offsetMin = new Vector2(2f, 2f);
         healthFill.offsetMax = new Vector2(-2f, -2f);
 
-        // HEALTH NUMBER — small box at the right end of the health row, vertically centred on
-        // the bar (bottom -6, height +12 puts its centre on the bar's centre).
-        healthText = MakeLabel("HealthText", panel, "-- / --", InkDark, StatusHealthFont, TextAlignmentOptions.Center,
-            new Vector2(-StatusRightPad, StatusHealthRowY - 6f), new Vector2(StatusHealthNumW, StatusHealthBarH + 12f),
-            new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        // HEALTH NUMBER removed — the status card now shows only the health bar/line (healthText
+        // stays null; RefreshStatusCard guards on it).
 
         // DOWNED / DEAD banner ABOVE the card so it never covers the status art.
         statusStateText = MakeLabel("StatusState", panel, "", RedAccent, 26, TextAlignmentOptions.Left,
@@ -658,6 +666,12 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         // Weapon name across the top, ammo centered below — both centered inside the art.
         weaponNameText = MakeLabel("WeaponName", panel, "—", InkDark, 20, TextAlignmentOptions.Top,
             new Vector2(0f, -8f), new Vector2(innerW, 26f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+        // Long gun names: shrink-to-fit on one line, then ellipsis as a last resort (MakeLabel
+        // already disabled word wrap). Keeps names inside the ammo panel without touching weapon data.
+        weaponNameText.enableAutoSizing = true;
+        weaponNameText.fontSizeMin = 12f;
+        weaponNameText.fontSizeMax = 20f;
+        weaponNameText.overflowMode = TextOverflowModes.Ellipsis;
         ammoText = MakeLabel("Ammo", panel, "-- / --", RedAccent, 34, TextAlignmentOptions.Center,
             new Vector2(0f, 12f), new Vector2(innerW, 44f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
     }
