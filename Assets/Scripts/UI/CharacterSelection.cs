@@ -15,7 +15,14 @@ public static class CharacterSelection
     /// <summary>Number of selectable characters (portraits player_portrait_0 .. _3).</summary>
     public const int Count = 4;
 
+    /// <summary>Character display names, indexed 0..Count-1 (portrait player_portrait_i).</summary>
+    public static readonly string[] Names = { "Steven", "Maya", "Tyler", "Hank" };
+
     private const string PrefKey = "SelectedCharacterIndex";
+
+    /// <summary>Display name for a character index, or "Survivor" if out of range.</summary>
+    public static string NameOf(int index) =>
+        (index >= 0 && index < Names.Length) ? Names[index] : "Survivor";
 
     /// <summary>The locally chosen character index (0..Count-1), or -1 if none has been chosen.</summary>
     public static int SelectedIndex
