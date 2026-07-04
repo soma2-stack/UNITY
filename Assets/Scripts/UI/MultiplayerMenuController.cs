@@ -12,6 +12,9 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     private static readonly Color WarmColor = new Color(0.95f, 0.73f, 0.27f, 1f);
     private static readonly Color TextColor = new Color(0.93f, 0.92f, 0.88f, 1f);
     private static readonly Color ErrorColor = new Color(1f, 0.38f, 0.28f, 1f);
+    // Idle (unselected) character button colour — matches the LEAVE/BACK slate so the black
+    // button label stays readable; the selected character uses AccentColor.
+    private static readonly Color CharacterIdleColor = new Color(0.35f, 0.37f, 0.38f, 1f);
 
     private TMP_InputField displayNameInput;
     private TMP_InputField joinCodeInput;
@@ -25,6 +28,7 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     private Button leaveButton;
     private Button reconnectButton;
     private Button backButton;
+    private Button[] characterButtons;
     private Action backAction;
     private MultiplayerSessionController session;
 
@@ -282,6 +286,30 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         displayNameInput.characterLimit = 16;
         displayNameInput.text = PlayerPrefs.GetString("MultiplayerDisplayName", "Survivor");
 
+        // Character picker: choose one of the 4 characters. Stored locally per player (PlayerPrefs
+        // via CharacterSelection), so host and client can pick independently. Drives the in-game
+        // HUD portrait; if nothing is chosen the HUD falls back to the OwnerClientId-based portrait.
+        TMP_Text characterHeading = CreateText(content.transform, "CHARACTER", 20f, FontStyles.Bold, TextColor);
+        characterHeading.alignment = TextAlignmentOptions.Center;
+        SetHeight(characterHeading.gameObject, 30f);
+
+        GameObject characterRow = CreateUiObject("Character Row", content.transform);
+        HorizontalLayoutGroup characterLayout = characterRow.AddComponent<HorizontalLayoutGroup>();
+        characterLayout.spacing = 12f;
+        characterLayout.childControlWidth = true;
+        characterLayout.childControlHeight = true;
+        characterLayout.childForceExpandWidth = true;
+        SetHeight(characterRow, 56f);
+
+        characterButtons = new Button[CharacterSelection.Count];
+        for (int i = 0; i < CharacterSelection.Count; i++)
+        {
+            int index = i; // capture per-iteration for the click handler
+            characterButtons[i] = CreateButton(characterRow.transform, (i + 1).ToString(),
+                () => SelectCharacter(index), CharacterIdleColor);
+        }
+        RefreshCharacterButtons();
+
         joinCodeInput = CreateInput(content.transform, "JOIN CODE", true);
         joinCodeInput.characterLimit = 8;
 
@@ -439,6 +467,36 @@ public sealed class MultiplayerMenuController : MonoBehaviour
             GUIUtility.systemCopyBuffer = session.JoinCode;
             statusText.text = "JOIN CODE COPIED";
             statusText.color = WarmColor;
+        }
+    }
+
+    // Store the chosen character locally and update which button reads as selected.
+    private void SelectCharacter(int index)
+    {
+        CharacterSelection.Select(index);
+        RefreshCharacterButtons();
+    }
+
+    // Highlight the selected character button (AccentColor) and leave the rest idle. Safe to call
+    // before the row exists (guards on null) and when nothing is chosen (no button highlighted).
+    private void RefreshCharacterButtons()
+    {
+        if (characterButtons == null)
+        {
+            return;
+        }
+
+        int selected = CharacterSelection.SelectedIndex;
+        for (int i = 0; i < characterButtons.Length; i++)
+        {
+            if (characterButtons[i] == null)
+            {
+                continue;
+            }
+            if (characterButtons[i].targetGraphic is Image image)
+            {
+                image.color = i == selected ? AccentColor : CharacterIdleColor;
+            }
         }
     }
 

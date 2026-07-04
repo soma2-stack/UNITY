@@ -75,13 +75,14 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
 
     // --- Player portrait box (left portion of the status-card art) -------------------------
     // A per-player portrait Image sits in the card's existing portrait box, LEFT of the live
-    // content (x < StatusContentLeft). It is shown only when a portrait PNG loads; otherwise the
-    // card art's own placeholder shows through. Nudge these to line the image up with the art.
-    private const float StatusPortraitLeft   = 24f;  // inset from the card's left edge
-    private const float StatusPortraitBottom = 40f;  // inset from the card's bottom edge
-    private const float StatusPortraitW      = 150f; // portrait box width  (kept left of StatusContentLeft)
-    private const float StatusPortraitH      = 150f; // portrait box height (kept inside the card)
-    private const int   PortraitCount        = 4;    // player_portrait_0 .. player_portrait_3
+    // content (x < StatusContentLeft). It is CENTERED in that left region (so it no longer hugs
+    // the left edge) and shown only when a portrait PNG loads; otherwise the card art's own
+    // placeholder shows through. Use the offset constants to fine-tune onto the art's frame.
+    private const float StatusPortraitW       = 150f; // portrait box width  (kept left of StatusContentLeft)
+    private const float StatusPortraitH       = 150f; // portrait box height (kept inside the card)
+    private const float StatusPortraitOffsetX = 0f;   // nudge +right / -left to sit inside the art frame
+    private const float StatusPortraitOffsetY = 0f;   // nudge +up / -down
+    private const int   PortraitCount         = 4;    // player_portrait_0 .. player_portrait_3
 
     // --- Cached gameplay sources (READ ONLY; re-resolved each frame if missing) -----------
     private WeaponController weapon;
@@ -365,10 +366,15 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         }
     }
 
-    // Local client id % PortraitCount. Falls back to 0 when the network id isn't available
-    // (solo, or before the local player has connected), so host/player 0 gets portrait 0.
+    // Which portrait the LOCAL player shows. Prefers the player's explicit character choice
+    // (stored locally, per-player), and otherwise falls back to the old behavior: local client id
+    // % PortraitCount (0 in solo / before connecting, so host/player 0 gets portrait 0).
     private static int GetLocalPortraitIndex()
     {
+        if (CharacterSelection.HasSelection)
+        {
+            return CharacterSelection.SelectedIndex % PortraitCount;
+        }
         ulong localId = PlayerPoints.Instance != null ? PlayerPoints.Instance.LocalClientId : 0;
         return (int)(localId % PortraitCount);
     }
@@ -517,11 +523,16 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         // art's own placeholder portrait shows through. preserveAspect keeps it undistorted inside
         // the box. This adds NO gameplay; it only picks an image by local client id.
         RectTransform portrait = MakeChildImage("Portrait", panel, Color.white);
+        // Center the portrait inside the card's left region (everything left of the live content
+        // at StatusContentLeft), then apply the small offset constants. This fixes the earlier
+        // "pushed too far left" placement without moving the panel or any other element.
+        float portraitCenterX = StatusContentLeft * 0.5f + StatusPortraitOffsetX;
+        float portraitCenterY = StatusPanelSize.y * 0.5f + StatusPortraitOffsetY;
         portrait.anchorMin = new Vector2(0f, 0f);
         portrait.anchorMax = new Vector2(0f, 0f);
-        portrait.pivot = new Vector2(0f, 0f);
+        portrait.pivot = new Vector2(0.5f, 0.5f);
         portrait.sizeDelta = new Vector2(StatusPortraitW, StatusPortraitH);
-        portrait.anchoredPosition = new Vector2(StatusPortraitLeft, StatusPortraitBottom);
+        portrait.anchoredPosition = new Vector2(portraitCenterX, portraitCenterY);
         portraitImage = portrait.GetComponent<Image>();
         portraitImage.preserveAspect = true;
         portraitImage.raycastTarget = false;
