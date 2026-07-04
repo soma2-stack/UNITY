@@ -70,17 +70,18 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const int   StatusHealthFont  = 24;   // health-number size (small box)
     private const float StatusHealthRowY  = 56f;  // health row centre height above the panel bottom - scaled with the smaller card
     private const float StatusHealthBarH  = 20f;  // health bar/slot thickness
-    private const float StatusHealthBarW  = 216f; // health bar width - extended to fill the slot better (still clamped to leave an 8px gap before the number box)
+    private const float StatusHealthBarW  = 238f; // health bar width - fills the wide HEALTH slot in the art (ends before the old number box), no longer stretched across the whole card
     private const float StatusHealthNumW  = 114f; // small health-number box width at the right end - scaled with the smaller card
 
-    // --- Player portrait box (left portion of the status-card art) -------------------------
-    // A per-player portrait Image sits in the card's existing portrait box, LEFT of the live
-    // content (x < StatusContentLeft). It is CENTERED in that left region (so it no longer hugs
-    // the left edge) and shown only when a portrait PNG loads; otherwise the card art's own
-    // placeholder shows through. Use the offset constants to fine-tune onto the art's frame.
-    private const float StatusPortraitW       = 150f; // portrait box width  (kept left of StatusContentLeft)
-    private const float StatusPortraitH       = 150f; // portrait box height (kept inside the card)
-    private const float StatusPortraitOffsetX = 0f;   // nudge +right / -left to sit inside the art frame
+    // --- Player portrait box (measured against the status-card art's ID-card photo slot) --------
+    // The portrait Image sits in the ID card's photo slot on the left of the card. Centre + size are
+    // in the panel's local space (StatusPanelSize). Shown only when a portrait PNG loads; otherwise
+    // the card art's own slot shows through. Use the offset constants to fine-tune onto the art.
+    private const float StatusPortraitCenterX = 124f; // photo-slot centre X (panel-local)
+    private const float StatusPortraitCenterY = 123f; // photo-slot centre Y (panel-local)
+    private const float StatusPortraitW       = 60f;  // square portrait sized to the photo slot
+    private const float StatusPortraitH       = 60f;
+    private const float StatusPortraitOffsetX = 0f;   // nudge +right / -left onto the art frame
     private const float StatusPortraitOffsetY = 0f;   // nudge +up / -down
     private const int   PortraitCount         = 4;    // player_portrait_0 .. player_portrait_3
 
@@ -536,11 +537,10 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         // art's own placeholder portrait shows through. preserveAspect keeps it undistorted inside
         // the box. This adds NO gameplay; it only picks an image by local client id.
         RectTransform portrait = MakeChildImage("Portrait", panel, Color.white);
-        // Center the portrait inside the card's left region (everything left of the live content
-        // at StatusContentLeft), then apply the small offset constants. This fixes the earlier
-        // "pushed too far left" placement without moving the panel or any other element.
-        float portraitCenterX = StatusContentLeft * 0.5f + StatusPortraitOffsetX;
-        float portraitCenterY = StatusPanelSize.y * 0.5f + StatusPortraitOffsetY;
+        // Place the portrait on the ID-card photo slot (measured from the art), plus the small
+        // offset constants. Centres the face in the slot instead of filling the whole left region.
+        float portraitCenterX = StatusPortraitCenterX + StatusPortraitOffsetX;
+        float portraitCenterY = StatusPortraitCenterY + StatusPortraitOffsetY;
         portrait.anchorMin = new Vector2(0f, 0f);
         portrait.anchorMax = new Vector2(0f, 0f);
         portrait.pivot = new Vector2(0.5f, 0.5f);
@@ -551,14 +551,16 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         portraitImage.raycastTarget = false;
         portraitImage.enabled = false; // shown by RefreshPortrait when a real portrait loads
 
-        // Health-bar width. The numeric readout was removed, so the bar now fills the row from the
-        // content-left edge to the panel's right padding (still clear of the portrait on the left).
-        float healthBarW = (StatusPanelSize.x - StatusRightPad) - StatusContentLeft;
+        // Health-bar width: fill the wide HEALTH slot in the art (ends before the removed number
+        // box) rather than stretching the whole card.
+        float healthBarW = StatusHealthBarW;
 
-        // POINTS — centred (both axes) inside the upper-right points box.
-        pointsText = MakeLabel("Points", panel, "0", InkDark, StatusPointsFont, TextAlignmentOptions.Center,
+        // POINTS — centred (both axes) inside the upper-right points box. Black with a white outline
+        // for readability against the chalkboard art (no dollar sign).
+        pointsText = MakeLabel("Points", panel, "0", Color.black, StatusPointsFont, TextAlignmentOptions.Center,
             new Vector2(-StatusRightPad, -StatusPointsTop), new Vector2(StatusPointsW, StatusPointsH),
             new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
+        ApplyBlackWhiteOutline(pointsText);
 
         // HEALTH BAR — narrow track in the lower-right row (left of the number box), fill inset
         // so it never spills outside the frame.
@@ -663,15 +665,18 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
 
         float innerW = AmmoPanelSize.x - 24f;
 
-        // Weapon name across the top, ammo centered below — both centered inside the art.
-        weaponNameText = MakeLabel("WeaponName", panel, "—", InkDark, 20, TextAlignmentOptions.Top,
-            new Vector2(0f, -8f), new Vector2(innerW, 26f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+        // Weapon name lowered onto the dark board (it previously sat up on the wooden frame), just
+        // above the ammo number. Ammo stays centered below.
+        weaponNameText = MakeLabel("WeaponName", panel, "—", Color.black, 20, TextAlignmentOptions.Center,
+            new Vector2(0f, -18f), new Vector2(innerW, 20f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
         // Long gun names: shrink-to-fit on one line, then ellipsis as a last resort (MakeLabel
         // already disabled word wrap). Keeps names inside the ammo panel without touching weapon data.
         weaponNameText.enableAutoSizing = true;
         weaponNameText.fontSizeMin = 12f;
         weaponNameText.fontSizeMax = 20f;
         weaponNameText.overflowMode = TextOverflowModes.Ellipsis;
+        // Black text with a white outline so the name reads against the dark chalkboard.
+        ApplyBlackWhiteOutline(weaponNameText);
         ammoText = MakeLabel("Ammo", panel, "-- / --", RedAccent, 34, TextAlignmentOptions.Center,
             new Vector2(0f, 12f), new Vector2(innerW, 44f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
     }
@@ -778,5 +783,20 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         tmp.enableWordWrapping = false;
         tmp.raycastTarget = false;
         return tmp;
+    }
+
+    // Give a TMP label a white outline (text left at whatever colour the caller set). Uses an
+    // INSTANCED font material (text.fontMaterial) so the outline applies to this label only and
+    // never bleeds onto the other HUD text that shares the default font material.
+    private static void ApplyBlackWhiteOutline(TMP_Text text)
+    {
+        if (text == null)
+        {
+            return;
+        }
+        Material mat = text.fontMaterial; // getter returns a per-text material instance
+        mat.EnableKeyword(ShaderUtilities.Keyword_Outline);
+        mat.SetColor(ShaderUtilities.ID_OutlineColor, Color.white);
+        mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.2f);
     }
 }
