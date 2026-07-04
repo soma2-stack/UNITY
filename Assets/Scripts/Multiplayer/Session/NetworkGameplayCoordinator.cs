@@ -28,6 +28,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     private const string BookCollectedMessage = "SOTD_BOOK_COLLECTED";
     private const string FireAlarmRequestMessage = "SOTD_FIREALARM_REQUEST";
     private const string FireAlarmActivatedMessage = "SOTD_FIREALARM_ACTIVATED";
+    private const string PauseStateMessage = "SOTD_PAUSE_STATE";
 
     private enum PurchaseKind : byte
     {
@@ -53,6 +54,17 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     // once when the set reaches FireAlarmEasterEgg.TotalAlarms. Cleared on each gameplay scene load.
     private readonly HashSet<string> activatedFireAlarmKeys = new HashSet<string>();
     private bool fireAlarmRewarded;
+
+    // Host-authoritative match pause state ("host paused the game for everyone"). Only the server
+    // may change it; it is broadcast to every client and replayed to late joiners. This is pure
+    // sync — the actual freeze (Time.timeScale) is applied by PauseMenuController via HostPauseChanged.
+    private bool hostPaused;
+
+    /// <summary>True when the host has paused the whole match. Applies in networked sessions only.</summary>
+    public static bool IsHostPaused => instance != null && instance.hostPaused;
+
+    /// <summary>Raised on every peer when the host-authoritative pause state changes.</summary>
+    public static event System.Action<bool> HostPauseChanged;
 
     private static bool NetworkActive =>
         NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
@@ -126,6 +138,13 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
             // restarted run's Fire Drill egg starts from 0/5 again.
             activatedFireAlarmKeys.Clear();
             fireAlarmRewarded = false;
+
+            // A freshly (re)loaded match starts unpaused.
+            if (hostPaused)
+            {
+                hostPaused = false;
+                HostPauseChanged?.Invoke(false);
+            }
         }
     }
 
@@ -161,6 +180,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.RegisterNamedMessageHandler(BookCollectedMessage, ReceiveBookCollected);
         messaging.RegisterNamedMessageHandler(FireAlarmRequestMessage, ReceiveFireAlarmRequest);
         messaging.RegisterNamedMessageHandler(FireAlarmActivatedMessage, ReceiveFireAlarmActivated);
+        messaging.RegisterNamedMessageHandler(PauseStateMessage, ReceivePauseState);
         registered = true;
         registeredManager = NetworkManager.Singleton;
     }
@@ -193,6 +213,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.UnregisterNamedMessageHandler(BookCollectedMessage);
         messaging.UnregisterNamedMessageHandler(FireAlarmRequestMessage);
         messaging.UnregisterNamedMessageHandler(FireAlarmActivatedMessage);
+        messaging.UnregisterNamedMessageHandler(PauseStateMessage);
         registered = false;
         registeredManager = null;
     }
@@ -914,6 +935,14 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
             WriteString(writer, alarmKey);
             SendToClient(FireAlarmActivatedMessage, clientId, writer);
         }
+
+        // If the host has the match paused, tell the joining client so it freezes + shows the overlay.
+        if (instance.hostPaused)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(8, Allocator.Temp);
+            writer.WriteValueSafe(true);
+            SendToClient(PauseStateMessage, clientId, writer);
+        }
     }
 
     // --- Secret book pickup (team-wide easter egg progress) --------------
@@ -1070,6 +1099,44 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
             alarm.ApplyActivated();
         }
         FireAlarmEasterEgg.LogAlarmActivated();
+    }
+
+    // --- Host-authoritative match pause -------------------------------------
+
+    /// <summary>
+    /// Host/server only: set whether the whole match is paused and tell every client. Clients that
+    /// call this are ignored (they cannot pause the match). The state is applied on the host here
+    /// and echoed to clients via <see cref="PauseStateMessage"/>; both raise <see cref="HostPauseChanged"/>.
+    /// </summary>
+    public static void SetHostPause(bool paused)
+    {
+        Ensure();
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        instance.ApplyPauseState(paused);
+
+        using FastBufferWriter writer = new FastBufferWriter(8, Allocator.Temp);
+        writer.WriteValueSafe(paused);
+        SendToAll(PauseStateMessage, writer);
+    }
+
+    private void ReceivePauseState(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out bool paused);
+        ApplyPauseState(paused);
+    }
+
+    private void ApplyPauseState(bool paused)
+    {
+        if (hostPaused == paused)
+        {
+            return; // idempotent
+        }
+        hostPaused = paused;
+        HostPauseChanged?.Invoke(paused);
     }
 
     // --- Match restart (from the game-over screen) -----------------------
