@@ -1345,8 +1345,27 @@ public class WeaponController : NetworkBehaviour
         // the server's authoritative zombie positions — which differ from the client's
         // interpolated view — so remote clients' shots constantly missed.) The resolved
         // target is then sent to the server, which applies the authoritative damage.
-        Vector3 origin = cam.position;
-        Vector3 dir = ApplySpread(cam.forward, w.spread);
+        //
+        // AIM = SCREEN CENTRE. Build the ray from the rendering camera's viewport centre (the
+        // crosshair) rather than the camera transform's forward. This makes the shot go exactly
+        // where the crosshair points at any pitch — fixing the "have to aim lower up/down stairs"
+        // offset — and starts the ray on the near plane so it never clips the player's own body
+        // when aiming down. Falls back to the transform if the Camera component isn't resolvable.
+        Camera aimCam = cam != null ? cam.GetComponent<Camera>() : null;
+        Vector3 origin;
+        Vector3 aimForward;
+        if (aimCam != null)
+        {
+            Ray aimRay = aimCam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+            origin = aimRay.origin;
+            aimForward = aimRay.direction;
+        }
+        else
+        {
+            origin = cam.position;
+            aimForward = cam.forward;
+        }
+        Vector3 dir = ApplySpread(aimForward, w.spread);
 
         ResolveShot(origin, dir, Mathf.Max(0.1f, w.range),
             out ZombieAgent zombie, out bool isHeadshot, out Vector3 point, out Vector3 normal);
