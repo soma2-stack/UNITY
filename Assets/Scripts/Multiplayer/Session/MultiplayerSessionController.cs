@@ -23,6 +23,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
     private const string RosterMessage = "SOTD_ROSTER";
     private const string MatchStartMessage = "SOTD_MATCH_START";
+    private const string CharacterSelectMessage = "SOTD_CHARACTER_SELECT";
     private const string GameplayScene = "SchoolOfTheDead";
     private const string MenuScene = "MainMenu";
 
@@ -47,6 +48,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
     public bool IsHost => networkManager != null && networkManager.IsHost;
     public bool CanReconnect => !string.IsNullOrWhiteSpace(lastJoinCode);
     public IReadOnlyList<RosterEntry> Roster => roster;
+    /// <summary>This peer's own network client id (0 when not connected).</summary>
+    public ulong LocalClientId => networkManager != null ? networkManager.LocalClientId : 0;
 
     public event Action<MultiplayerSessionState> StateChanged;
     public event Action<IReadOnlyList<RosterEntry>> RosterChanged;
@@ -122,6 +125,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
             roster.Clear();
             roster.Add(new RosterEntry(NetworkManager.ServerClientId, localPlayerId, localDisplayName, true));
+            // The host is first, so its own local pick (if any) is always free to reserve.
+            ServerSetCharacter(NetworkManager.ServerClientId, CharacterSelection.HasSelection ? CharacterSelection.SelectedIndex : -1, false);
             NotifyRosterChanged();
             SetState(MultiplayerSessionState.Lobby);
             LoadingScreenController.Instance?.SetProgress(1f);
@@ -460,8 +465,10 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
         messaging.UnregisterNamedMessageHandler(RosterMessage);
         messaging.UnregisterNamedMessageHandler(MatchStartMessage);
+        messaging.UnregisterNamedMessageHandler(CharacterSelectMessage);
         messaging.RegisterNamedMessageHandler(RosterMessage, ReceiveRosterMessage);
         messaging.RegisterNamedMessageHandler(MatchStartMessage, ReceiveMatchStartMessage);
+        messaging.RegisterNamedMessageHandler(CharacterSelectMessage, ReceiveCharacterSelectRequest);
 
         // Spawn each client's player body only after the gameplay scene finishes
         // loading for them (so no player exists while in the menu/lobby).
@@ -527,7 +534,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         ConnectionPayload payload = new ConnectionPayload
         {
             playerId = localPlayerId,
-            displayName = localDisplayName
+            displayName = localDisplayName,
+            characterIndex = CharacterSelection.HasSelection ? CharacterSelection.SelectedIndex : -1
         };
         networkManager.NetworkConfig.ConnectionData = Encoding.UTF8.GetBytes(JsonUtility.ToJson(payload));
     }
@@ -577,6 +585,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
             disconnectedAt.Remove(payload.playerId);
             pendingPayloads.Remove(clientId);
+            // Reserve the joiner's locally-chosen character if it is still free (host-authoritative).
+            ServerSetCharacter(clientId, payload.characterIndex, false);
             Debug.Log("[MP] Client joined: clientId=" + clientId + " name=" + payload.displayName);
             BroadcastRoster();
         }
@@ -665,6 +675,93 @@ public sealed class MultiplayerSessionController : MonoBehaviour
             roster.AddRange(envelope.entries);
         }
         NotifyRosterChanged();
+    }
+
+    // --- Character reservation (host-authoritative locking) --------------
+
+    /// <summary>
+    /// Request to reserve a character (portrait index). Host applies it directly; a client sends the
+    /// request to the host. Offline (not connected) it just stores locally via CharacterSelection.
+    /// The accepted result comes back through the roster broadcast; the UI updates from there.
+    /// </summary>
+    public void RequestCharacterSelect(int portraitIndex)
+    {
+        if (networkManager == null || !networkManager.IsListening)
+        {
+            // Not in a session yet (offline lobby / solo menu): keep it purely local.
+            if (portraitIndex >= 0)
+            {
+                CharacterSelection.Select(portraitIndex);
+            }
+            return;
+        }
+
+        if (networkManager.IsServer)
+        {
+            ServerSetCharacter(NetworkManager.ServerClientId, portraitIndex, true);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int), Allocator.Temp);
+        writer.WriteValueSafe(portraitIndex);
+        networkManager.CustomMessagingManager.SendNamedMessage(CharacterSelectMessage, NetworkManager.ServerClientId, writer, NetworkDelivery.ReliableSequenced);
+    }
+
+    private void ReceiveCharacterSelectRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (networkManager == null || !networkManager.IsServer)
+        {
+            return;
+        }
+        reader.ReadValueSafe(out int portraitIndex);
+        ServerSetCharacter(senderId, portraitIndex, true);
+    }
+
+    /// <summary>
+    /// Server-only: reserve <paramref name="portraitIndex"/> for <paramref name="clientId"/> if it is
+    /// not already held by ANOTHER connected player. A negative index clears the reservation.
+    /// Rejected requests leave the existing reservation untouched. Broadcasts the roster on change.
+    /// </summary>
+    private void ServerSetCharacter(ulong clientId, int portraitIndex, bool broadcast)
+    {
+        if (networkManager == null || !networkManager.IsServer)
+        {
+            return;
+        }
+
+        int index = roster.FindIndex(entry => entry.clientId == clientId);
+        if (index < 0)
+        {
+            return;
+        }
+
+        int desired = portraitIndex < 0 ? -1 : portraitIndex;
+
+        // Reject if another connected player already holds this character.
+        if (desired >= 0)
+        {
+            foreach (RosterEntry other in roster)
+            {
+                if (other.connected && other.clientId != clientId && other.characterIndex == desired)
+                {
+                    return; // taken — keep the requester's existing reservation
+                }
+            }
+        }
+
+        if (roster[index].characterIndex == desired)
+        {
+            return; // no change
+        }
+
+        RosterEntry entry = roster[index];
+        entry.characterIndex = desired;
+        roster[index] = entry;
+
+        if (broadcast)
+        {
+            BroadcastRoster();
+        }
     }
 
     private void SendMatchStartMessage()

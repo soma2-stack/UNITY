@@ -15,6 +15,8 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     // Idle (unselected) character button colour — matches the LEAVE/BACK slate so the black
     // button label stays readable; the selected character uses AccentColor.
     private static readonly Color CharacterIdleColor = new Color(0.35f, 0.37f, 0.38f, 1f);
+    // Character reserved by ANOTHER connected player — greyed out and non-clickable.
+    private static readonly Color CharacterLockedColor = new Color(0.14f, 0.14f, 0.15f, 1f);
 
     private TMP_InputField displayNameInput;
     private TMP_InputField joinCodeInput;
@@ -445,6 +447,9 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         {
             Refresh(session.State);
         }
+
+        // Reservations may have changed (join/leave/select) — update character locks + local pick.
+        RefreshCharacterLocks();
     }
 
     private void HandleJoinCodeChanged(string code)
@@ -682,12 +687,80 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     }
 
     // Store the chosen portrait index locally, update the preview + list highlight, close the list.
+    // True once connected to a lobby, where character reservations are host-authoritative.
+    private bool InNetworkedLobby => session != null && session.State == MultiplayerSessionState.Lobby;
+
     private void SelectCharacter(int portraitIndex)
     {
-        CharacterSelection.Select(portraitIndex);
+        // Never allow picking a character another connected player already holds.
+        if (IsLockedByOther(portraitIndex))
+        {
+            CloseCharacterDropdown();
+            return;
+        }
+
+        if (InNetworkedLobby)
+        {
+            // Host-authoritative: request the reservation. CharacterSelection + the UI update when
+            // the host's roster broadcast returns (RefreshCharacterLocks), so nothing is set locally
+            // until the host accepts.
+            session.RequestCharacterSelect(portraitIndex);
+        }
+        else
+        {
+            // Offline lobby / not connected: purely local.
+            CharacterSelection.Select(portraitIndex);
+            RefreshCharacterPreview();
+            RefreshCharacterButtons();
+        }
+        CloseCharacterDropdown();
+    }
+
+    // True when a DIFFERENT connected player currently reserves this character.
+    private bool IsLockedByOther(int portraitIndex)
+    {
+        if (session == null || portraitIndex < 0)
+        {
+            return false;
+        }
+        var roster = session.Roster;
+        if (roster == null)
+        {
+            return false;
+        }
+        ulong me = session.LocalClientId;
+        foreach (RosterEntry entry in roster)
+        {
+            if (entry.connected && entry.clientId != me && entry.characterIndex == portraitIndex)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Mirror the host-accepted reservation for THIS player into CharacterSelection (source of truth
+    // in a lobby), then refresh the preview + lock states. Called whenever the roster changes.
+    private void RefreshCharacterLocks()
+    {
+        if (InNetworkedLobby)
+        {
+            ulong me = session.LocalClientId;
+            var roster = session.Roster;
+            if (roster != null)
+            {
+                foreach (RosterEntry entry in roster)
+                {
+                    if (entry.clientId == me && entry.characterIndex >= 0)
+                    {
+                        CharacterSelection.Select(entry.characterIndex);
+                        break;
+                    }
+                }
+            }
+        }
         RefreshCharacterPreview();
         RefreshCharacterButtons();
-        CloseCharacterDropdown();
     }
 
     // Update the selected preview panel from the stored selection (or a neutral prompt if none).
@@ -724,14 +797,22 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         int selected = CharacterSelection.SelectedIndex;
         for (int i = 0; i < characterButtons.Length; i++)
         {
-            if (characterButtons[i] == null)
+            Button button = characterButtons[i];
+            if (button == null)
             {
                 continue;
             }
-            if (characterButtons[i].targetGraphic is Image image)
+            int portraitIndex = CharacterSelection.Characters[i].PortraitIndex;
+            bool lockedByOther = IsLockedByOther(portraitIndex);
+            bool isSelected = portraitIndex == selected;
+
+            // Reserved-by-another options are greyed out and non-clickable; the local player's own
+            // selection stays highlighted and clickable.
+            button.interactable = !lockedByOther;
+            if (button.targetGraphic is Image image)
             {
-                bool isSelected = CharacterSelection.Characters[i].PortraitIndex == selected;
-                image.color = isSelected ? AccentColor : CharacterIdleColor;
+                image.color = lockedByOther ? CharacterLockedColor
+                    : (isSelected ? AccentColor : CharacterIdleColor);
             }
         }
     }
