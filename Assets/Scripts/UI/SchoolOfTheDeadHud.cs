@@ -73,6 +73,16 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const float StatusHealthBarW  = 216f; // health bar width - extended to fill the slot better (still clamped to leave an 8px gap before the number box)
     private const float StatusHealthNumW  = 114f; // small health-number box width at the right end - scaled with the smaller card
 
+    // --- Player portrait box (left portion of the status-card art) -------------------------
+    // A per-player portrait Image sits in the card's existing portrait box, LEFT of the live
+    // content (x < StatusContentLeft). It is shown only when a portrait PNG loads; otherwise the
+    // card art's own placeholder shows through. Nudge these to line the image up with the art.
+    private const float StatusPortraitLeft   = 24f;  // inset from the card's left edge
+    private const float StatusPortraitBottom = 40f;  // inset from the card's bottom edge
+    private const float StatusPortraitW      = 150f; // portrait box width  (kept left of StatusContentLeft)
+    private const float StatusPortraitH      = 150f; // portrait box height (kept inside the card)
+    private const int   PortraitCount        = 4;    // player_portrait_0 .. player_portrait_3
+
     // --- Cached gameplay sources (READ ONLY; re-resolved each frame if missing) -----------
     private WeaponController weapon;
     private PlayerHealth health;
@@ -88,6 +98,15 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private TMP_Text statusStateText; // DOWNED / DEAD banner on the status card
     private TMP_Text weaponNameText;
     private TMP_Text ammoText;
+
+    // Per-player portrait: an Image over the status-card portrait box, driven by the local
+    // client id. Sprites are lazily loaded from Resources/HUD and cached; a missing portrait
+    // leaves the Image hidden (the card art's placeholder shows). appliedPortraitIndex avoids
+    // reloading/re-assigning every frame (the local id resolves after the player spawns).
+    private Image portraitImage;
+    private readonly Sprite[] portraitCache = new Sprite[PortraitCount];
+    private readonly bool[] portraitTried = new bool[PortraitCount];
+    private int appliedPortraitIndex = -1;
 
     // Perk row: one reusable slot per PerkType (enum order), shown only when owned.
     private static readonly PerkType[] PerkOrder = (PerkType[])Enum.GetValues(typeof(PerkType));
@@ -188,6 +207,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         ResolveReferences();
         RefreshRoundAndZombies();
         RefreshStatusCard();
+        RefreshPortrait();
         RefreshPerks();
         RefreshWeapon();
     }
@@ -312,6 +332,69 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         }
     }
 
+    // Show the local player's portrait in the status-card portrait box. The portrait index is the
+    // local client id modulo the portrait count (host/player 0 -> portrait 0, first client -> 1,
+    // etc.). Resolved every frame because the local id only becomes known after the player spawns;
+    // the sprite is (re)assigned only when the index actually changes.
+    private void RefreshPortrait()
+    {
+        if (portraitImage == null)
+        {
+            return;
+        }
+
+        int index = GetLocalPortraitIndex();
+        if (index == appliedPortraitIndex)
+        {
+            return;
+        }
+        appliedPortraitIndex = index;
+
+        Sprite sprite = LoadPortrait(index);
+        if (sprite != null)
+        {
+            portraitImage.sprite = sprite;
+            portraitImage.color = Color.white; // show the art's own colours
+            portraitImage.enabled = true;
+        }
+        else
+        {
+            // Missing portrait: leave the Image hidden so the status-card art's own placeholder
+            // portrait shows through. No error is thrown; LoadPortrait logs one warning per index.
+            portraitImage.enabled = false;
+        }
+    }
+
+    // Local client id % PortraitCount. Falls back to 0 when the network id isn't available
+    // (solo, or before the local player has connected), so host/player 0 gets portrait 0.
+    private static int GetLocalPortraitIndex()
+    {
+        ulong localId = PlayerPoints.Instance != null ? PlayerPoints.Instance.LocalClientId : 0;
+        return (int)(localId % PortraitCount);
+    }
+
+    // Lazily load & cache Resources/HUD/player_portrait_{index}. Returns null (and logs one
+    // warning) if the PNG is absent, so a missing portrait never breaks the HUD.
+    private Sprite LoadPortrait(int index)
+    {
+        if (index < 0 || index >= PortraitCount)
+        {
+            index = 0;
+        }
+        if (!portraitTried[index])
+        {
+            portraitTried[index] = true;
+            portraitCache[index] = Resources.Load<Sprite>("HUD/player_portrait_" + index);
+            if (portraitCache[index] == null)
+            {
+                Debug.LogWarning("[SchoolOfTheDeadHud] Optional HUD portrait not found: " +
+                                 "Resources/HUD/player_portrait_" + index +
+                                 " (import the PNG as Sprite (2D and UI)); keeping placeholder portrait.");
+            }
+        }
+        return portraitCache[index];
+    }
+
     private void RefreshPerks()
     {
         if (perkSlots == null)
@@ -428,6 +511,21 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f),
             new Vector2(ScreenMargin, ScreenMargin), StatusPanelSize);
         ApplyPanelSprite(panel.GetComponent<Image>(), "status", "status_panel");
+
+        // PLAYER PORTRAIT — per-player art in the card's left portrait box. Built hidden and only
+        // shown once RefreshPortrait loads a portrait sprite, so when no PNG is present the card
+        // art's own placeholder portrait shows through. preserveAspect keeps it undistorted inside
+        // the box. This adds NO gameplay; it only picks an image by local client id.
+        RectTransform portrait = MakeChildImage("Portrait", panel, Color.white);
+        portrait.anchorMin = new Vector2(0f, 0f);
+        portrait.anchorMax = new Vector2(0f, 0f);
+        portrait.pivot = new Vector2(0f, 0f);
+        portrait.sizeDelta = new Vector2(StatusPortraitW, StatusPortraitH);
+        portrait.anchoredPosition = new Vector2(StatusPortraitLeft, StatusPortraitBottom);
+        portraitImage = portrait.GetComponent<Image>();
+        portraitImage.preserveAspect = true;
+        portraitImage.raycastTarget = false;
+        portraitImage.enabled = false; // shown by RefreshPortrait when a real portrait loads
 
         // Health-bar width, clamped so it always leaves room for the number box on the right
         // and never runs into the portrait region on the left.
