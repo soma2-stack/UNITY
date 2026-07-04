@@ -195,11 +195,17 @@ public class PauseMenuController : MonoBehaviour
         SetCursor(!_localMenuOpen); // cursor is free only while the local menu is open
     }
 
+    // A REAL multiplayer match — i.e. networked AND not a single-player local-host solo run. Solo is
+    // implemented as a local host, so IsNetworkActive is true there; SoloModeState lets us treat it
+    // as solo (immediate pause, no host-pause button).
+    private static bool IsNetworkedMatch =>
+        NetworkGameplayCoordinator.IsNetworkActive && !SoloModeState.IsSolo;
+
     // Freeze in SOLO whenever the local menu is open, or (solo or MP) whenever the HOST has paused.
     // A client's own local menu never freezes the networked match.
     private void ApplyTimeScale()
     {
-        bool networked = NetworkGameplayCoordinator.IsNetworkActive;
+        bool networked = IsNetworkedMatch;
         bool freeze = NetworkGameplayCoordinator.IsHostPaused || (!networked && _localMenuOpen);
         Time.timeScale = freeze ? 0f : 1f;
     }
@@ -270,7 +276,7 @@ public class PauseMenuController : MonoBehaviour
 
     private void ConfigureButtonsForRole()
     {
-        bool networked = NetworkGameplayCoordinator.IsNetworkActive;
+        bool networked = IsNetworkedMatch;
         bool isServer = NetworkGameplayCoordinator.IsServer;
 
         // Host "Pause Game" button: multiplayer only; disabled + labelled for clients.

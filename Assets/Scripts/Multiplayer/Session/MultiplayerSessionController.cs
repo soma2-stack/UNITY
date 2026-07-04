@@ -92,6 +92,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
             return;
         }
 
+        SoloModeState.IsSolo = false; // a real online session is never solo
+
         try
         {
             SetState(MultiplayerSessionState.Authenticating);
@@ -131,12 +133,74 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Start a SINGLE-PLAYER solo match as a LOCAL (offline) Netcode host — no Relay and no
+    /// authentication. This reuses the exact working co-op spawn path: loading the gameplay scene
+    /// through NGO triggers <see cref="HandleNetworkSceneLoadComplete"/> → <see cref="SpawnPlayerObject"/>,
+    /// which spawns ONE NetworkPlayer that configures its own camera/movement/weapon/AudioListener in
+    /// OnNetworkSpawn (owner-only). There is no lobby and no minimum-player gate. The session is marked
+    /// via <see cref="SoloModeState"/> so the pause menu treats it as solo, not multiplayer.
+    /// </summary>
+    public void StartSolo()
+    {
+        if (State != MultiplayerSessionState.Offline && State != MultiplayerSessionState.Failed)
+        {
+            return;
+        }
+
+        try
+        {
+            SoloModeState.IsSolo = true;
+
+            // Local, direct endpoint. This overrides any Relay data left by a prior online session
+            // and needs no internet/auth; SetConnectionData also resets the transport to the direct
+            // UnityTransport protocol (non-relay).
+            transport.SetConnectionData("127.0.0.1", (ushort)7777);
+
+            // A valid local identity so connection approval passes for the host's own client.
+            localDisplayName = SanitizeDisplayName(PlayerPrefs.GetString("MultiplayerDisplayName", "Player"));
+            localPlayerId = "solo-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            ConfigureConnectionData();
+
+            SetState(MultiplayerSessionState.Loading);
+            LoadingScreenController.Instance?.Show("SCHOOL OF THE DEAD", "STARTING SOLO...");
+            LoadingScreenController.Instance?.SetProgress(0.35f);
+
+            RegisterNetworkCallbacks();
+            if (!networkManager.StartHost())
+            {
+                throw new InvalidOperationException("Netcode could not start the solo host.");
+            }
+            RegisterMessageHandlers();
+
+            roster.Clear();
+            roster.Add(new RosterEntry(NetworkManager.ServerClientId, localPlayerId, localDisplayName, true));
+            NotifyRosterChanged();
+
+            // No lobby for solo: load the gameplay scene through NGO so the existing per-client spawn
+            // path runs and exactly one configured player is created.
+            SceneEventProgressStatus result = networkManager.SceneManager.LoadScene(GameplayScene, LoadSceneMode.Single);
+            if (result != SceneEventProgressStatus.Started)
+            {
+                throw new InvalidOperationException("The solo scene load could not start (" + result + ").");
+            }
+            Debug.Log("[MP] Solo session started; loading " + GameplayScene);
+        }
+        catch (Exception exception)
+        {
+            SoloModeState.IsSolo = false;
+            Fail("Unable to start solo: " + exception.Message);
+        }
+    }
+
     public async Task JoinAsync(string joinCode, string displayName)
     {
         if (State != MultiplayerSessionState.Offline && State != MultiplayerSessionState.Failed)
         {
             return;
         }
+
+        SoloModeState.IsSolo = false; // a real online session is never solo
 
         string normalizedCode = NormalizeJoinCode(joinCode);
         if (normalizedCode.Length < 4)
@@ -696,6 +760,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
     private void ResetTransientState(bool clearReconnectData)
     {
+        SoloModeState.IsSolo = false;
         roster.Clear();
         pendingPayloads.Clear();
         lockedRoster.Clear();

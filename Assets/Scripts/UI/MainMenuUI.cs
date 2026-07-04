@@ -282,6 +282,18 @@ public class MainMenuUI : MonoBehaviour
     // ------------------------------------------------------------------
     private void OnPlaySolo()
     {
+        // Solo starts a single-player LOCAL host session (reuses the working networked spawn path,
+        // so exactly one configured player spawns). This replaces the old direct scene load, which
+        // no longer spawns a player now that the scene-placed solo player object was removed.
+        var session = MultiplayerSessionController.Instance;
+        if (session != null)
+        {
+            session.StartSolo();
+            return;
+        }
+
+        // Fallback only if the session controller is somehow missing (should not happen — it
+        // self-bootstraps). This legacy path just loads the scene and will NOT spawn a player.
         var manager = FindFirstObjectByType<MainMenuManager>();
         if (manager != null)
         {
