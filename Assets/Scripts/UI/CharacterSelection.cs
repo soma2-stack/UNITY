@@ -5,26 +5,51 @@ using UnityEngine;
 /// local-settings store the project already uses for the multiplayer display name. Each machine
 /// keeps its own choice, so the host and every client can pick a different character.
 ///
-/// The chosen index drives the in-game HUD portrait (see <see cref="SchoolOfTheDeadHud"/>). It is
-/// intentionally local-only and tiny: nothing here is networked and no gameplay is touched. When
-/// no character has been chosen, callers fall back to the previous <c>OwnerClientId % Count</c>
+/// The stored value is the PORTRAIT INDEX (0..3), i.e. which <c>player_portrait_N</c> file the
+/// character uses. That is exactly what <see cref="SchoolOfTheDeadHud"/> loads, so the HUD needs no
+/// change. Display order and the portrait each name uses are defined ONCE in <see cref="Characters"/>
+/// so names and portraits can never get mismatched.
+///
+/// It is intentionally local-only and tiny: nothing here is networked and no gameplay is touched.
+/// When no character has been chosen, callers fall back to the previous <c>OwnerClientId % Count</c>
 /// behavior, so default spawning is unchanged.
 /// </summary>
 public static class CharacterSelection
 {
-    /// <summary>Number of selectable characters (portraits player_portrait_0 .. _3).</summary>
-    public const int Count = 4;
+    /// <summary>A selectable survivor: a display name paired with the portrait file it uses.</summary>
+    public readonly struct Character
+    {
+        public readonly string DisplayName;
+        public readonly int PortraitIndex;   // Resources/HUD/player_portrait_{PortraitIndex}
 
-    /// <summary>Character display names, indexed 0..Count-1 (portrait player_portrait_i).</summary>
-    public static readonly string[] Names = { "Steven", "Maya", "Tyler", "Hank" };
+        public Character(string displayName, int portraitIndex)
+        {
+            DisplayName = displayName;
+            PortraitIndex = portraitIndex;
+        }
+
+        public string PortraitResource => "HUD/player_portrait_" + PortraitIndex;
+    }
+
+    /// <summary>
+    /// Survivors in UI display order (Steven, Maya, Tyler, Hank). The portrait file each one uses is
+    /// EXPLICIT here so names and portraits stay in sync regardless of file ordering:
+    ///   Steven → player_portrait_0, Maya → player_portrait_3, Tyler → player_portrait_2, Hank → player_portrait_1.
+    /// </summary>
+    public static readonly Character[] Characters =
+    {
+        new Character("Steven", 0),
+        new Character("Maya",   3),
+        new Character("Tyler",  2),
+        new Character("Hank",   1),
+    };
+
+    /// <summary>Number of selectable characters (and portrait files, player_portrait_0 .. _3).</summary>
+    public const int Count = 4;
 
     private const string PrefKey = "SelectedCharacterIndex";
 
-    /// <summary>Display name for a character index, or "Survivor" if out of range.</summary>
-    public static string NameOf(int index) =>
-        (index >= 0 && index < Names.Length) ? Names[index] : "Survivor";
-
-    /// <summary>The locally chosen character index (0..Count-1), or -1 if none has been chosen.</summary>
+    /// <summary>The chosen PORTRAIT index (0..3), or -1 if none has been chosen.</summary>
     public static int SelectedIndex
     {
         get
@@ -37,14 +62,27 @@ public static class CharacterSelection
     /// <summary>True once the player has explicitly chosen a character.</summary>
     public static bool HasSelection => SelectedIndex >= 0;
 
-    /// <summary>Store the chosen character (ignored if out of range). Persisted immediately.</summary>
-    public static void Select(int index)
+    /// <summary>Store the chosen PORTRAIT index (ignored if out of range). Persisted immediately.</summary>
+    public static void Select(int portraitIndex)
     {
-        if (index < 0 || index >= Count)
+        if (portraitIndex < 0 || portraitIndex >= Count)
         {
             return;
         }
-        PlayerPrefs.SetInt(PrefKey, index);
+        PlayerPrefs.SetInt(PrefKey, portraitIndex);
         PlayerPrefs.Save();
+    }
+
+    /// <summary>Display name for a PORTRAIT index (looked up in the table), or "Survivor" if unknown.</summary>
+    public static string NameOf(int portraitIndex)
+    {
+        foreach (Character character in Characters)
+        {
+            if (character.PortraitIndex == portraitIndex)
+            {
+                return character.DisplayName;
+            }
+        }
+        return "Survivor";
     }
 }

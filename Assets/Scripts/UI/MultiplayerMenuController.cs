@@ -30,6 +30,9 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     private Button backButton;
     private Button[] characterButtons;
     private GameObject characterDropdownList;
+    private GameObject dropdownBlocker;
+    private RectTransform cardRect;
+    private RectTransform previewRect;
     private Image previewPortrait;
     private TMP_Text previewName;
     private TMP_Text characterChangeHint;
@@ -195,11 +198,16 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         shadeImg.color = new Color(0.01f, 0.012f, 0.015f, 0.6f);
         shadeImg.raycastTarget = true;
 
-        // Card fills the whole screen (transparent so the hallway background shows).
+        // One centered dark translucent panel (the hallway + shade show around it). The dropdown
+        // overlay is later parented HERE (last sibling) so it renders in front of every control.
         GameObject card = CreateUiObject("Card", transform);
-        RectTransform cardRect = card.GetComponent<RectTransform>();
-        Stretch(cardRect);
-        card.AddComponent<Image>().color = new Color(0.04f, 0.045f, 0.05f, 0.35f);
+        cardRect = card.GetComponent<RectTransform>();
+        cardRect.anchorMin = new Vector2(0.5f, 0.5f);
+        cardRect.anchorMax = new Vector2(0.5f, 0.5f);
+        cardRect.pivot = new Vector2(0.5f, 0.5f);
+        cardRect.sizeDelta = new Vector2(880f, 980f); // centered card; fits within 1080 at 16:9
+        cardRect.anchoredPosition = Vector2.zero;
+        card.AddComponent<Image>().color = new Color(0.055f, 0.062f, 0.078f, 0.95f);
 
         // Red header bar with the title (pinned to the top of the card).
         GameObject header = CreateUiObject("Header", card.transform);
@@ -325,9 +333,10 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         Stretch(codeText.rectTransform);
         copyButton = CreateButton(codeRow.transform, "COPY", CopyJoinCode, WarmColor);
 
-        TMP_Text rosterHeading = CreateText(content.transform, "SURVIVORS", 20f, FontStyles.Bold, TextColor);
-        rosterHeading.alignment = TextAlignmentOptions.Center;
-        SetHeight(rosterHeading.gameObject, 34f);
+        TMP_Text rosterHeading = CreateText(content.transform, "SURVIVORS", 18f, FontStyles.Bold, WarmColor);
+        rosterHeading.alignment = TextAlignmentOptions.Left;
+        rosterHeading.margin = new Vector4(6f, 0f, 0f, 0f);
+        SetHeight(rosterHeading.gameObject, 26f);
 
         rosterTexts = new TMP_Text[MultiplayerSessionController.MaximumPlayers];
         for (int index = 0; index < rosterTexts.Length; index++)
@@ -350,6 +359,10 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         SetHeight(leaveButton.gameObject, 50f);
         SetHeight(reconnectButton.gameObject, 50f);
         // NOTE: BACK lives in the pinned footer (built above) so it is always visible.
+
+        // Character dropdown overlay: built LAST and parented to the card (outside the scroll's
+        // mask) so it renders in FRONT of every control and can overlay the ones below the preview.
+        BuildCharacterDropdownOverlay(card.transform);
     }
 
     private void HandleStateChanged(MultiplayerSessionState state)
@@ -455,48 +468,36 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         }
     }
 
-    // Build the dropdown-style character selector: a "CHARACTER" heading, a clickable selected
-    // preview (portrait + name + CHANGE hint), and a list of the 4 characters that is hidden by
-    // default and expands inline below the preview when opened. Inline expand/collapse keeps the
-    // vertical layout reflowing so the selector never overlaps the JOIN CODE field beneath it.
+    // Build the selected-character PREVIEW row (a gold "CHARACTER" label + a clickable panel that
+    // shows the chosen portrait, name and a CHANGE hint). The expandable list itself is a separate
+    // overlay (see BuildCharacterDropdownOverlay) so it can render in front of the controls below.
     private void BuildCharacterSelector(Transform parent)
     {
-        TMP_Text heading = CreateText(parent, "CHARACTER", 20f, FontStyles.Bold, TextColor);
-        heading.alignment = TextAlignmentOptions.Center;
-        SetHeight(heading.gameObject, 30f);
+        TMP_Text heading = CreateText(parent, "CHARACTER", 16f, FontStyles.Bold, WarmColor);
+        heading.alignment = TextAlignmentOptions.Left;
+        heading.margin = new Vector4(6f, 0f, 0f, 0f);
+        SetHeight(heading.gameObject, 22f);
 
-        // Container that grows/shrinks with the dropdown (its own fitter reports the height up to
-        // the main column, whose VerticalLayoutGroup then reflows everything below).
-        GameObject selector = CreateUiObject("Character Selector", parent);
-        VerticalLayoutGroup selectorLayout = selector.AddComponent<VerticalLayoutGroup>();
-        selectorLayout.spacing = 6f;
-        selectorLayout.childControlWidth = true;
-        selectorLayout.childControlHeight = true;
-        selectorLayout.childForceExpandWidth = true;
-        selectorLayout.childForceExpandHeight = false;
-        ContentSizeFitter selectorFitter = selector.AddComponent<ContentSizeFitter>();
-        selectorFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-        // --- Selected preview (click to open/close the list) ---
-        GameObject previewGo = CreateUiObject("Selected Preview", selector.transform);
+        GameObject previewGo = CreateUiObject("Selected Preview", parent);
         Image previewBg = previewGo.AddComponent<Image>();
         previewBg.color = RowColor;
         Button previewButton = previewGo.AddComponent<Button>();
         previewButton.targetGraphic = previewBg;
         previewButton.onClick.AddListener(ToggleCharacterDropdown);
         ApplyButtonColors(previewButton);
-        SetHeight(previewGo, 76f);
+        SetHeight(previewGo, 84f);
+        previewRect = previewGo.GetComponent<RectTransform>();
 
-        previewPortrait = BuildOptionPortrait(previewGo.transform, 60f, 12f);
+        previewPortrait = BuildOptionPortrait(previewGo.transform, 64f, 12f);
 
-        previewName = CreateText(previewGo.transform, string.Empty, 22f, FontStyles.Bold, TextColor);
+        previewName = CreateText(previewGo.transform, string.Empty, 24f, FontStyles.Bold, TextColor);
         previewName.alignment = TextAlignmentOptions.MidlineLeft;
         RectTransform previewNameRect = previewName.rectTransform;
         previewNameRect.anchorMin = new Vector2(0f, 0f);
         previewNameRect.anchorMax = new Vector2(1f, 1f);
         previewNameRect.pivot = new Vector2(0f, 0.5f);
-        previewNameRect.offsetMin = new Vector2(84f, 0f);
-        previewNameRect.offsetMax = new Vector2(-120f, 0f);
+        previewNameRect.offsetMin = new Vector2(92f, 0f);
+        previewNameRect.offsetMax = new Vector2(-130f, 0f);
 
         characterChangeHint = CreateText(previewGo.transform, "CHANGE", 16f, FontStyles.Bold, WarmColor);
         characterChangeHint.alignment = TextAlignmentOptions.MidlineRight;
@@ -504,19 +505,36 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         hintRect.anchorMin = new Vector2(1f, 0f);
         hintRect.anchorMax = new Vector2(1f, 1f);
         hintRect.pivot = new Vector2(1f, 0.5f);
-        hintRect.sizeDelta = new Vector2(110f, 0f);
-        hintRect.anchoredPosition = new Vector2(-14f, 0f);
+        hintRect.sizeDelta = new Vector2(116f, 0f);
+        hintRect.anchoredPosition = new Vector2(-16f, 0f);
+    }
 
-        // --- Dropdown list (hidden by default) ---
-        characterDropdownList = CreateUiObject("Character Dropdown", selector.transform);
-        characterDropdownList.AddComponent<Image>().color = new Color(0.06f, 0.07f, 0.08f, 0.98f);
+    // Build the floating dropdown (a full-card click blocker + the option list), parented to the
+    // card so it draws in FRONT of every control. Hidden until the preview is clicked; positioned
+    // under the preview on open (see OpenCharacterDropdown). Options come from the character table.
+    private void BuildCharacterDropdownOverlay(Transform cardParent)
+    {
+        // Click blocker: dims the card and closes the dropdown when clicked outside the list.
+        dropdownBlocker = CreateUiObject("Dropdown Blocker", cardParent);
+        Stretch(dropdownBlocker.GetComponent<RectTransform>());
+        dropdownBlocker.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.4f);
+        Button blockerButton = dropdownBlocker.AddComponent<Button>();
+        blockerButton.transition = Selectable.Transition.None;
+        blockerButton.onClick.AddListener(CloseCharacterDropdown);
+
+        // The floating list panel (own ContentSizeFitter sizes its height from the options).
+        characterDropdownList = CreateUiObject("Character Dropdown", cardParent);
+        characterDropdownList.AddComponent<Image>().color = new Color(0.09f, 0.1f, 0.12f, 1f);
         VerticalLayoutGroup listLayout = characterDropdownList.AddComponent<VerticalLayoutGroup>();
-        listLayout.spacing = 4f;
-        listLayout.padding = new RectOffset(6, 6, 6, 6);
+        listLayout.spacing = 6f;
+        listLayout.padding = new RectOffset(8, 8, 8, 8);
         listLayout.childControlWidth = true;
         listLayout.childControlHeight = true;
         listLayout.childForceExpandWidth = true;
         listLayout.childForceExpandHeight = false;
+        ContentSizeFitter listFitter = characterDropdownList.AddComponent<ContentSizeFitter>();
+        listFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained; // width set on open
+        listFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
         characterButtons = new Button[CharacterSelection.Count];
         for (int i = 0; i < CharacterSelection.Count; i++)
@@ -524,34 +542,37 @@ public sealed class MultiplayerMenuController : MonoBehaviour
             characterButtons[i] = BuildCharacterOption(characterDropdownList.transform, i);
         }
 
+        dropdownBlocker.SetActive(false);
         characterDropdownList.SetActive(false);
         RefreshCharacterPreview();
         RefreshCharacterButtons();
     }
 
-    // One row in the dropdown list: portrait (left) + name, on a tinted background whose colour
-    // RefreshCharacterButtons flips to mark the selected character.
-    private Button BuildCharacterOption(Transform parent, int index)
+    // One row in the dropdown list: portrait (left) + name. Driven by the character table so the
+    // name and portrait always match; the background tint marks the selected survivor.
+    private Button BuildCharacterOption(Transform parent, int displayOrder)
     {
-        GameObject optionGo = CreateUiObject(CharacterSelection.NameOf(index) + " Option", parent);
+        CharacterSelection.Character character = CharacterSelection.Characters[displayOrder];
+
+        GameObject optionGo = CreateUiObject(character.DisplayName + " Option", parent);
         Image background = optionGo.AddComponent<Image>();
         background.color = CharacterIdleColor;
         Button button = optionGo.AddComponent<Button>();
         button.targetGraphic = background;
-        button.onClick.AddListener(() => SelectCharacter(index));
+        button.onClick.AddListener(() => SelectCharacter(character.PortraitIndex));
         ApplyButtonColors(button);
-        SetHeight(optionGo, 56f);
+        SetHeight(optionGo, 60f);
 
-        BuildOptionPortrait(optionGo.transform, 44f, 8f, index);
+        BuildOptionPortrait(optionGo.transform, 48f, 8f, character.PortraitIndex);
 
-        TMP_Text name = CreateText(optionGo.transform, CharacterSelection.NameOf(index).ToUpperInvariant(),
+        TMP_Text name = CreateText(optionGo.transform, character.DisplayName.ToUpperInvariant(),
             18f, FontStyles.Bold, TextColor);
         name.alignment = TextAlignmentOptions.MidlineLeft;
         RectTransform nameRect = name.rectTransform;
         nameRect.anchorMin = new Vector2(0f, 0f);
         nameRect.anchorMax = new Vector2(1f, 1f);
         nameRect.pivot = new Vector2(0f, 0.5f);
-        nameRect.offsetMin = new Vector2(62f, 0f);
+        nameRect.offsetMin = new Vector2(66f, 0f);
         nameRect.offsetMax = new Vector2(-12f, 0f);
 
         return button;
@@ -595,27 +616,61 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         }
     }
 
-    // Show/hide the dropdown list and swap the hint between CHANGE and CLOSE.
+    // Open or close the dropdown depending on its current state.
     private void ToggleCharacterDropdown()
     {
-        if (characterDropdownList == null)
+        if (characterDropdownList != null && characterDropdownList.activeSelf)
         {
-            return;
+            CloseCharacterDropdown();
         }
-        bool open = !characterDropdownList.activeSelf;
-        characterDropdownList.SetActive(open);
-        if (characterChangeHint != null)
+        else
         {
-            characterChangeHint.text = open ? "CLOSE" : "CHANGE";
+            OpenCharacterDropdown();
         }
     }
 
-    // Store the chosen character locally, update the preview + list highlight, and close the list.
-    private void SelectCharacter(int index)
+    // Show the dropdown in FRONT of everything: activate the blocker + list, raise them to the top
+    // sibling, size the list to the preview width and hang it just below the preview.
+    private void OpenCharacterDropdown()
     {
-        CharacterSelection.Select(index);
-        RefreshCharacterPreview();
-        RefreshCharacterButtons();
+        if (characterDropdownList == null || previewRect == null || cardRect == null)
+        {
+            return;
+        }
+
+        dropdownBlocker.SetActive(true);
+        characterDropdownList.SetActive(true);
+        dropdownBlocker.transform.SetAsLastSibling();
+        characterDropdownList.transform.SetAsLastSibling();
+
+        RectTransform listRect = (RectTransform)characterDropdownList.transform;
+        listRect.anchorMin = new Vector2(0.5f, 0.5f);
+        listRect.anchorMax = new Vector2(0.5f, 0.5f);
+        listRect.pivot = new Vector2(0.5f, 1f); // top-centre pivot so it hangs downward
+        listRect.sizeDelta = new Vector2(previewRect.rect.width, listRect.sizeDelta.y);
+
+        // Convert the preview's bottom-centre (world/screen for an overlay canvas) into the card's
+        // local space so the list sits right under the preview regardless of scroll position.
+        Vector3[] corners = new Vector3[4];
+        previewRect.GetWorldCorners(corners); // 0=BL, 1=TL, 2=TR, 3=BR
+        Vector3 bottomCentreWorld = (corners[0] + corners[3]) * 0.5f;
+        Vector2 screenPoint = RectTransformUtility.WorldToScreenPoint(null, bottomCentreWorld);
+        RectTransformUtility.ScreenPointToLocalPointInRectangle(cardRect, screenPoint, null, out Vector2 local);
+        listRect.anchoredPosition = new Vector2(local.x, local.y - 6f);
+
+        if (characterChangeHint != null)
+        {
+            characterChangeHint.text = "CLOSE";
+        }
+    }
+
+    // Hide the dropdown + blocker and restore the CHANGE hint.
+    private void CloseCharacterDropdown()
+    {
+        if (dropdownBlocker != null)
+        {
+            dropdownBlocker.SetActive(false);
+        }
         if (characterDropdownList != null)
         {
             characterDropdownList.SetActive(false);
@@ -626,6 +681,15 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         }
     }
 
+    // Store the chosen portrait index locally, update the preview + list highlight, close the list.
+    private void SelectCharacter(int portraitIndex)
+    {
+        CharacterSelection.Select(portraitIndex);
+        RefreshCharacterPreview();
+        RefreshCharacterButtons();
+        CloseCharacterDropdown();
+    }
+
     // Update the selected preview panel from the stored selection (or a neutral prompt if none).
     private void RefreshCharacterPreview()
     {
@@ -634,7 +698,7 @@ public sealed class MultiplayerMenuController : MonoBehaviour
             return;
         }
 
-        int selected = CharacterSelection.SelectedIndex;
+        int selected = CharacterSelection.SelectedIndex; // stored value is the portrait index
         if (selected >= 0)
         {
             previewName.text = CharacterSelection.NameOf(selected).ToUpperInvariant();
@@ -648,8 +712,8 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         }
     }
 
-    // Highlight the selected option (AccentColor) and leave the rest idle. Safe before the list
-    // exists (guards on null) and when nothing is chosen (no option highlighted).
+    // Highlight the selected option (AccentColor) and leave the rest idle, matching each option's
+    // portrait index against the stored selection. Safe before the list exists / when none chosen.
     private void RefreshCharacterButtons()
     {
         if (characterButtons == null)
@@ -666,7 +730,8 @@ public sealed class MultiplayerMenuController : MonoBehaviour
             }
             if (characterButtons[i].targetGraphic is Image image)
             {
-                image.color = i == selected ? AccentColor : CharacterIdleColor;
+                bool isSelected = CharacterSelection.Characters[i].PortraitIndex == selected;
+                image.color = isSelected ? AccentColor : CharacterIdleColor;
             }
         }
     }
