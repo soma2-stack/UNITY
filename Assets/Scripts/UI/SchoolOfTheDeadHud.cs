@@ -123,6 +123,9 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private Image[] perkSquares;
     private TMP_Text[] perkLabels;
     private GameObject[] perkSlots;
+    // Custom perk icon sprites, one per PerkOrder index (null when no icon PNG is present, in
+    // which case the coloured placeholder square + abbreviation is used instead). Loaded once.
+    private Sprite[] perkIcons;
     // Optional perk-row background art; null when no perk_row.png was found (row stays
     // transparent, as before). Only shown when at least one perk is owned.
     private Image perkRowBackground;
@@ -435,9 +438,21 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             if (owned)
             {
                 ownedCount++;
-                // Placeholder square coloured per perk; swap for a PNG on perkSquares[i].sprite.
-                perkSquares[i].color = PerkManager.PerkColor(perk);
-                perkLabels[i].text = PerkManager.PerkAbbreviation(perk);
+                Sprite icon = perkIcons != null ? perkIcons[i] : null;
+                if (icon != null)
+                {
+                    // Custom icon: show it full-colour and drop the redundant abbreviation label.
+                    perkSquares[i].sprite = icon;
+                    perkSquares[i].color = Color.white;
+                    perkLabels[i].text = string.Empty;
+                }
+                else
+                {
+                    // No custom icon: fall back to the coloured placeholder square + abbreviation.
+                    perkSquares[i].sprite = null;
+                    perkSquares[i].color = PerkManager.PerkColor(perk);
+                    perkLabels[i].text = PerkManager.PerkAbbreviation(perk);
+                }
             }
         }
 
@@ -625,6 +640,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         perkSlots = new GameObject[n];
         perkSquares = new Image[n];
         perkLabels = new TMP_Text[n];
+        perkIcons = new Sprite[n];
 
         for (int i = 0; i < n; i++)
         {
@@ -644,15 +660,41 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             square.pivot = new Vector2(0.5f, 1f);
             square.sizeDelta = new Vector2(36f, 36f);
             square.anchoredPosition = Vector2.zero;
+            Image squareImg = square.GetComponent<Image>();
+            squareImg.preserveAspect = true; // custom icons keep their aspect
+
+            // Custom perk icon from Resources/HUD/perks/<PerkType>. Loaded once; used in
+            // RefreshPerks. Falls back to the coloured square + abbreviation when absent.
+            perkIcons[i] = LoadPerkIcon(PerkOrder[i]);
 
             TMP_Text label = MakeLabel("Label", slotRt, "", OffWhite, 11, TextAlignmentOptions.Top,
                 new Vector2(0f, 2f), new Vector2(48f, 14f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
 
             perkSlots[i] = slot;
-            perkSquares[i] = square.GetComponent<Image>();
+            perkSquares[i] = squareImg;
             perkLabels[i] = label;
             slot.SetActive(false);
         }
+    }
+
+    // Load a perk's custom icon from Resources/HUD/perks/<PerkType>. Tries a Sprite first (if the
+    // PNG was imported as a Sprite) and otherwise builds one from a Texture2D, so it works whatever
+    // the import type is. Returns null when no icon PNG is present (coloured square is then used).
+    private static Sprite LoadPerkIcon(PerkType perk)
+    {
+        string path = "HUD/perks/" + perk;
+        Sprite sprite = Resources.Load<Sprite>(path);
+        if (sprite != null)
+        {
+            return sprite;
+        }
+
+        Texture2D tex = Resources.Load<Texture2D>(path);
+        if (tex != null)
+        {
+            return Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+        }
+        return null;
     }
 
     // Bottom-right notebook ammo/weapon card.
