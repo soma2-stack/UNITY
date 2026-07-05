@@ -831,17 +831,25 @@ public class WeaponController : NetworkBehaviour
 
             // 3. Instantiate it under the holder.
             GameObject model = Instantiate(cur.weaponModel, weaponHolder);
-            // 4. Position/orient/scale it for first person.
+            // 4. Position/orient/scale it for first person. Scale PRESERVES the prefab's own scale
+            // and applies weaponModelLocalScale as a component-wise MULTIPLIER (was: it overwrote
+            // the scale outright, which forced every model to the multiplier's default of (1,1,1)
+            // and made the larger-authored new Meshy guns spawn tiny). Old weapons whose prefab
+            // scale is (1,1,1) are unaffected — (1,1,1) * (1,1,1) stays (1,1,1). The multiplier is
+            // still a live tuning knob (e.g. 2,2,2 doubles the model).
+            Vector3 prefabScale = model.transform.localScale;
             model.transform.localPosition = weaponModelLocalPosition;
             model.transform.localEulerAngles = weaponModelLocalEuler;
-            model.transform.localScale = weaponModelLocalScale;
+            model.transform.localScale = Vector3.Scale(prefabScale, weaponModelLocalScale);
             // 5. Make sure it's visible.
             model.SetActive(true);
             _spawnedViewModel = model;
 
-            Debug.Log("[WeaponController] New view model spawned under WeaponHolder: " + model.name);
-            Debug.Log("[WeaponController] View model local TRS -> pos " + model.transform.localPosition +
-                      " euler " + model.transform.localEulerAngles + " scale " + model.transform.localScale);
+            Debug.Log("[WeaponController] New view model spawned under WeaponHolder: " + model.name +
+                      " ('" + cur.weaponName + "')");
+            Debug.Log("[WeaponController] View model scale -> prefab " + prefabScale +
+                      " * multiplier " + weaponModelLocalScale + " = " + model.transform.localScale +
+                      "  (pos " + model.transform.localPosition + " euler " + model.transform.localEulerAngles + ")");
 
             // 6. Re-bind the recoil/muzzle/sound script to the spawned model.
             gunRecoil = model.GetComponentInChildren<SimpleGunRecoil>(true);
