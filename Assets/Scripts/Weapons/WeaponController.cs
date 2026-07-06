@@ -63,10 +63,23 @@ public class WeaponController : NetworkBehaviour
     public Transform weaponHolder;
     [Tooltip("Local position applied to a spawned weapon model under the holder.")]
     public Vector3 weaponModelLocalPosition = Vector3.zero;
-    [Tooltip("Local euler rotation (degrees) applied to a spawned weapon model under the holder.")]
+    [Tooltip("Extra euler rotation (degrees) applied ON TOP of the model prefab's own authored " +
+             "rotation. 0 = keep the prefab's orientation (old weapons are authored upright, the " +
+             "new Meshy guns bake their own forward rotation). Use this to nudge orientation.")]
     public Vector3 weaponModelLocalEuler = Vector3.zero;
     [Tooltip("Local scale applied to a spawned weapon model under the holder.")]
     public Vector3 weaponModelLocalScale = Vector3.one;
+
+    [Header("Muzzle Flash Fallback (visual only)")]
+    [Tooltip("Optional muzzle-flash prefab used ONLY when a spawned weapon model has no muzzle " +
+             "ParticleSystem of its own (e.g. the clean Meshy gun models). Spawned under the " +
+             "WeaponHolder at the offset below so the gun still flashes. Leave empty for no muzzle " +
+             "flash — shooting/hit detection are unaffected either way.")]
+    public GameObject muzzleFlashFallbackPrefab;
+    [Tooltip("Local position (under the WeaponHolder) of the fallback muzzle flash — tune to the barrel tip.")]
+    public Vector3 muzzleFlashLocalPosition = new Vector3(0f, 0f, 0.5f);
+    [Tooltip("Local euler rotation of the fallback muzzle flash (aim it forward along the barrel).")]
+    public Vector3 muzzleFlashLocalEuler = Vector3.zero;
 
     [Header("Melee / Knife")]
     [Tooltip("Key to perform an instant-kill knife/melee attack.")]
@@ -99,6 +112,8 @@ public class WeaponController : NetworkBehaviour
     private int _cameraResolveAttempts;  // capped retries so we stop searching for a missing camera
     private readonly Queue<GameObject> _bloodPool = new Queue<GameObject>(); // pooled blood-effect instances
     private GameObject _spawnedViewModel; // first-person model currently spawned under the holder
+    private GameObject _spawnedMuzzleFallback; // fallback muzzle-flash instance (when the model has none)
+    private bool _warnedNoMuzzle; // warn only once when a model has no muzzle and no fallback is set
     private bool initialized;
 
     // Pack-a-Punch upgrade multipliers — adjust here rather than hunting magic numbers.
@@ -799,6 +814,11 @@ public class WeaponController : NetworkBehaviour
             Destroy(_spawnedViewModel);
             _spawnedViewModel = null;
         }
+        if (_spawnedMuzzleFallback != null)
+        {
+            Destroy(_spawnedMuzzleFallback);
+            _spawnedMuzzleFallback = null;
+        }
 
         // Hide any legacy IN-SCENE weapon models so they don't linger alongside the
         // spawned view model (prefab-asset references are unaffected by this).
@@ -838,8 +858,13 @@ public class WeaponController : NetworkBehaviour
             // scale is (1,1,1) are unaffected — (1,1,1) * (1,1,1) stays (1,1,1). The multiplier is
             // still a live tuning knob (e.g. 2,2,2 doubles the model).
             Vector3 prefabScale = model.transform.localScale;
+            Quaternion prefabRotation = model.transform.localRotation;
             model.transform.localPosition = weaponModelLocalPosition;
-            model.transform.localEulerAngles = weaponModelLocalEuler;
+            // Rotation PRESERVES the prefab's authored orientation and applies weaponModelLocalEuler
+            // as an offset (was: it overwrote the rotation, discarding the new Meshy models' baked
+            // forward rotation -> they spawned sideways). Old weapons have identity prefab rotation,
+            // so Euler(euler) * identity == the previous behaviour exactly.
+            model.transform.localRotation = Quaternion.Euler(weaponModelLocalEuler) * prefabRotation;
             model.transform.localScale = Vector3.Scale(prefabScale, weaponModelLocalScale);
             // 5. Make sure it's visible.
             model.SetActive(true);
@@ -946,16 +971,30 @@ public class WeaponController : NetworkBehaviour
         gunRecoil.muzzleFlash = null;
 
         ParticleSystem muzzle = FindMuzzleParticle(_spawnedViewModel);
+
+        // Fallback: the model has no muzzle particle of its own (e.g. the clean Meshy guns). If a
+        // fallback prefab is assigned, spawn it under the holder at the tunable offset and use its
+        // particle. Purely visual — nothing about shooting/hit detection depends on it.
+        if (muzzle == null && muzzleFlashFallbackPrefab != null && weaponHolder != null)
+        {
+            _spawnedMuzzleFallback = Instantiate(muzzleFlashFallbackPrefab, weaponHolder);
+            _spawnedMuzzleFallback.transform.localPosition = muzzleFlashLocalPosition;
+            _spawnedMuzzleFallback.transform.localEulerAngles = muzzleFlashLocalEuler;
+            muzzle = _spawnedMuzzleFallback.GetComponentInChildren<ParticleSystem>(true);
+        }
+
         if (muzzle != null)
         {
             gunRecoil.muzzleFlash = muzzle;
             Debug.Log("[WeaponController] Muzzle particle bound for '" + weaponName + "' -> " + muzzle.name +
-                      " (model: " + (_spawnedViewModel != null ? _spawnedViewModel.name : "<none>") + ").");
+                      (_spawnedMuzzleFallback != null ? " (fallback prefab)" : "") + ".");
         }
-        else
+        else if (!_warnedNoMuzzle)
         {
-            Debug.LogWarning("[WeaponController] No muzzle ParticleSystem found in the view model for '" +
-                             weaponName + "'; muzzle flash disabled for this weapon (shooting still works).");
+            // Warn once only, so a whole match of muzzle-less weapons doesn't spam the console.
+            _warnedNoMuzzle = true;
+            Debug.LogWarning("[WeaponController] No muzzle ParticleSystem in the weapon model and no " +
+                             "muzzleFlashFallbackPrefab assigned; muzzle flash is off (shooting still works).");
         }
     }
 
