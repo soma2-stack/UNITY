@@ -10,15 +10,15 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: -8679921383154817045, guid: 1871a9d302f356a4ca0a27b4d34e8aa6, type: 3}
       propertyPath: m_LocalScale.x
-      value: 42
+      value: 25
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 1871a9d302f356a4ca0a27b4d34e8aa6, type: 3}
       propertyPath: m_LocalScale.y
-      value: 42
+      value: 25
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 1871a9d302f356a4ca0a27b4d34e8aa6, type: 3}
       propertyPath: m_LocalScale.z
-      value: 42
+      value: 25
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 1871a9d302f356a4ca0a27b4d34e8aa6, type: 3}
       propertyPath: m_LocalPosition.x
@@ -93,10 +93,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 50909cd971535de4281b31de31d6a547, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SimpleGunRecoil
-  kickBackPosition: {x: 0, y: 0, z: -0.08}
-  kickBackRotation: {x: -6, y: 1, z: 0}
-  kickSpeed: 25
-  returnSpeed: 12
+  cameraKickPitch: 0.6
+  cameraKickYaw: 0.05
+  cameraRecoverySpeed: 8
+  randomYawAmount: 0.25
+  maxCameraRecoil: 4
+  weaponKickBack: 0.05
+  weaponKickUp: 0.015
+  weaponRotationKick: 4
+  weaponRecoverySpeed: 10
+  maxWeaponRecoil: 0.12
+  recoilSmoothing: 20
   muzzleFlash: {fileID: 0}
   gunAudio: {fileID: 0}
   gunshotSound: {fileID: 0}
+  debugRecoil: 0
