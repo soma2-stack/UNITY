@@ -81,12 +81,17 @@ public class RoundStartBanner : MonoBehaviour
         Rect rect = new Rect((Screen.width - w) * 0.5f, Screen.height * 0.32f, w, h);
 
         Color prev = GUI.color;
-        // Black drop shadow offset 2px, then the white banner.
+        DrawShadowedLabel(rect, text, alpha);
+        GUI.color = prev;
+    }
+
+    // Black drop shadow offset 2px, then the white banner on top.
+    private void DrawShadowedLabel(Rect rect, string text, float alpha)
+    {
         GUI.color = new Color(0f, 0f, 0f, alpha);
         GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), text, bannerStyle);
         GUI.color = new Color(1f, 1f, 1f, alpha);
         GUI.Label(rect, text, bannerStyle);
-        GUI.color = prev;
     }
 
     private void EnsureStyle()
