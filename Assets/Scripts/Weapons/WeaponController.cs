@@ -1101,7 +1101,16 @@ public class WeaponController : NetworkBehaviour
         yield return new WaitForSeconds(Mathf.Max(0f, w.reloadTime) / reloadMul);
 
         // Only refill if this is still the equipped weapon (switch cancels via StopAllCoroutines).
-        w.Reload();
+        if (PowerupManager.InfiniteAmmoActive)
+        {
+            // Infinite Ammo: top the magazine to full WITHOUT spending reserve (matches a
+            // normal reload's magazine end-state; reserve is left valid and never negative).
+            w.ammoInMag = Mathf.Max(0, w.magazineSize);
+        }
+        else
+        {
+            w.Reload();
+        }
         isReloading = false;
 #if UNITY_EDITOR
         Debug.Log("[WeaponController] Reloaded " + w.weaponName + " (" + w.ammoInMag + "/" + w.ammoInReserve + ")");
@@ -1452,9 +1461,16 @@ public class WeaponController : NetworkBehaviour
 
     private void Fire(Weapon w)
     {
-        if (!w.ConsumeRound())
+        // Infinite Ammo (team power-up): fire freely without draining the magazine. Fire()
+        // is only reached when the mag already has a round (HandleFiring gates on
+        // HasAmmoInMag), so skipping the decrement simply keeps the count where it is —
+        // ammo never goes negative and normal consumption resumes when the effect ends.
+        if (!PowerupManager.InfiniteAmmoActive)
         {
-            return;
+            if (!w.ConsumeRound())
+            {
+                return;
+            }
         }
 
         // Immediate first-person feedback for the shooter (recoil / muzzle / sound).

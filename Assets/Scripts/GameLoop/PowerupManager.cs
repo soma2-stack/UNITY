@@ -11,7 +11,9 @@ public enum PowerupType
     InstaKill,
     DoublePoints,
     Nuke,
-    Carpenter,
+    // Team-wide Infinite Ammo (replaces the old, unused Carpenter drop). Kept at the
+    // same enum position (4) so drop weights and network serialization stay compatible.
+    InfiniteAmmo,
 }
 
 /// <summary>
@@ -40,6 +42,8 @@ public class PowerupManager : MonoBehaviour
     public float instaKillDuration = 30f;
     [Tooltip("Seconds Double Points stays active.")]
     public float doublePointsDuration = 30f;
+    [Tooltip("Seconds team-wide Infinite Ammo stays active.")]
+    public float infiniteAmmoDuration = 15f;
 
     [Header("Nuke")]
     [Tooltip("Bonus points awarded to the player when a Nuke is collected.")]
@@ -47,8 +51,10 @@ public class PowerupManager : MonoBehaviour
     [Tooltip("Flash the screen white when a Nuke fires (CoD-style). Disable to skip the flash.")]
     public bool nukeFlashEnabled = true;
 
-    [Header("Carpenter")]
-    [Tooltip("Bonus points awarded when a Carpenter is collected (boards up barricades in classic CoD).")]
+    [Header("Legacy (unused)")]
+    [Tooltip("Legacy Carpenter bonus points. Unused since the Carpenter slot became the " +
+             "Infinite Ammo power-up; kept only so any scene-serialized PowerupManager " +
+             "retains its stored value.")]
     public int carpenterBonusPoints = 200;
 
     [Header("Pickup")]
@@ -63,8 +69,12 @@ public class PowerupManager : MonoBehaviour
     /// <summary>True while Double Points is active.</summary>
     public static bool DoublePointsActive { get; private set; }
 
+    /// <summary>True while team-wide Infinite Ammo is active (read by WeaponController).</summary>
+    public static bool InfiniteAmmoActive { get; private set; }
+
     private static float instaKillEndTime;
     private static float doublePointsEndTime;
+    private static float infiniteAmmoEndTime;
 
     private bool nukeFlashActive;   // true while the nuke white flash is on screen
     private float nukeFlashEndTime;
@@ -77,8 +87,8 @@ public class PowerupManager : MonoBehaviour
 
     // Weighted drop table (CoD-style: common drops far more frequent than rare ones).
     // Index order MUST match the PowerupType enum: MaxAmmo=0, InstaKill=1,
-    // DoublePoints=2, Nuke=3, Carpenter=4. Total is 100 so each weight is ~its %:
-    //   MaxAmmo 35%, InstaKill 20%, DoublePoints 30%, Nuke 10%, Carpenter 5%.
+    // DoublePoints=2, Nuke=3, InfiniteAmmo=4. Total is 100 so each weight is ~its %:
+    //   MaxAmmo 35%, InstaKill 20%, DoublePoints 30%, Nuke 10%, InfiniteAmmo 5%.
     private static readonly float[] DropWeights = { 35f, 20f, 30f, 10f, 5f };
 
     private GUIStyle hudStyle;
@@ -124,8 +134,10 @@ public class PowerupManager : MonoBehaviour
     {
         InstaKillActive = false;
         DoublePointsActive = false;
+        InfiniteAmmoActive = false;
         instaKillEndTime = 0f;
         doublePointsEndTime = 0f;
+        infiniteAmmoEndTime = 0f;
         PlayerPoints.PointsMultiplier = 1; // clear any DoublePointsMultiplier back to normal
     }
 
@@ -176,6 +188,10 @@ public class PowerupManager : MonoBehaviour
         {
             DoublePointsActive = false;
             PlayerPoints.PointsMultiplier = 1;
+        }
+        if (InfiniteAmmoActive && Time.time >= infiniteAmmoEndTime)
+        {
+            InfiniteAmmoActive = false;
         }
         if (nukeFlashActive && Time.time >= nukeFlashEndTime)
         {
@@ -337,17 +353,18 @@ public class PowerupManager : MonoBehaviour
                 StartCoroutine(NukeRoutine());
                 break;
 
-            case PowerupType.Carpenter:
-            {
-                // No boardable-window system in this project, so Carpenter awards its
-                // classic flat points bonus to the player.
-                if (PlayerPoints.Instance != null && carpenterBonusPoints > 0)
-                {
-                    // Carpenter bonus goes to every player (per-player economy).
-                    PlayerPoints.Instance.AddPointsToAll(carpenterBonusPoints);
-                }
+            case PowerupType.InfiniteAmmo:
+                // Team-wide Infinite Ammo: activate (or refresh) the timer and broadcast it so
+                // every player — host and clients — fires without spending ammo for its duration.
+                // Setting the end time unconditionally refreshes to a fresh window when picked up
+                // again while already active (mirrors the Double Points refresh behaviour), so
+                // repeated pickups never stack into duplicate timers.
+                InfiniteAmmoActive = true;
+                infiniteAmmoEndTime = Time.time + Mathf.Max(0f, infiniteAmmoDuration);
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, infiniteAmmoDuration);
+                Debug.Log("[PowerupManager] Infinite Ammo activated/refreshed (" +
+                          Mathf.Max(0f, infiniteAmmoDuration) + "s).");
                 break;
-            }
         }
 
         Debug.Log("[PowerupManager] Collected power-up: " + type);
@@ -376,6 +393,10 @@ public class PowerupManager : MonoBehaviour
                     Instance.nukeFlashEndTime = Time.time + 0.3f;
                 }
                 break;
+            case PowerupType.InfiniteAmmo:
+                InfiniteAmmoActive = true;
+                infiniteAmmoEndTime = Time.time + Mathf.Max(0f, remaining);
+                break;
         }
     }
 
@@ -394,6 +415,10 @@ public class PowerupManager : MonoBehaviour
         {
             NetworkGameplayCoordinator.SendPowerupEffectToClient(clientId, PowerupType.DoublePoints, Mathf.Max(0f, doublePointsEndTime - Time.time));
         }
+        if (InfiniteAmmoActive)
+        {
+            NetworkGameplayCoordinator.SendPowerupEffectToClient(clientId, PowerupType.InfiniteAmmo, Mathf.Max(0f, infiniteAmmoEndTime - Time.time));
+        }
     }
 
     /// <summary>Display name + base colour for a power-up type (shared by pickups + HUD).</summary>
@@ -405,7 +430,7 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InstaKill: return "INSTA-KILL";
             case PowerupType.DoublePoints: return "DOUBLE POINTS";
             case PowerupType.Nuke: return "NUKE";
-            case PowerupType.Carpenter: return "CARPENTER";
+            case PowerupType.InfiniteAmmo: return "INFINITE AMMO";
             default: return type.ToString();
         }
     }
@@ -418,7 +443,7 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InstaKill: return new Color(1f, 0.85f, 0.2f);   // gold
             case PowerupType.DoublePoints: return new Color(1f, 0.3f, 0.3f); // red
             case PowerupType.Nuke: return new Color(0.4f, 1f, 0.4f);         // green
-            case PowerupType.Carpenter: return new Color(0.7f, 0.45f, 0.2f); // wood brown
+            case PowerupType.InfiniteAmmo: return new Color(0.7f, 0.45f, 0.2f); // placeholder (inherited Carpenter brown) — recolor later
             default: return Color.white;
         }
     }
@@ -435,7 +460,7 @@ public class PowerupManager : MonoBehaviour
             GUI.color = prevC;
         }
 
-        if (!InstaKillActive && !DoublePointsActive)
+        if (!InstaKillActive && !DoublePointsActive && !InfiniteAmmoActive)
         {
             return;
         }
@@ -461,6 +486,11 @@ public class PowerupManager : MonoBehaviour
         {
             DrawEffect("DOUBLE POINTS  " + Mathf.CeilToInt(doublePointsEndTime - Time.time) + "s",
                 ColorOf(PowerupType.DoublePoints), ref y);
+        }
+        if (InfiniteAmmoActive)
+        {
+            DrawEffect("INFINITE AMMO  " + Mathf.CeilToInt(infiniteAmmoEndTime - Time.time) + "s",
+                ColorOf(PowerupType.InfiniteAmmo), ref y);
         }
     }
 
