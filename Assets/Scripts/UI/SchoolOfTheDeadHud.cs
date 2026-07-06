@@ -156,7 +156,8 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const float Stage2MinAlpha = 0.35f;
     private const float Stage2MaxAlpha = 0.85f;
     // How fast the displayed alpha chases its target (alpha units per second, unscaled).
-    private const float OverlayAlphaLerpSpeed = 3f;
+    // Slightly quick so the overlay fades down a touch faster as the player heals.
+    private const float OverlayAlphaLerpSpeed = 5f;
     // Optional tiny hit punch added on damage; it settles back to the health-based target
     // (never below it), so it can never fade the overlay to zero while the player is hurt.
     private const float OverlayHitPunch = 0.15f;

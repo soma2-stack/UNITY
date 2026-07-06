@@ -1075,6 +1075,23 @@ public class WeaponController : NetworkBehaviour
         return ps;
     }
 
+    // Reload eligibility, Infinite Ammo aware. Normally a weapon needs spare reserve to reload
+    // (Weapon.CanReload). During Infinite Ammo the magazine is refilled for free, so a partial
+    // (or empty) magazine can reload even at 0 reserve — the refill spends no reserve, so ammo
+    // never goes negative. A full magazine is still never "reloadable".
+    private static bool CanReloadNow(Weapon w)
+    {
+        if (w == null)
+        {
+            return false;
+        }
+        if (PowerupManager.InfiniteAmmoActive)
+        {
+            return w.ammoInMag < w.magazineSize;
+        }
+        return w.CanReload;
+    }
+
     private void HandleReloadInput()
     {
         Weapon w = Current;
@@ -1083,7 +1100,7 @@ public class WeaponController : NetworkBehaviour
             return;
         }
 
-        if (Input.GetKeyDown(KeyCode.R) && w.CanReload)
+        if (Input.GetKeyDown(KeyCode.R) && CanReloadNow(w))
         {
             StartCoroutine(ReloadRoutine(w));
         }
@@ -1199,13 +1216,14 @@ public class WeaponController : NetworkBehaviour
         // Out of ammo in the magazine: auto-reload if possible, otherwise dry-fire.
         if (!w.HasAmmoInMag)
         {
-            if (w.CanReload)
+            if (CanReloadNow(w))
             {
                 StartCoroutine(ReloadRoutine(w));
             }
             else
             {
-                // Truly empty: nothing in the mag and nothing in reserve to reload.
+                // Truly empty: nothing in the mag and nothing in reserve to reload (and no
+                // Infinite Ammo to refill it for free).
                 OnDryFire?.Invoke();
             }
             return;
