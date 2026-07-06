@@ -134,6 +134,26 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private float nextZombieCountRefresh;
     private int cachedZombieCount;
 
+    // --- Damage screen overlay (two-stage red flash; LOCAL player only) -------------------
+    // A single full-screen Image behind the rest of the HUD. On an accepted hit it snaps to
+    // full alpha showing red_screen_hit_1 (first hit of the streak) or red_screen_hit_2
+    // (second+), holds briefly, then fades. Purely visual: it only READS PlayerHealth and
+    // never touches health/damage. Sprites are lazily loaded and cached; a missing PNG is
+    // warned once and simply skipped. All timing uses unscaled time.
+    private Image damageOverlay;
+    private readonly Sprite[] damageSprites = new Sprite[2];   // [0]=hit_1, [1]=hit_2
+    private readonly bool[] damageSpriteTried = new bool[2];
+    private PlayerHealth subscribedHealth;   // the PlayerHealth we're currently subscribed to
+    private int damageStreak;                // accepted hits in the current streak (0 = none)
+    private float lastDamageTime = -999f;    // unscaledTime of the last accepted hit
+    private float overlayAlpha;              // current overlay alpha (0 = hidden)
+    private float overlayHoldUntil;          // unscaledTime to hold full alpha until fading
+
+    private const float OverlayHold = 0.20f;      // seconds held at full alpha before fading
+    private const float OverlayFade = 0.65f;      // seconds to fade from full alpha to 0
+    private const float OverlayMaxAlpha = 1.0f;   // peak overlay alpha on a hit
+    private const float DefaultStreakReset = 4f;  // streak reset delay when regenDelay is unavailable
+
     private bool built;
     private bool suppressedOldHud;
 
@@ -192,6 +212,13 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
 
     private void OnDestroy()
     {
+        // Always drop the damage-overlay subscription so we never leak or fire into a
+        // destroyed HUD.
+        if (subscribedHealth != null)
+        {
+            subscribedHealth.OnDamageTaken -= HandleDamageTaken;
+            subscribedHealth = null;
+        }
         if (suppressedOldHud)
         {
             SuppressLegacyHud(false); // let the legacy HUD resume if we go away
@@ -218,11 +245,13 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         }
 
         ResolveReferences();
+        SyncDamageSubscription();
         RefreshRoundAndZombies();
         RefreshStatusCard();
         RefreshPortrait();
         RefreshPerks();
         RefreshWeapon();
+        UpdateDamageOverlay();
     }
 
     private void ResolveReferences()
@@ -489,6 +518,155 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     }
 
     // ---------------------------------------------------------------------------------------
+    // Damage screen overlay (LOCAL player only; purely visual)
+    // ---------------------------------------------------------------------------------------
+
+    // Keep the OnDamageTaken subscription pointed at the current local PlayerHealth. If the
+    // local reference changes (e.g. the player respawns / re-registers), unsubscribe from the
+    // old one and subscribe to the new one. `health` is refreshed to LocalPlayer.Health each
+    // frame by ResolveReferences.
+    private void SyncDamageSubscription()
+    {
+        if (health == subscribedHealth)
+        {
+            return;
+        }
+        if (subscribedHealth != null)
+        {
+            subscribedHealth.OnDamageTaken -= HandleDamageTaken;
+        }
+        subscribedHealth = health;
+        if (subscribedHealth != null)
+        {
+            subscribedHealth.OnDamageTaken += HandleDamageTaken;
+        }
+    }
+
+    // Raised by the LOCAL player's PlayerHealth when accepted damage is applied (fires only for
+    // this peer's own player). Advances the two-stage streak and flashes the overlay. Never
+    // touches health/damage.
+    private void HandleDamageTaken(int amount)
+    {
+        if (amount <= 0)
+        {
+            return;
+        }
+
+        float now = Time.unscaledTime;
+
+        // Reset the streak if enough quiet time has passed since the last hit, so a fresh
+        // engagement starts again at image 1. Prefer the health's regen delay; fall back to 4s.
+        float resetDelay = subscribedHealth != null && subscribedHealth.regenDelay > 0f
+            ? subscribedHealth.regenDelay
+            : DefaultStreakReset;
+        if (now - lastDamageTime > resetDelay)
+        {
+            damageStreak = 0;
+        }
+
+        damageStreak++;
+        lastDamageTime = now;
+
+        // First hit of the streak -> image 1; second or later -> image 2.
+        int spriteIndex = damageStreak >= 2 ? 1 : 0;
+        ShowDamageOverlay(spriteIndex, now);
+    }
+
+    // Snap the overlay to full alpha with the chosen image, then let UpdateDamageOverlay fade it.
+    // A missing image is skipped silently (LoadDamageSprite already warned once).
+    private void ShowDamageOverlay(int spriteIndex, float now)
+    {
+        if (damageOverlay == null)
+        {
+            return;
+        }
+
+        Sprite sprite = LoadDamageSprite(spriteIndex);
+        if (sprite == null)
+        {
+            return; // missing overlay image: skip without breaking the HUD
+        }
+
+        damageOverlay.sprite = sprite;
+        overlayAlpha = OverlayMaxAlpha;
+        overlayHoldUntil = now + OverlayHold;
+        damageOverlay.enabled = true;
+        ApplyOverlayAlpha();
+    }
+
+    // Lazily load & cache Resources/HUD/red_screen_hit_{1,2}. Returns null (and logs ONE warning)
+    // when the PNG is absent, so a missing overlay image never throws or spams the log.
+    private Sprite LoadDamageSprite(int index)
+    {
+        if (index < 0 || index >= damageSprites.Length)
+        {
+            return null;
+        }
+        if (!damageSpriteTried[index])
+        {
+            damageSpriteTried[index] = true;
+            string resourcePath = "HUD/red_screen_hit_" + (index + 1);
+            damageSprites[index] = Resources.Load<Sprite>(resourcePath);
+            if (damageSprites[index] == null)
+            {
+                Debug.LogWarning("[SchoolOfTheDeadHud] Optional damage overlay not found: Resources/" +
+                                 resourcePath + " (import the PNG as Sprite (2D and UI)); skipping that overlay.");
+            }
+        }
+        return damageSprites[index];
+    }
+
+    // Per-frame overlay upkeep: clear the streak on state changes (dead / downed / revived /
+    // full health) and advance the hold-then-fade using UNSCALED time so it behaves correctly
+    // regardless of Time.timeScale.
+    private void UpdateDamageOverlay()
+    {
+        if (subscribedHealth != null &&
+            (subscribedHealth.IsDead || subscribedHealth.IsDowned ||
+             subscribedHealth.CurrentHealth >= subscribedHealth.maxHealth))
+        {
+            // Dead/downed clears it; a revive returns from the downed state (already cleared);
+            // being back at max health means the next hit should start again at image 1.
+            damageStreak = 0;
+        }
+
+        if (damageOverlay == null || overlayAlpha <= 0f)
+        {
+            return;
+        }
+
+        float now = Time.unscaledTime;
+        if (now >= overlayHoldUntil)
+        {
+            float fade = OverlayFade > 0f ? OverlayFade : 0.0001f;
+            overlayAlpha -= (Time.unscaledDeltaTime / fade) * OverlayMaxAlpha;
+            if (overlayAlpha < 0f)
+            {
+                overlayAlpha = 0f;
+            }
+        }
+
+        ApplyOverlayAlpha();
+        if (overlayAlpha <= 0f)
+        {
+            damageOverlay.enabled = false;
+        }
+    }
+
+    // Apply the current alpha while keeping the image's own (white-multiply) RGB so the sprite
+    // shows at its authored colours.
+    private void ApplyOverlayAlpha()
+    {
+        if (damageOverlay == null)
+        {
+            return;
+        }
+        Color c = damageOverlay.color;
+        c.a = overlayAlpha;
+        damageOverlay.color = c;
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Canvas construction (runtime; no prefab required)
     // ---------------------------------------------------------------------------------------
 
@@ -509,6 +687,9 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
 
         RectTransform root = canvas.GetComponent<RectTransform>();
 
+        // Built FIRST so it is sibling index 0 — i.e. drawn behind the panels/crosshair but
+        // over the game view (Canvas draws earlier siblings first).
+        BuildDamageOverlay(root);
         BuildRoundPanel(root);
         BuildStatusCard(root);
         BuildPerkRow(root);
@@ -721,6 +902,25 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         ApplyBlackWhiteOutline(weaponNameText);
         ammoText = MakeLabel("Ammo", panel, "-- / --", RedAccent, 34, TextAlignmentOptions.Center,
             new Vector2(0f, 12f), new Vector2(innerW, 44f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
+    }
+
+    // Full-screen red damage overlay. Fills the whole canvas (anchors 0,0..1,1, zero offsets),
+    // non-interactive, starts fully transparent, and does not preserve aspect (it stretches to
+    // cover the screen). It has no sprite yet — HandleDamageTaken assigns one on the first hit.
+    private void BuildDamageOverlay(RectTransform root)
+    {
+        RectTransform rt = MakeChildImage("DamageScreenOverlay", root, new Color(1f, 1f, 1f, 0f));
+        rt.anchorMin = new Vector2(0f, 0f);
+        rt.anchorMax = new Vector2(1f, 1f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.offsetMin = Vector2.zero;
+        rt.offsetMax = Vector2.zero;
+
+        damageOverlay = rt.GetComponent<Image>();
+        damageOverlay.raycastTarget = false;
+        damageOverlay.preserveAspect = false;
+        damageOverlay.enabled = false;   // nothing to draw until a sprite + a hit
+        overlayAlpha = 0f;
     }
 
     private void BuildCrosshair(RectTransform root)
