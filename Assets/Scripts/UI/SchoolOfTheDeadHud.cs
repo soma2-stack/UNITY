@@ -134,25 +134,32 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private float nextZombieCountRefresh;
     private int cachedZombieCount;
 
-    // --- Damage screen overlay (two-stage red flash; LOCAL player only) -------------------
-    // A single full-screen Image behind the rest of the HUD. On an accepted hit it snaps to
-    // full alpha showing red_screen_hit_1 (first hit of the streak) or red_screen_hit_2
-    // (second+), holds briefly, then fades. Purely visual: it only READS PlayerHealth and
-    // never touches health/damage. Sprites are lazily loaded and cached; a missing PNG is
-    // warned once and simply skipped. All timing uses unscaled time.
+    // --- Damage screen overlay (two-stage red; LOCAL player only) -------------------------
+    // A single full-screen Image behind the rest of the HUD. It is HEALTH-DRIVEN, not a timed
+    // flash: while the local player is hurt (alive, not downed, CurrentHealth < maxHealth) the
+    // overlay stays visible, showing red_screen_hit_1 after the first hit or red_screen_hit_2
+    // after the second+, and its target alpha scales with how much health is MISSING. It fades
+    // out only as health regenerates back toward full, and disables at full health / dead /
+    // downed / no local health. Purely visual: it only READS PlayerHealth and never touches
+    // health/damage. Sprites are lazily loaded and cached; a missing PNG is warned once and
+    // skipped. Alpha smoothing uses unscaled time so it behaves during time-scale changes.
     private Image damageOverlay;
     private readonly Sprite[] damageSprites = new Sprite[2];   // [0]=hit_1, [1]=hit_2
     private readonly bool[] damageSpriteTried = new bool[2];
     private PlayerHealth subscribedHealth;   // the PlayerHealth we're currently subscribed to
-    private int damageStreak;                // accepted hits in the current streak (0 = none)
-    private float lastDamageTime = -999f;    // unscaledTime of the last accepted hit
-    private float overlayAlpha;              // current overlay alpha (0 = hidden)
-    private float overlayHoldUntil;          // unscaledTime to hold full alpha until fading
+    private int damageStage;                 // 0 = none, 1 = image 1, 2+ = image 2
+    private float overlayAlpha;              // current (smoothed) overlay alpha (0 = hidden)
 
-    private const float OverlayHold = 0.20f;      // seconds held at full alpha before fading
-    private const float OverlayFade = 0.65f;      // seconds to fade from full alpha to 0
-    private const float OverlayMaxAlpha = 1.0f;   // peak overlay alpha on a hit
-    private const float DefaultStreakReset = 4f;  // streak reset delay when regenDelay is unavailable
+    // Health-driven target-alpha bands: min alpha near full health, max alpha near death.
+    private const float Stage1MinAlpha = 0.20f;
+    private const float Stage1MaxAlpha = 0.55f;
+    private const float Stage2MinAlpha = 0.35f;
+    private const float Stage2MaxAlpha = 0.85f;
+    // How fast the displayed alpha chases its target (alpha units per second, unscaled).
+    private const float OverlayAlphaLerpSpeed = 3f;
+    // Optional tiny hit punch added on damage; it settles back to the health-based target
+    // (never below it), so it can never fade the overlay to zero while the player is hurt.
+    private const float OverlayHitPunch = 0.15f;
 
     private bool built;
     private bool suppressedOldHud;
@@ -540,6 +547,9 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         {
             subscribedHealth.OnDamageTaken += HandleDamageTaken;
         }
+        // Local PlayerHealth changed or disappeared: start a fresh stage so the next hit on the
+        // new health begins again at image 1.
+        damageStage = 0;
     }
 
     // Raised by the LOCAL player's PlayerHealth when accepted damage is applied (fires only for
@@ -552,29 +562,18 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             return;
         }
 
-        float now = Time.unscaledTime;
-
-        // Reset the streak if enough quiet time has passed since the last hit, so a fresh
-        // engagement starts again at image 1. Prefer the health's regen delay; fall back to 4s.
-        float resetDelay = subscribedHealth != null && subscribedHealth.regenDelay > 0f
-            ? subscribedHealth.regenDelay
-            : DefaultStreakReset;
-        if (now - lastDamageTime > resetDelay)
-        {
-            damageStreak = 0;
-        }
-
-        damageStreak++;
-        lastDamageTime = now;
-
-        // First hit of the streak -> image 1; second or later -> image 2.
-        int spriteIndex = damageStreak >= 2 ? 1 : 0;
-        ShowDamageOverlay(spriteIndex, now);
+        // Advance the stage. The stage is NEVER reset by elapsed time — only a full heal, death,
+        // downed, or a change of local PlayerHealth clears it (see UpdateDamageOverlay /
+        // SyncDamageSubscription). First accepted hit -> image 1; second or more -> image 2.
+        damageStage++;
+        int spriteIndex = damageStage >= 2 ? 1 : 0;
+        ShowDamageOverlay(spriteIndex);
     }
 
-    // Snap the overlay to full alpha with the chosen image, then let UpdateDamageOverlay fade it.
-    // A missing image is skipped silently (LoadDamageSprite already warned once).
-    private void ShowDamageOverlay(int spriteIndex, float now)
+    // Assign the chosen image and apply a tiny hit punch. The overlay is NOT put on a fade
+    // timer — UpdateDamageOverlay keeps it at the health-based target every frame. A missing
+    // image is skipped silently (LoadDamageSprite already warned once).
+    private void ShowDamageOverlay(int spriteIndex)
     {
         if (damageOverlay == null)
         {
@@ -588,10 +587,37 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         }
 
         damageOverlay.sprite = sprite;
-        overlayAlpha = OverlayMaxAlpha;
-        overlayHoldUntil = now + OverlayHold;
         damageOverlay.enabled = true;
+
+        // Tiny punch: nudge alpha up on the hit, but never below the sustained health-based
+        // target, so it settles back to that level instead of fading to zero.
+        float target = ComputeTargetAlpha();
+        overlayAlpha = Mathf.Clamp01(Mathf.Max(overlayAlpha, target) + OverlayHitPunch);
         ApplyOverlayAlpha();
+    }
+
+    // Health-driven target alpha: 0 when there is no local health, the player is dead/downed,
+    // there is no active stage, or health is full; otherwise it scales with MISSING health so a
+    // more-hurt player sees a stronger overlay. Stage 2 uses a stronger band than stage 1.
+    private float ComputeTargetAlpha()
+    {
+        if (subscribedHealth == null || subscribedHealth.IsDead || subscribedHealth.IsDowned ||
+            damageStage <= 0)
+        {
+            return 0f;
+        }
+
+        int max = Mathf.Max(1, subscribedHealth.maxHealth);
+        float health01 = Mathf.Clamp01((float)subscribedHealth.CurrentHealth / max);
+        float missing01 = 1f - health01;
+        if (missing01 <= 0f)
+        {
+            return 0f; // full health
+        }
+
+        return damageStage >= 2
+            ? Mathf.Lerp(Stage2MinAlpha, Stage2MaxAlpha, missing01)
+            : Mathf.Lerp(Stage1MinAlpha, Stage1MaxAlpha, missing01);
     }
 
     // Lazily load & cache Resources/HUD/red_screen_hit_{1,2}. Returns null (and logs ONE warning)
@@ -616,41 +642,29 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         return damageSprites[index];
     }
 
-    // Per-frame overlay upkeep: clear the streak on state changes (dead / downed / revived /
-    // full health) and advance the hold-then-fade using UNSCALED time so it behaves correctly
-    // regardless of Time.timeScale.
+    // Per-frame overlay upkeep. The overlay is HEALTH-DRIVEN: the displayed alpha eases toward
+    // the health-based target every frame (UNSCALED time), so it stays up while the player is
+    // hurt and fades only as CurrentHealth regenerates. The stage is reset ONLY on full heal /
+    // death / downed / missing local health (never on a timer), so the next fresh hit begins at
+    // image 1.
     private void UpdateDamageOverlay()
     {
-        if (subscribedHealth != null &&
-            (subscribedHealth.IsDead || subscribedHealth.IsDowned ||
-             subscribedHealth.CurrentHealth >= subscribedHealth.maxHealth))
+        if (subscribedHealth == null || subscribedHealth.IsDead || subscribedHealth.IsDowned ||
+            subscribedHealth.CurrentHealth >= subscribedHealth.maxHealth)
         {
-            // Dead/downed clears it; a revive returns from the downed state (already cleared);
-            // being back at max health means the next hit should start again at image 1.
-            damageStreak = 0;
+            damageStage = 0;
         }
 
-        if (damageOverlay == null || overlayAlpha <= 0f)
+        if (damageOverlay == null)
         {
             return;
         }
 
-        float now = Time.unscaledTime;
-        if (now >= overlayHoldUntil)
-        {
-            float fade = OverlayFade > 0f ? OverlayFade : 0.0001f;
-            overlayAlpha -= (Time.unscaledDeltaTime / fade) * OverlayMaxAlpha;
-            if (overlayAlpha < 0f)
-            {
-                overlayAlpha = 0f;
-            }
-        }
+        float target = ComputeTargetAlpha();
+        overlayAlpha = Mathf.MoveTowards(overlayAlpha, target, OverlayAlphaLerpSpeed * Time.unscaledDeltaTime);
 
         ApplyOverlayAlpha();
-        if (overlayAlpha <= 0f)
-        {
-            damageOverlay.enabled = false;
-        }
+        damageOverlay.enabled = overlayAlpha > 0.0001f;
     }
 
     // Apply the current alpha while keeping the image's own (white-multiply) RGB so the sprite
