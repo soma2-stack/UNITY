@@ -241981,7 +241981,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallBuy
   interactionRange: 0.75
   interactKey: 101
-  weaponName: M4_8
+  weaponName: M16
   buyCost: 1200
   ammoCost: 500
   damage: 38
@@ -241992,7 +241992,7 @@ MonoBehaviour:
   magazineSize: 30
   reserveAmmo: 240
   reloadTime: 2
-  weaponModel: {fileID: 397265803289229847, guid: f7ce4edd882adf340a7fa237ab8fdc78, type: 3}
+  weaponModel: {fileID: 1515506378975454208, guid: 2a0bbcbc5af9c8d42ab4a1d918b192da, type: 3}
   chalkSprite: {fileID: 0}
   chalkLocalOffset: {x: 0, y: 1.2, z: 0.03}
   chalkLocalEuler: {x: 0, y: 0, z: 0}
@@ -261005,7 +261005,7 @@ MonoBehaviour:
   magazineSize: 32
   reserveAmmo: 256
   reloadTime: 2
-  weaponModel: {fileID: 851652609436101254, guid: ae56add955b981e44b0184224f4fa2cf, type: 3}
+  weaponModel: {fileID: 7667943933554586306, guid: 2ca2ba05d5b5e834ba1a83e2ef68750d, type: 3}
   chalkSprite: {fileID: 0}
   chalkLocalOffset: {x: 0, y: 1.2, z: 0.03}
   chalkLocalEuler: {x: 0, y: 0, z: 0}

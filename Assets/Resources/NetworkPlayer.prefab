@@ -203,7 +203,7 @@ MonoBehaviour:
     magazineSize: 8
     reserveAmmo: 80
     reloadTime: 1.3
-    weaponModel: {fileID: 2655916905074589685, guid: 00bee769feda28048a87d6af08e65c00, type: 3}
+    weaponModel: {fileID: 5470858397734459158, guid: 0e6f8e3111294634088f35efa65e0ea9, type: 3}
   currentIndex: 0
   maxWeaponSlots: 2
   startWithPistol: 0
@@ -227,6 +227,11 @@ MonoBehaviour:
   weaponModelLocalPosition: {x: 0, y: 0, z: 0}
   weaponModelLocalEuler: {x: 0, y: 0, z: 0}
   weaponModelLocalScale: {x: 1, y: 1, z: 1}
+  useWeaponVisualRotationCorrection: 1
+  weaponVisualRotationCorrectionEuler: {x: 0, y: 90, z: 0}
+  muzzleFlashFallbackPrefab: {fileID: 0}
+  muzzleFlashLocalPosition: {x: 0, y: 0, z: 0.5}
+  muzzleFlashLocalEuler: {x: 0, y: 0, z: 0}
   meleeKey: 118
   meleeRange: 2.5
   meleeCooldown: 0.8
