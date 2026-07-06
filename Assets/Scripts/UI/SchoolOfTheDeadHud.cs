@@ -158,6 +158,9 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     // How fast the displayed alpha chases its target (alpha units per second, unscaled).
     // Slightly quick so the overlay fades down a touch faster as the player heals.
     private const float OverlayAlphaLerpSpeed = 5f;
+    // Gentler speed used ONLY for the final fade-out once full health is reached, so the last
+    // sliver of red eases off (~0.4s from the band minimum) instead of popping away.
+    private const float OverlayFinalFadeSpeed = 0.9f;
     // Optional tiny hit punch added on damage; it settles back to the health-based target
     // (never below it), so it can never fade the overlay to zero while the player is hurt.
     private const float OverlayHitPunch = 0.15f;
@@ -643,29 +646,61 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         return damageSprites[index];
     }
 
-    // Per-frame overlay upkeep. The overlay is HEALTH-DRIVEN: the displayed alpha eases toward
-    // the health-based target every frame (UNSCALED time), so it stays up while the player is
-    // hurt and fades only as CurrentHealth regenerates. The stage is reset ONLY on full heal /
-    // death / downed / missing local health (never on a timer), so the next fresh hit begins at
-    // image 1.
+    // Per-frame overlay upkeep. The overlay is HEALTH-DRIVEN: while the player is hurt the
+    // displayed alpha eases toward the health-based target (UNSCALED time), fading only as
+    // CurrentHealth regenerates. Reaching full health does NOT snap it off — instead the current
+    // image is held and its residual alpha eases out gently (OverlayFinalFadeSpeed) so there is
+    // no pop. Death / downed / no-local-health still clear quickly. The stage is reset (so the
+    // next fresh hit begins at image 1) only once the alpha has actually reached 0.
     private void UpdateDamageOverlay()
     {
-        if (subscribedHealth == null || subscribedHealth.IsDead || subscribedHealth.IsDowned ||
-            subscribedHealth.CurrentHealth >= subscribedHealth.maxHealth)
-        {
-            damageStage = 0;
-        }
-
         if (damageOverlay == null)
         {
             return;
         }
 
-        float target = ComputeTargetAlpha();
-        overlayAlpha = Mathf.MoveTowards(overlayAlpha, target, OverlayAlphaLerpSpeed * Time.unscaledDeltaTime);
+        bool deadOrDowned = subscribedHealth != null &&
+                            (subscribedHealth.IsDead || subscribedHealth.IsDowned);
+        bool fullHealth = subscribedHealth != null && !deadOrDowned &&
+                          subscribedHealth.CurrentHealth >= subscribedHealth.maxHealth;
 
+        float target;
+        float speed;
+        if (subscribedHealth == null || deadOrDowned)
+        {
+            // No local player / dead / downed: clear quickly at the normal speed.
+            damageStage = 0;
+            target = 0f;
+            speed = OverlayAlphaLerpSpeed;
+        }
+        else if (fullHealth && damageStage > 0)
+        {
+            // Full health reached: smoothly finish fading the current image out (no pop). The
+            // stage is intentionally NOT reset yet — that happens once the fade hits 0 below, so
+            // the sprite is never cleared mid-fade.
+            target = 0f;
+            speed = OverlayFinalFadeSpeed;
+        }
+        else
+        {
+            // Still hurt: track the health-driven target.
+            target = ComputeTargetAlpha();
+            speed = OverlayAlphaLerpSpeed;
+        }
+
+        overlayAlpha = Mathf.MoveTowards(overlayAlpha, target, speed * Time.unscaledDeltaTime);
         ApplyOverlayAlpha();
-        damageOverlay.enabled = overlayAlpha > 0.0001f;
+
+        if (overlayAlpha <= 0.0001f)
+        {
+            overlayAlpha = 0f;
+            damageStage = 0;                 // fully faded: the next hit starts again at image 1
+            damageOverlay.enabled = false;
+        }
+        else
+        {
+            damageOverlay.enabled = true;
+        }
     }
 
     // Apply the current alpha while keeping the image's own (white-multiply) RGB so the sprite
