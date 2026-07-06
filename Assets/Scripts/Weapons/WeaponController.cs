@@ -69,15 +69,22 @@ public class WeaponController : NetworkBehaviour
     public Vector3 weaponModelLocalEuler = Vector3.zero;
     [Tooltip("Local scale applied to a spawned weapon model under the holder.")]
     public Vector3 weaponModelLocalScale = Vector3.one;
+    [Tooltip("Rotate the spawned model by an extra correction AFTER the normal rotation. The Meshy " +
+             "guns are authored barrel-along-X while the holder expects barrel-along-Z, so a Y turn " +
+             "makes them face forward. Turn off for models that are already oriented correctly.")]
+    public bool useWeaponVisualRotationCorrection = true;
+    [Tooltip("The correction euler (degrees) applied when the toggle above is on. Try 0,90,0; if the " +
+             "barrel points the wrong way, set 0,-90,0.")]
+    public Vector3 weaponVisualRotationCorrectionEuler = new Vector3(0f, 90f, 0f);
 
     [Header("Muzzle Flash Fallback (visual only)")]
-    [Tooltip("Optional muzzle-flash prefab used ONLY when a spawned weapon model has no muzzle " +
-             "ParticleSystem of its own (e.g. the clean Meshy gun models). Spawned under the " +
-             "WeaponHolder at the offset below so the gun still flashes. Leave empty for no muzzle " +
-             "flash — shooting/hit detection are unaffected either way.")]
+    [Tooltip("OPTIONAL muzzle-flash prefab. If left empty, a simple flash is created at RUNTIME so " +
+             "muzzle FX still work with zero setup. Only used when the weapon model has no muzzle " +
+             "ParticleSystem of its own. Shooting/hit detection are unaffected either way.")]
     public GameObject muzzleFlashFallbackPrefab;
-    [Tooltip("Local position (under the WeaponHolder) of the fallback muzzle flash — tune to the barrel tip.")]
-    public Vector3 muzzleFlashLocalPosition = new Vector3(0f, 0f, 0.5f);
+    [Tooltip("Local position (under the WeaponHolder) of the fallback muzzle flash — near the front " +
+             "of the gun. Tune later; it does not need to be exactly at the barrel tip.")]
+    public Vector3 muzzleFlashLocalPosition = new Vector3(0.25f, -0.05f, 0.75f);
     [Tooltip("Local euler rotation of the fallback muzzle flash (aim it forward along the barrel).")]
     public Vector3 muzzleFlashLocalEuler = Vector3.zero;
 
@@ -865,6 +872,13 @@ public class WeaponController : NetworkBehaviour
             // forward rotation -> they spawned sideways). Old weapons have identity prefab rotation,
             // so Euler(euler) * identity == the previous behaviour exactly.
             model.transform.localRotation = Quaternion.Euler(weaponModelLocalEuler) * prefabRotation;
+            if (useWeaponVisualRotationCorrection)
+            {
+                // Extra correction so barrel-along-X Meshy models face forward (Z). Applied in the
+                // holder's space, so 0,90,0 <-> 0,-90,0 flips the facing. Camera/aim are untouched.
+                model.transform.localRotation =
+                    Quaternion.Euler(weaponVisualRotationCorrectionEuler) * model.transform.localRotation;
+            }
             model.transform.localScale = Vector3.Scale(prefabScale, weaponModelLocalScale);
             // 5. Make sure it's visible.
             model.SetActive(true);
@@ -972,30 +986,93 @@ public class WeaponController : NetworkBehaviour
 
         ParticleSystem muzzle = FindMuzzleParticle(_spawnedViewModel);
 
-        // Fallback: the model has no muzzle particle of its own (e.g. the clean Meshy guns). If a
-        // fallback prefab is assigned, spawn it under the holder at the tunable offset and use its
-        // particle. Purely visual — nothing about shooting/hit detection depends on it.
-        if (muzzle == null && muzzleFlashFallbackPrefab != null && weaponHolder != null)
+        // Fallback: the model has no muzzle particle of its own (e.g. the clean Meshy guns). Use the
+        // optional prefab if assigned, otherwise BUILD a simple flash at runtime (zero setup needed).
+        // Both are parented under the (unscaled) holder at the tunable offset. Purely visual —
+        // nothing about shooting/hit detection depends on it.
+        if (muzzle == null && weaponHolder != null)
         {
-            _spawnedMuzzleFallback = Instantiate(muzzleFlashFallbackPrefab, weaponHolder);
-            _spawnedMuzzleFallback.transform.localPosition = muzzleFlashLocalPosition;
-            _spawnedMuzzleFallback.transform.localEulerAngles = muzzleFlashLocalEuler;
-            muzzle = _spawnedMuzzleFallback.GetComponentInChildren<ParticleSystem>(true);
+            if (muzzleFlashFallbackPrefab != null)
+            {
+                _spawnedMuzzleFallback = Instantiate(muzzleFlashFallbackPrefab, weaponHolder);
+                _spawnedMuzzleFallback.transform.localPosition = muzzleFlashLocalPosition;
+                _spawnedMuzzleFallback.transform.localEulerAngles = muzzleFlashLocalEuler;
+                muzzle = _spawnedMuzzleFallback.GetComponentInChildren<ParticleSystem>(true);
+            }
+            else
+            {
+                muzzle = CreateRuntimeMuzzleFlash(weaponHolder, muzzleFlashLocalPosition, muzzleFlashLocalEuler);
+                _spawnedMuzzleFallback = muzzle != null ? muzzle.gameObject : null;
+            }
         }
 
         if (muzzle != null)
         {
             gunRecoil.muzzleFlash = muzzle;
             Debug.Log("[WeaponController] Muzzle particle bound for '" + weaponName + "' -> " + muzzle.name +
-                      (_spawnedMuzzleFallback != null ? " (fallback prefab)" : "") + ".");
+                      (_spawnedMuzzleFallback != null ? " (runtime/fallback)" : "") + ".");
         }
         else if (!_warnedNoMuzzle)
         {
             // Warn once only, so a whole match of muzzle-less weapons doesn't spam the console.
             _warnedNoMuzzle = true;
-            Debug.LogWarning("[WeaponController] No muzzle ParticleSystem in the weapon model and no " +
-                             "muzzleFlashFallbackPrefab assigned; muzzle flash is off (shooting still works).");
+            Debug.LogWarning("[WeaponController] Could not create a muzzle flash for '" + weaponName +
+                             "'; muzzle flash is off (shooting still works).");
         }
+    }
+
+    // Build a simple, self-contained muzzle-flash ParticleSystem at runtime (no prefab/editor work).
+    // A quick one-shot burst of bright unlit particles near the front of the gun. Visual only.
+    private ParticleSystem CreateRuntimeMuzzleFlash(Transform parent, Vector3 localPosition, Vector3 localEuler)
+    {
+        if (parent == null)
+        {
+            return null;
+        }
+
+        GameObject go = new GameObject("RuntimeMuzzleFlash");
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = localPosition;
+        go.transform.localEulerAngles = localEuler;
+
+        ParticleSystem ps = go.AddComponent<ParticleSystem>();
+        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+        ParticleSystem.MainModule main = ps.main;
+        main.loop = false;
+        main.playOnAwake = false;
+        main.duration = 0.08f;
+        main.startLifetime = 0.05f;
+        main.startSpeed = 1.5f;
+        main.startSize = 0.25f;
+        main.startColor = new Color(1f, 0.85f, 0.4f, 1f);
+        main.maxParticles = 24;
+
+        ParticleSystem.EmissionModule emission = ps.emission;
+        emission.enabled = true;
+        emission.rateOverTime = 0f;
+        emission.SetBursts(new[] { new ParticleSystem.Burst(0f, (short)10) });
+
+        ParticleSystem.ShapeModule shape = ps.shape;
+        shape.enabled = true;
+        shape.shapeType = ParticleSystemShapeType.Cone;
+        shape.angle = 12f;
+        shape.radius = 0.03f;
+
+        // A simple bright unlit material so the flash is visible (URP-safe shader fallbacks).
+        ParticleSystemRenderer psr = go.GetComponent<ParticleSystemRenderer>();
+        if (psr != null)
+        {
+            Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+            if (shader == null) { shader = Shader.Find("Sprites/Default"); }
+            if (shader == null) { shader = Shader.Find("Unlit/Color"); }
+            if (shader != null)
+            {
+                psr.material = new Material(shader) { color = new Color(1f, 0.8f, 0.3f, 1f) };
+            }
+        }
+
+        return ps;
     }
 
     private void HandleReloadInput()
