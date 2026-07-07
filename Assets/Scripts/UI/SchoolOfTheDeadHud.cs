@@ -45,7 +45,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const float PanelPad     = 24f;   // inner inset so text never touches panel edges
     private static readonly Vector2 RoundPanelSize  = new Vector2(362f, 160f); // slightly taller so the lower row can rise without touching the number
     private static readonly Vector2 StatusPanelSize = new Vector2(576f, 226f); // ~7% smaller than before (was too big)
-    private static readonly Vector2 AmmoPanelSize   = new Vector2(350f, 126f); // weapon name stacked above the ammo number, both right-aligned
+    private static readonly Vector2 AmmoPanelSize   = new Vector2(270f, 86f);  // ammo count inside; weapon name floats just above the panel
 
     // --- Round panel content regions (nudge to line up with the chalkboard art frame) -----
     private const float RoundInsetX        = 58f; // horizontal inset from the chalkboard frame (in from edges)
@@ -53,7 +53,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const float RoundCaptionTopInset = 56f; // gap from the top frame to the ROUND label (decoupled from the number so the
                                                       // label can sit lower/more-centred in the upper area without moving the number)
     private const float RoundBotInset      = 30f; // gap from the bottom frame to the lower row (pushes ZOMBIES LEFT/count up)
-    private const int   RoundCaptionFont   = 28;  // "ROUND" label size (bigger); ZOMBIES LEFT uses RoundCaptionFont-6
+    private const int   RoundCaptionFont   = 32;  // "ROUND" label size (bigger); ZOMBIES LEFT uses RoundCaptionFont-6
     private const int   RoundNumberFont    = 50;  // big round number
     private const int   RoundZombiesFont   = 34;  // zombie count
 
@@ -523,7 +523,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             }
             else
             {
-                ammoText.text = weapon.CurrentMagazineAmmo + " / " + weapon.CurrentReserveAmmo;
+                ammoText.text = weapon.CurrentMagazineAmmo + "/" + weapon.CurrentReserveAmmo;
             }
         }
     }
@@ -758,8 +758,9 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         // ROUND caption sits lower/more-centred in the upper area (its own RoundCaptionTopInset,
         // decoupled from the round number's row) so it doesn't hug the top-left corner; the
         // round number stays on the right, unmoved, at RoundTopInset.
-        MakeLabel("RoundCaption", panel, "ROUND", MutedYellow, RoundCaptionFont, TextAlignmentOptions.TopLeft,
+        TMP_Text roundCaption = MakeLabel("RoundCaption", panel, "ROUND", OffWhite, RoundCaptionFont, TextAlignmentOptions.TopLeft,
             new Vector2(RoundInsetX, -RoundCaptionTopInset), new Vector2(140f, 34f), new Vector2(0f, 1f));
+        ApplyWhiteBlackOutline(roundCaption); // brighter ROUND with a black outline for readability
         roundNumberText = MakeLabel("RoundValue", panel, "--", OffWhite, RoundNumberFont, TextAlignmentOptions.Right,
             new Vector2(-RoundInsetX, -RoundTopInset), new Vector2(120f, 58f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
 
@@ -938,21 +939,23 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
 
         float innerW = AmmoPanelSize.x - 24f;
 
-        // Weapon name STACKED ABOVE the ammo number, both right-aligned to the panel's right edge
-        // so the name no longer crowds the ammo counter. Bottom-right anchor/pivot; the name sits
-        // in the upper row (y=78) and the ammo in the lower row (y=18), with no vertical overlap.
-        weaponNameText = MakeLabel("WeaponName", panel, "—", Color.black, 25, TextAlignmentOptions.BottomRight,
-            new Vector2(-22f, 78f), new Vector2(innerW, 30f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        // Weapon name floats just ABOVE the panel on the right (top-right anchor/pivot, y>0 lifts
+        // it above the panel's top edge). White with a black outline so it reads over gameplay.
+        weaponNameText = MakeLabel("WeaponName", panel, "—", Color.white, 22, TextAlignmentOptions.BottomRight,
+            new Vector2(-8f, 8f), new Vector2(innerW, 28f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
         // Long gun names: shrink-to-fit on one line, then ellipsis as a last resort (MakeLabel
         // already disabled word wrap). Keeps names inside the ammo panel without touching weapon data.
         weaponNameText.enableAutoSizing = true;
-        weaponNameText.fontSizeMin = 16f;
-        weaponNameText.fontSizeMax = 25f;
+        weaponNameText.fontSizeMin = 15f;
+        weaponNameText.fontSizeMax = 22f;
         weaponNameText.overflowMode = TextOverflowModes.Ellipsis;
-        // Black text with a white outline so the name reads against the dark chalkboard.
-        ApplyBlackWhiteOutline(weaponNameText);
-        ammoText = MakeLabel("Ammo", panel, "-- / --", RedAccent, 40, TextAlignmentOptions.BottomRight,
-            new Vector2(-22f, 18f), new Vector2(innerW, 52f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        ApplyWhiteBlackOutline(weaponNameText);
+
+        // Ammo count sits INSIDE the lower-right of the panel, big and readable. White with a
+        // black outline (not red), matching the reference "8/78".
+        ammoText = MakeLabel("Ammo", panel, "--/--", OffWhite, 38, TextAlignmentOptions.BottomRight,
+            new Vector2(-18f, 12f), new Vector2(innerW, 46f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        ApplyWhiteBlackOutline(ammoText);
     }
 
     // Full-screen red damage overlay. Fills the whole canvas (anchors 0,0..1,1, zero offsets),
@@ -1090,6 +1093,21 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         Material mat = text.fontMaterial; // getter returns a per-text material instance
         mat.EnableKeyword(ShaderUtilities.Keyword_Outline);
         mat.SetColor(ShaderUtilities.ID_OutlineColor, Color.white);
+        mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.2f);
+    }
+
+    // Give a TMP label a BLACK outline (text left at whatever colour the caller set) so light /
+    // white HUD text reads over bright gameplay. Uses an INSTANCED font material (text.fontMaterial)
+    // so the outline applies to this label only and never bleeds onto other HUD text.
+    private static void ApplyWhiteBlackOutline(TMP_Text text)
+    {
+        if (text == null)
+        {
+            return;
+        }
+        Material mat = text.fontMaterial; // getter returns a per-text material instance
+        mat.EnableKeyword(ShaderUtilities.Keyword_Outline);
+        mat.SetColor(ShaderUtilities.ID_OutlineColor, Color.black);
         mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.2f);
     }
 }
