@@ -360,6 +360,35 @@ public class ZombieAgent : MonoBehaviour
         Die(false, true, attackerClientId);
     }
 
+    /// <summary>
+    /// Apply melee/knife DAMAGE (not an instant kill). Ignores dead zombies and subtracts the
+    /// amount from health. When the hit drops health to 0 the zombie dies via Die(isMelee: true),
+    /// awarding the full melee kill reward (130) to the attacker — exactly like KillByMelee, but
+    /// ONLY on the killing blow. A non-killing hit awards no points (knife hits don't pay a
+    /// per-hit bonus) and plays a brief flinch. Server-authoritative, mirroring TakeDamage.
+    /// </summary>
+    public void TakeMeleeDamage(int amount, ulong attackerClientId = PlayerPoints.EveryoneClientId)
+    {
+        if (!HasAuthority || isDead || amount <= 0)
+        {
+            return;
+        }
+
+        health -= amount;
+        if (health <= 0)
+        {
+            Die(false, true, attackerClientId);
+            return;
+        }
+
+        // Survived the hit: brief flinch (rate-limited so it can't be stun-locked). No points.
+        if (animator != null && hasHitParam && Time.time >= nextHitReactTime)
+        {
+            animator.SetTrigger(hitParam);
+            nextHitReactTime = Time.time + hitReactCooldown;
+        }
+    }
+
     private void Die(bool isHeadshot = false, bool isMelee = false, ulong attackerClientId = PlayerPoints.EveryoneClientId)
     {
         if (isDead)

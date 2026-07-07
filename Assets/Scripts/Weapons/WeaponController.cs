@@ -102,6 +102,20 @@ public class WeaponController : NetworkBehaviour
     public float meleeFallbackRadius = 0.85f;
     [Tooltip("Cooldown between knife attacks in seconds.")]
     public float meleeCooldown = 0.8f;
+    [Tooltip("Damage a single melee/knife hit deals (CoD-style). ~130 one-shots the earliest " +
+             "rounds but not later ones, so melee stays useful without being permanently OP.")]
+    public int meleeDamage = 130;
+
+    [Header("Knife Model (optional, future)")]
+    [Tooltip("Optional first-person knife model shown during the melee swing. Leave empty for no " +
+             "visual — melee still works. Assign Assets/Prefabs/Weapons/Knife.prefab here once made.")]
+    public GameObject knifeModelPrefab;
+    [Tooltip("Local position of the knife model under the WeaponHolder.")]
+    public Vector3 knifeLocalPosition;
+    [Tooltip("Local euler rotation (degrees) of the knife model.")]
+    public Vector3 knifeLocalEuler;
+    [Tooltip("Local scale of the knife model.")]
+    public Vector3 knifeLocalScale = Vector3.one;
 
     [Header("Hit Feedback")]
     [Tooltip("Optional blood/hit particle prefab, spawned at the impact point only when a ZombieAgent is shot. Leave empty for no blood.")]
@@ -127,6 +141,8 @@ public class WeaponController : NetworkBehaviour
     private readonly Queue<GameObject> _bloodPool = new Queue<GameObject>(); // pooled blood-effect instances
     private GameObject _spawnedViewModel; // first-person model currently spawned under the holder
     private GameObject _spawnedMuzzleFallback; // fallback muzzle-flash instance (when the model has none)
+    private GameObject _knifeModel;       // optional spawned knife view model (null until assigned)
+    private bool _knifeVisualActive;      // true while the knife model is shown for a swing
     private bool _warnedNoMuzzle; // warn only once when a model has no muzzle and no fallback is set
     private bool initialized;
 
@@ -1148,6 +1164,13 @@ public class WeaponController : NetworkBehaviour
         // Keep IsKnifing true for a brief swing window so the HUD/animator can react.
         IsKnifing = Time.time < knifeSwingEndTime;
 
+        // Restore the gun once the swing window closes (runs every frame regardless of the
+        // early-returns below, so the knife visual never sticks on).
+        if (_knifeVisualActive && !IsKnifing)
+        {
+            EndKnifeVisual();
+        }
+
         if (playerHealth != null && (playerHealth.IsDowned || playerHealth.IsDead))
         {
             return;
@@ -1161,6 +1184,7 @@ public class WeaponController : NetworkBehaviour
         nextMeleeTime = Time.time + Mathf.Max(0.05f, meleeCooldown);
         knifeSwingEndTime = Time.time + 0.2f;
         IsKnifing = true;
+        StartKnifeVisual(); // optional: no-op when no knife prefab is assigned
 
         if (IsSpawned && !IsServer)
         {
@@ -1198,8 +1222,10 @@ public class WeaponController : NetworkBehaviour
             if (zombie != null && !zombie.IsDead && HasMeleeLineOfSight(origin, zombie, sweepHit.collider, range))
             {
                 LogMelee("[WeaponController] Melee (sweep) by client " + shooterClientId +
-                          " killed zombie '" + zombie.name + "'.");
-                zombie.KillByMelee(shooterClientId); // instant kill; ZombieAgent.Die() awards the 130 melee reward to this shooter
+                          " hit zombie '" + zombie.name + "'.");
+                // Apply melee DAMAGE (not an instant kill). A killing blow awards the melee kill
+                // reward via ZombieAgent.Die(isMelee: true); a non-killing hit awards nothing.
+                zombie.TakeMeleeDamage(meleeDamage, shooterClientId);
                 return;
             }
         }
@@ -1213,8 +1239,8 @@ public class WeaponController : NetworkBehaviour
         if (nearest != null && HasMeleeLineOfSight(origin, nearest, nearestCol, range))
         {
             LogMelee("[WeaponController] Melee (overlap) by client " + shooterClientId +
-                      " killed zombie '" + nearest.name + "'.");
-            nearest.KillByMelee(shooterClientId);
+                      " hit zombie '" + nearest.name + "'.");
+            nearest.TakeMeleeDamage(meleeDamage, shooterClientId);
             return;
         }
 
@@ -1226,6 +1252,58 @@ public class WeaponController : NetworkBehaviour
     private static void LogMelee(string message)
     {
         Debug.Log(message);
+    }
+
+    // --- Optional knife swing visual (purely cosmetic; never affects damage or its timing) ------
+
+    // Lazily spawn the knife model under the WeaponHolder the first time it is needed. Null-safe:
+    // does nothing (and melee still works) when no prefab is assigned or no holder exists yet.
+    private void EnsureKnifeModel()
+    {
+        if (_knifeModel != null || knifeModelPrefab == null || weaponHolder == null)
+        {
+            return;
+        }
+
+        _knifeModel = Instantiate(knifeModelPrefab, weaponHolder);
+        _knifeModel.transform.localPosition = knifeLocalPosition;
+        _knifeModel.transform.localRotation = Quaternion.Euler(knifeLocalEuler);
+        _knifeModel.transform.localScale = knifeLocalScale;
+        _knifeModel.SetActive(false); // hidden until a swing shows it
+    }
+
+    // Show the knife for the swing and hide the current gun view model. No-op (melee still works)
+    // when no knife prefab is assigned; safe when there is no gun model to hide.
+    private void StartKnifeVisual()
+    {
+        EnsureKnifeModel();
+        if (_knifeModel == null)
+        {
+            return; // no knife assigned yet: gameplay melee still ran, just no swing visual
+        }
+
+        if (_spawnedViewModel != null)
+        {
+            _spawnedViewModel.SetActive(false);
+        }
+        _knifeModel.SetActive(true);
+        _knifeVisualActive = true;
+    }
+
+    // Hide the knife and restore the current gun view model after the swing window. Null-safe, so a
+    // weapon switch mid-swing (which respawns _spawnedViewModel already active) never permanently
+    // hides the gun.
+    private void EndKnifeVisual()
+    {
+        _knifeVisualActive = false;
+        if (_knifeModel != null)
+        {
+            _knifeModel.SetActive(false);
+        }
+        if (_spawnedViewModel != null)
+        {
+            _spawnedViewModel.SetActive(true);
+        }
     }
 
     // Nearest living zombie within an overlap sphere, ignoring this player's own colliders.
