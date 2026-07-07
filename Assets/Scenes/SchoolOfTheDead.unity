@@ -325016,6 +325016,7 @@ MonoBehaviour:
   nukeFlashEnabled: 1
   carpenterBonusPoints: 200
   pickupLifetime: 15
+  pickupSpawnHeight: 1.25
   maxAmmoPrefab: {fileID: 2654596271765894536, guid: 66f2bf02d0109214ba40e222a514c0b6, type: 3}
   instaKillPrefab: {fileID: 6168975755169524366, guid: a602cb2559b70404d8607b409be2d527, type: 3}
   doublePointsPrefab: {fileID: 7015110191626563993, guid: b81f65b163eaa864b800117cde7a3fe5, type: 3}
