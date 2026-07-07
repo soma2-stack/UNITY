@@ -1187,17 +1187,17 @@ public class WeaponController : NetworkBehaviour
     {
         forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : transform.forward;
         float range = Mathf.Max(0.1f, meleeRange);
-        Debug.Log("[WeaponController] Melee swing by client " + shooterClientId + ".");
+        LogMelee("[WeaponController] Melee swing by client " + shooterClientId + ".");
 
-        // 1) Forgiving forward sphere sweep for ZOMBIES ONLY (so it locks onto a zombie rather
-        //    than stopping on a nearby prop). This alone makes close-range V connect reliably.
+        // 1) Forgiving forward sphere sweep for zombies, followed by the same line-of-sight guard
+        //    as the overlap fallback so the knife cannot connect through walls or props.
         float radius = Mathf.Max(0.05f, meleeRadius);
         if (CastNonSelf(origin, radius, forward, range, true, out RaycastHit sweepHit))
         {
             ZombieAgent zombie = sweepHit.collider.GetComponentInParent<ZombieAgent>();
-            if (zombie != null && !zombie.IsDead)
+            if (zombie != null && !zombie.IsDead && HasMeleeLineOfSight(origin, zombie, sweepHit.collider, range))
             {
-                Debug.Log("[WeaponController] Melee (sweep) by client " + shooterClientId +
+                LogMelee("[WeaponController] Melee (sweep) by client " + shooterClientId +
                           " killed zombie '" + zombie.name + "'.");
                 zombie.KillByMelee(shooterClientId); // instant kill; ZombieAgent.Die() awards the 130 melee reward to this shooter
                 return;
@@ -1212,13 +1212,20 @@ public class WeaponController : NetworkBehaviour
         ZombieAgent nearest = FindNearestZombieInSphere(sphereCenter, fallbackRadius, out Collider nearestCol);
         if (nearest != null && HasMeleeLineOfSight(origin, nearest, nearestCol, range))
         {
-            Debug.Log("[WeaponController] Melee (overlap) by client " + shooterClientId +
+            LogMelee("[WeaponController] Melee (overlap) by client " + shooterClientId +
                       " killed zombie '" + nearest.name + "'.");
             nearest.KillByMelee(shooterClientId);
             return;
         }
 
-        Debug.Log("[WeaponController] Melee by client " + shooterClientId + " missed.");
+        LogMelee("[WeaponController] Melee by client " + shooterClientId + " missed.");
+    }
+
+    [System.Diagnostics.Conditional("UNITY_EDITOR")]
+    [System.Diagnostics.Conditional("DEVELOPMENT_BUILD")]
+    private static void LogMelee(string message)
+    {
+        Debug.Log(message);
     }
 
     // Nearest living zombie within an overlap sphere, ignoring this player's own colliders.
