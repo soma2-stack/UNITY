@@ -45,7 +45,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     private const float PanelPad     = 24f;   // inner inset so text never touches panel edges
     private static readonly Vector2 RoundPanelSize  = new Vector2(362f, 160f); // slightly taller so the lower row can rise without touching the number
     private static readonly Vector2 StatusPanelSize = new Vector2(576f, 226f); // ~7% smaller than before (was too big)
-    private static readonly Vector2 AmmoPanelSize   = new Vector2(320f, 112f); // weapon name stacked above the ammo number, both right-aligned
+    private static readonly Vector2 AmmoPanelSize   = new Vector2(350f, 126f); // weapon name stacked above the ammo number, both right-aligned
 
     // --- Round panel content regions (nudge to line up with the chalkboard art frame) -----
     private const float RoundInsetX        = 58f; // horizontal inset from the chalkboard frame (in from edges)
@@ -940,19 +940,19 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
 
         // Weapon name STACKED ABOVE the ammo number, both right-aligned to the panel's right edge
         // so the name no longer crowds the ammo counter. Bottom-right anchor/pivot; the name sits
-        // in the upper row (y=58) and the ammo in the lower row (y=10), with no vertical overlap.
-        weaponNameText = MakeLabel("WeaponName", panel, "—", Color.black, 24, TextAlignmentOptions.BottomRight,
-            new Vector2(-18f, 58f), new Vector2(innerW, 30f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        // in the upper row (y=78) and the ammo in the lower row (y=18), with no vertical overlap.
+        weaponNameText = MakeLabel("WeaponName", panel, "—", Color.black, 25, TextAlignmentOptions.BottomRight,
+            new Vector2(-22f, 78f), new Vector2(innerW, 30f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
         // Long gun names: shrink-to-fit on one line, then ellipsis as a last resort (MakeLabel
         // already disabled word wrap). Keeps names inside the ammo panel without touching weapon data.
         weaponNameText.enableAutoSizing = true;
         weaponNameText.fontSizeMin = 16f;
-        weaponNameText.fontSizeMax = 24f;
+        weaponNameText.fontSizeMax = 25f;
         weaponNameText.overflowMode = TextOverflowModes.Ellipsis;
         // Black text with a white outline so the name reads against the dark chalkboard.
         ApplyBlackWhiteOutline(weaponNameText);
-        ammoText = MakeLabel("Ammo", panel, "-- / --", RedAccent, 36, TextAlignmentOptions.BottomRight,
-            new Vector2(-18f, 10f), new Vector2(innerW, 46f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        ammoText = MakeLabel("Ammo", panel, "-- / --", RedAccent, 40, TextAlignmentOptions.BottomRight,
+            new Vector2(-22f, 18f), new Vector2(innerW, 52f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
     }
 
     // Full-screen red damage overlay. Fills the whole canvas (anchors 0,0..1,1, zero offsets),
