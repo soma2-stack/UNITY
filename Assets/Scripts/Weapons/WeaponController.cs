@@ -117,6 +117,17 @@ public class WeaponController : NetworkBehaviour
     [Tooltip("Local scale of the knife wrapper. Keep at 1,1,1 — the Meshy prefab keeps its own " +
              "authored scale; this is not multiplied by a big default. Tune in the Inspector.")]
     public Vector3 knifeLocalScale = Vector3.one;
+    [Tooltip("Spawn the knife in CAMERA space instead of under the WeaponHolder. The holder can " +
+             "carry its own offset/rotation that pushes a first-person model off-screen, so camera " +
+             "space is the reliable default. Falls back to the holder when no camera is available.")]
+    public bool knifeUseCameraSpace = true;
+    [Tooltip("Local position of the knife wrapper in CAMERA space (used when knifeUseCameraSpace).")]
+    public Vector3 knifeCameraLocalPosition = new Vector3(0.35f, -0.32f, 0.75f);
+    [Tooltip("Local euler rotation (degrees) of the knife wrapper in CAMERA space.")]
+    public Vector3 knifeCameraLocalEuler = new Vector3(20f, -35f, -20f);
+    [Tooltip("Seconds the knife visual stays shown per swing. Visual only — does NOT change melee " +
+             "damage, range, cooldown, or networking.")]
+    public float knifeVisualDuration = 0.35f;
 
     [Header("Hit Feedback")]
     [Tooltip("Optional blood/hit particle prefab, spawned at the impact point only when a ZombieAgent is shot. Leave empty for no blood.")]
@@ -1183,7 +1194,7 @@ public class WeaponController : NetworkBehaviour
         }
 
         nextMeleeTime = Time.time + Mathf.Max(0.05f, meleeCooldown);
-        knifeSwingEndTime = Time.time + 0.2f;
+        knifeSwingEndTime = Time.time + Mathf.Max(0.05f, knifeVisualDuration);
         IsKnifing = true;
         StartKnifeVisual(); // optional: no-op when no knife prefab is assigned
 
@@ -1263,35 +1274,67 @@ public class WeaponController : NetworkBehaviour
     // The visual root is an empty wrapper we fully control (KnifeVisualRoot). The Meshy prefab is
     // spawned as a CHILD, preserving its authored local transform, then its visible renderers are
     // recentered on the wrapper origin so internal Meshy offsets/scales can't push it off-camera.
+    // Target world size (largest bounds dimension) the auto-fit aims the knife toward, and the
+    // clamp on the fit multiplier so a mis-imported Meshy scale can never explode or vanish.
+    private const float KnifeFitMinSize = 0.65f;
+    private const float KnifeFitMaxSize = 0.85f;
+    private const float KnifeFitScaleClampMin = 0.001f;
+    private const float KnifeFitScaleClampMax = 1000f;
+
     private void EnsureKnifeModel()
     {
-        if (_knifeModel != null || knifeModelPrefab == null || weaponHolder == null)
+        if (_knifeModel != null || knifeModelPrefab == null)
         {
             return;
         }
 
-        // Wrapper: knifeLocalPosition/Euler/Scale drive THIS transform (not the prefab root), so
-        // the first-person placement is independent of whatever the prefab bakes internally.
+        // Prefer CAMERA space: the WeaponHolder can carry its own offset/rotation that shoves a
+        // first-person model off-screen, so parenting to the camera with dedicated camera-space
+        // placement is reliable. Fall back to the holder only when no camera is available.
+        Transform parent;
+        Vector3 localPos;
+        Vector3 localEuler;
+        Transform camera = cam != null ? cam : ResolveCameraTransform();
+        if (knifeUseCameraSpace && camera != null)
+        {
+            parent = camera;
+            localPos = knifeCameraLocalPosition;
+            localEuler = knifeCameraLocalEuler;
+        }
+        else
+        {
+            parent = weaponHolder;
+            localPos = knifeLocalPosition;
+            localEuler = knifeLocalEuler;
+        }
+
+        if (parent == null)
+        {
+            return; // no camera and no holder: no visual possible, but melee still works
+        }
+
+        // Wrapper: localPos/Euler/Scale drive THIS transform (not the prefab root), so placement is
+        // independent of whatever the prefab bakes internally.
         GameObject wrapper = new GameObject("KnifeVisualRoot");
-        wrapper.transform.SetParent(weaponHolder, false);
-        wrapper.transform.localPosition = knifeLocalPosition;
-        wrapper.transform.localRotation = Quaternion.Euler(knifeLocalEuler);
+        wrapper.transform.SetParent(parent, false);
+        wrapper.transform.localPosition = localPos;
+        wrapper.transform.localRotation = Quaternion.Euler(localEuler);
         wrapper.transform.localScale = knifeLocalScale;
 
         // Spawn the prefab as a child, PRESERVING its authored local transform (worldPositionStays
-        // = false), then recenter the visible mesh onto the wrapper origin.
+        // = false), then center + auto-fit the visible mesh onto the wrapper origin.
         GameObject knife = Instantiate(knifeModelPrefab, wrapper.transform, false);
-        CenterKnifeRenderers(wrapper.transform, knife);
+        FitKnifeRenderers(wrapper.transform, knife, parent.name, localPos, localEuler);
 
         _knifeModel = wrapper;
         _knifeModel.SetActive(false); // hidden until a swing shows it
     }
 
-    // Shift the spawned knife child locally so the combined bounds-center of its visible renderers
-    // sits at the wrapper origin. This neutralises Meshy child offsets that would otherwise place
-    // the model far off-camera. Logs the prefab + renderer count once (editor/dev builds only); a
-    // rendererless prefab is warned about clearly. Runs once per knife spawn, so it never spams.
-    private void CenterKnifeRenderers(Transform wrapper, GameObject knife)
+    // Center the spawned knife's visible mesh on the wrapper origin, then scale the wrapper so the
+    // largest visible bounds dimension lands in [KnifeFitMinSize, KnifeFitMaxSize] — handling Meshy
+    // models that import too tiny, too huge, or with weird internal offsets. Runs once per knife
+    // spawn (editor/dev logging only), so it never spams. A rendererless prefab is warned about.
+    private void FitKnifeRenderers(Transform wrapper, GameObject knife, string parentName, Vector3 localPos, Vector3 localEuler)
     {
         Renderer[] renderers = knife != null ? knife.GetComponentsInChildren<Renderer>(true) : null;
         if (renderers == null || renderers.Length == 0)
@@ -1304,23 +1347,49 @@ public class WeaponController : NetworkBehaviour
             return;
         }
 
-        Bounds bounds = renderers[0].bounds;
-        for (int i = 1; i < renderers.Length; i++)
+        // Make sure every visible mesh is actually enabled, then measure combined world bounds.
+        Bounds bounds = default;
+        bool hasBounds = false;
+        for (int i = 0; i < renderers.Length; i++)
         {
-            if (renderers[i] != null)
+            Renderer r = renderers[i];
+            if (r == null)
             {
-                bounds.Encapsulate(renderers[i].bounds);
+                continue;
+            }
+            r.enabled = true;
+            if (!hasBounds)
+            {
+                bounds = r.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(r.bounds);
             }
         }
 
-        // Convert the world-space bounds center into the wrapper's local space and subtract it
-        // from the knife child's local position (both are in wrapper-local space).
+        // Center: shift the knife child so the mesh bounds-center sits at the wrapper origin. Both
+        // values are in wrapper-local space; scaling the wrapper afterwards is about that origin,
+        // so the mesh stays centered.
         Vector3 localCenter = wrapper.InverseTransformPoint(bounds.center);
         knife.transform.localPosition -= localCenter;
 
+        // Auto-fit: if the largest world dimension is outside the target band, scale the wrapper so
+        // it hits the band midpoint. Clamped so a bad import can't produce an insane scale.
+        float targetSize = (KnifeFitMinSize + KnifeFitMaxSize) * 0.5f;
+        float largestDim = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z));
+        if (largestDim > 0.0001f && (largestDim < KnifeFitMinSize || largestDim > KnifeFitMaxSize))
+        {
+            float scaleMul = Mathf.Clamp(targetSize / largestDim, KnifeFitScaleClampMin, KnifeFitScaleClampMax);
+            wrapper.localScale = knifeLocalScale * scaleMul;
+        }
+
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        Debug.Log("[WeaponController] Knife visual spawned: '" + knifeModelPrefab.name +
-            "' with " + renderers.Length + " renderer(s); recentered on the wrapper.");
+        Debug.Log("[WeaponController] Knife visual spawned: prefab='" + knifeModelPrefab.name +
+            "' parent='" + parentName + "' renderers=" + renderers.Length +
+            " localPos=" + localPos + " localEuler=" + localEuler +
+            " wrapperScale=" + wrapper.localScale + " boundsSize=" + bounds.size);
 #endif
     }
 
@@ -1340,6 +1409,10 @@ public class WeaponController : NetworkBehaviour
         }
         _knifeModel.SetActive(true);
         _knifeVisualActive = true;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        Debug.Log("[WeaponController] Knife visual active (V pressed) for " +
+                  Mathf.Max(0.05f, knifeVisualDuration).ToString("0.00") + "s.");
+#endif
     }
 
     // Hide the knife and restore the current gun view model after the swing window. Null-safe, so a
