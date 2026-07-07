@@ -28,8 +28,14 @@ public class Powerup : MonoBehaviour
     public float bobSpeed = 2f;
     [Tooltip("Bob amplitude in world units (peak offset above/below the spawn height).")]
     public float bobHeight = 0.2f;
-    [Tooltip("Spin speed in degrees/second (90 = one full rotation every 4 seconds).")]
-    public float spinSpeed = 90f;
+    [Tooltip("Spin speed in degrees/second (120 = one full rotation every 3 seconds).")]
+    public float spinSpeed = 120f;
+
+    [Header("Aura (runtime-only glow)")]
+    [Tooltip("Point-light range for the coloured glow built around the pickup at runtime.")]
+    public float auraLightRange = 3f;
+    [Tooltip("Point-light intensity for the coloured glow.")]
+    public float auraLightIntensity = 1.6f;
 
     private float spawnTime;
     private Transform player;
@@ -37,6 +43,11 @@ public class Powerup : MonoBehaviour
     private Vector3 spawnPosition; // captured once so the bob oscillates without drifting
     private bool networked;
     private int networkId;
+
+    // Runtime-only aura (never modifies prefab assets/materials). Built once in Start.
+    private Light auraLight;
+    private GameObject auraObject;
+    private bool auraBuilt;
 
     public int NetworkId => networkId;
     public bool IsNetworked => networked;
@@ -152,13 +163,80 @@ public class Powerup : MonoBehaviour
 
     private void Start()
     {
+        // Build the runtime aura BEFORE gathering renderers, so its ParticleSystemRenderer is
+        // included in the flashed set and blinks together with the model in the final seconds.
+        BuildAura();
         // Gather EVERY renderer under the pickup so the despawn flash works for multi-renderer
-        // model prefabs as well as the single-renderer cube fallback.
+        // model prefabs as well as the single-renderer cube fallback (now including the aura).
         renderers = GetComponentsInChildren<Renderer>(true);
         // Capture the spawn position ONCE so the bob oscillates around it instead of
         // accumulating (which would make the pickup drift upward forever).
         spawnPosition = transform.position;
         FindPlayer();
+    }
+
+    // Build a small, subtle, runtime-only glow around the pickup: a coloured Point Light plus a
+    // gentle looping particle aura. Created entirely in code (no prefab/material asset is touched)
+    // and coloured from PowerupManager.ColorOf(type). Guarded so a re-enable never duplicates it.
+    private void BuildAura()
+    {
+        if (auraBuilt)
+        {
+            return;
+        }
+        auraBuilt = true;
+
+        Color color = PowerupManager.ColorOf(type);
+
+        auraObject = new GameObject("Powerup_Aura");
+        auraObject.transform.SetParent(transform, false);
+        auraObject.transform.localPosition = Vector3.zero;
+
+        // Coloured point-light glow.
+        auraLight = auraObject.AddComponent<Light>();
+        auraLight.type = LightType.Point;
+        auraLight.color = color;
+        auraLight.range = Mathf.Max(0.5f, auraLightRange);
+        auraLight.intensity = Mathf.Max(0f, auraLightIntensity);
+        auraLight.shadows = LightShadows.None;
+
+        // Subtle looping particle aura (soft rising sparks in the power-up's colour).
+        ParticleSystem ps = auraObject.AddComponent<ParticleSystem>();
+        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+        ParticleSystem.MainModule main = ps.main;
+        main.loop = true;
+        main.playOnAwake = true;
+        main.startLifetime = 0.9f;
+        main.startSpeed = 0.35f;
+        main.startSize = 0.12f;
+        main.startColor = color;
+        main.simulationSpace = ParticleSystemSimulationSpace.World;
+        main.maxParticles = 24;
+
+        ParticleSystem.EmissionModule emission = ps.emission;
+        emission.enabled = true;
+        emission.rateOverTime = 8f;
+
+        ParticleSystem.ShapeModule shape = ps.shape;
+        shape.enabled = true;
+        shape.shapeType = ParticleSystemShapeType.Sphere;
+        shape.radius = 0.35f;
+
+        // Bright unlit additive-ish material so the sparks read as a glow (URP-safe fallbacks).
+        ParticleSystemRenderer psr = auraObject.GetComponent<ParticleSystemRenderer>();
+        if (psr != null)
+        {
+            Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+            if (shader == null) { shader = Shader.Find("Sprites/Default"); }
+            if (shader == null) { shader = Shader.Find("Unlit/Color"); }
+            if (shader != null)
+            {
+                psr.material = new Material(shader) { color = color };
+            }
+        }
+
+        ps.Play();
     }
 
     private void OnEnable()
@@ -207,7 +285,9 @@ public class Powerup : MonoBehaviour
             return;
         }
 
-        // Flash in the final 3 seconds — toggle ALL renderers (root + children).
+        // Flash in the final 3 seconds — toggle ALL renderers (root + children, including the
+        // aura's particle renderer) plus the aura light, so the glow blinks with the model and
+        // never lights up while the pickup is invisible.
         if (renderers != null && lifetime - age < 3f)
         {
             bool visible = Mathf.FloorToInt(age * 6f) % 2 == 0;
@@ -217,6 +297,10 @@ public class Powerup : MonoBehaviour
                 {
                     renderers[i].enabled = visible;
                 }
+            }
+            if (auraLight != null)
+            {
+                auraLight.enabled = visible;
             }
         }
 

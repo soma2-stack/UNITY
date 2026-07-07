@@ -93,6 +93,9 @@ public class WeaponController : NetworkBehaviour
     public KeyCode meleeKey = KeyCode.V;
     [Tooltip("Range of the knife attack in world units.")]
     public float meleeRange = 2.5f;
+    [Tooltip("Forgiveness radius for the knife's close-range sphere sweep, in world units. " +
+             "Wider = easier to connect on nearby zombies without pinpoint aim.")]
+    public float meleeRadius = 0.65f;
     [Tooltip("Cooldown between knife attacks in seconds.")]
     public float meleeCooldown = 0.8f;
 
@@ -1179,16 +1182,94 @@ public class WeaponController : NetworkBehaviour
     private void PerformMelee(Vector3 origin, Vector3 forward, ulong shooterClientId)
     {
         forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : transform.forward;
-        if (Physics.Raycast(origin, forward, out RaycastHit hit, Mathf.Max(0.1f, meleeRange), hitMask, QueryTriggerInteraction.Ignore))
+        float range = Mathf.Max(0.1f, meleeRange);
+        Debug.Log("[WeaponController] Melee swing by client " + shooterClientId + ".");
+
+        // 1) Forgiving forward sphere sweep for ZOMBIES ONLY (so it locks onto a zombie rather
+        //    than stopping on a nearby prop). This alone makes close-range V connect reliably.
+        float radius = Mathf.Max(0.05f, meleeRadius);
+        if (CastNonSelf(origin, radius, forward, range, true, out RaycastHit sweepHit))
         {
-            ZombieAgent zombie = hit.collider.GetComponentInParent<ZombieAgent>();
-            if (zombie != null)
+            ZombieAgent zombie = sweepHit.collider.GetComponentInParent<ZombieAgent>();
+            if (zombie != null && !zombie.IsDead)
             {
-                Debug.Log("[WeaponController] Melee by client " + shooterClientId + " killed zombie '" + zombie.name + "'.");
+                Debug.Log("[WeaponController] Melee (sweep) by client " + shooterClientId +
+                          " killed zombie '" + zombie.name + "'.");
                 zombie.KillByMelee(shooterClientId); // instant kill; ZombieAgent.Die() awards the 130 melee reward to this shooter
+                return;
             }
         }
-        // Miss or non-zombie: silent (no effect), per spec.
+
+        // 2) Fallback: the nearest LIVING zombie inside an overlap sphere just in front of the
+        //    player. Guards line-of-sight so we never knife a zombie through a wall.
+        Vector3 sphereCenter = origin + forward * (range * 0.5f);
+        ZombieAgent nearest = FindNearestZombieInSphere(sphereCenter, range, out Collider nearestCol);
+        if (nearest != null && HasMeleeLineOfSight(origin, nearest, nearestCol, range))
+        {
+            Debug.Log("[WeaponController] Melee (overlap) by client " + shooterClientId +
+                      " killed zombie '" + nearest.name + "'.");
+            nearest.KillByMelee(shooterClientId);
+            return;
+        }
+
+        Debug.Log("[WeaponController] Melee by client " + shooterClientId + " missed.");
+    }
+
+    // Nearest living zombie within an overlap sphere, ignoring this player's own colliders.
+    // Uses the reusable buffer so it never allocates. Returns null when none is in reach.
+    private ZombieAgent FindNearestZombieInSphere(Vector3 center, float radius, out Collider hitCollider)
+    {
+        hitCollider = null;
+        ZombieAgent nearest = null;
+        float bestSqr = float.MaxValue;
+
+        int count = Physics.OverlapSphereNonAlloc(center, Mathf.Max(0.05f, radius), _meleeOverlap, hitMask, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < count; i++)
+        {
+            Collider c = _meleeOverlap[i];
+            if (c == null || c.transform.IsChildOf(transform))
+            {
+                continue; // never our own body
+            }
+            ZombieAgent z = c.GetComponentInParent<ZombieAgent>();
+            if (z == null || z.IsDead)
+            {
+                continue;
+            }
+            float sqr = (c.bounds.center - center).sqrMagnitude;
+            if (sqr < bestSqr)
+            {
+                bestSqr = sqr;
+                nearest = z;
+                hitCollider = c;
+            }
+        }
+        return nearest;
+    }
+
+    // True when nothing solid (a non-zombie collider) sits between the player and the fallback
+    // target, so the knife can't reach a zombie through a wall. A clear line, or a zombie being
+    // the first thing hit, both count as line-of-sight.
+    private bool HasMeleeLineOfSight(Vector3 origin, ZombieAgent target, Collider targetCol, float range)
+    {
+        Vector3 targetPoint = targetCol != null ? targetCol.bounds.center : target.transform.position;
+        Vector3 toTarget = targetPoint - origin;
+        float dist = toTarget.magnitude;
+        if (dist <= 0.0001f)
+        {
+            return true;
+        }
+
+        Vector3 dir = toTarget / dist;
+        if (CastNonSelf(origin, 0f, dir, Mathf.Min(dist + 0.1f, range + 0.5f), false, out RaycastHit hit))
+        {
+            // If the first solid thing on the way is NOT a zombie, the path is blocked.
+            if (hit.collider.GetComponentInParent<ZombieAgent>() == null)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void HandleFiring()
@@ -1575,6 +1656,9 @@ public class WeaponController : NetworkBehaviour
 
     // Reusable buffer so the shot cast never allocates.
     private static readonly RaycastHit[] _shotHits = new RaycastHit[16];
+
+    // Reusable buffer for the melee fallback overlap so it never allocates.
+    private static readonly Collider[] _meleeOverlap = new Collider[16];
 
     // Resolve a shot into a zombie hit (if any) plus an impact point, handling the two
     // problems that made shooting unreliable:

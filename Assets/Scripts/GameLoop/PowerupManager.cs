@@ -60,6 +60,10 @@ public class PowerupManager : MonoBehaviour
     [Header("Pickup")]
     [Tooltip("Seconds a dropped pickup stays in the world before despawning.")]
     public float pickupLifetime = 15f;
+    [Tooltip("Metres the visual pickup is lifted above the drop/death position so the 3D model " +
+             "floats at eye-catching height instead of sinking into the floor. Applied centrally " +
+             "in SpawnPickup, so random drops and SpawnPowerupAt share the same height.")]
+    public float pickupSpawnHeight = 1.25f;
 
     [Header("Pickup Prefabs (optional 3D models)")]
     [Tooltip("Optional 3D pickup model for each power-up type. When assigned, that prefab is " +
@@ -253,7 +257,7 @@ public class PowerupManager : MonoBehaviour
         }
 
         PowerupType type = PickWeightedRandom();
-        SpawnPickup(type, position + Vector3.up * 0.5f);
+        SpawnPickup(type, position); // SpawnPickup applies the shared pickupSpawnHeight lift
     }
 
     /// <summary>
@@ -284,11 +288,16 @@ public class PowerupManager : MonoBehaviour
 
     private void SpawnPickup(PowerupType type, Vector3 position)
     {
+        // Lift the visual pickup above the drop/death position centrally, so every spawn path
+        // (random drops + SpawnPowerupAt) floats at the same height. The already-lifted transform
+        // position is what the server broadcasts, so clients match without any payload change.
+        Vector3 spawnPosition = position + Vector3.up * pickupSpawnHeight;
+
         bool networked = NetworkGameplayCoordinator.IsNetworkActive;
         int id = networked && NetworkGameplayCoordinator.IsServer
             ? NetworkGameplayCoordinator.AllocatePowerupId()
             : 0;
-        Powerup powerup = Powerup.Spawn(type, position, pickupLifetime, id, networked);
+        Powerup powerup = Powerup.Spawn(type, spawnPosition, pickupLifetime, id, networked);
         if (networked && NetworkGameplayCoordinator.IsServer)
         {
             NetworkGameplayCoordinator.BroadcastPowerupSpawn(powerup);
