@@ -126,9 +126,8 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
     // Custom perk icon sprites, one per PerkOrder index (null when no icon PNG is present, in
     // which case the coloured placeholder square + abbreviation is used instead). Loaded once.
     private Sprite[] perkIcons;
-    // Optional perk-row background art; null when no perk_row.png was found (row stays
-    // transparent, as before). Only shown when at least one perk is owned.
-    private Image perkRowBackground;
+    // (The old perk-row background board was removed — the row is a transparent layout container
+    // so buying a perk never draws a panel across the middle of the screen.)
 
     // Client-side zombie count throttle (mirrors GameHud's approach).
     private float nextZombieCountRefresh;
@@ -466,7 +465,6 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         }
 
         PerkManager pm = PerkManager.Instance;
-        int ownedCount = 0;
         for (int i = 0; i < PerkOrder.Length; i++)
         {
             PerkType perk = PerkOrder[i];
@@ -477,7 +475,6 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             }
             if (owned)
             {
-                ownedCount++;
                 Sprite icon = perkIcons != null ? perkIcons[i] : null;
                 if (icon != null)
                 {
@@ -495,13 +492,8 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
                 }
             }
         }
-
-        // Show the perk-strip background art only when art exists AND at least one perk is
-        // owned, so an empty strip never shows a stray panel.
-        if (perkRowBackground != null && perkRowBackground.enabled != (ownedCount > 0))
-        {
-            perkRowBackground.enabled = ownedCount > 0;
-        }
+        // No perk-row background board, so buying a perk never stretches a stray panel across the
+        // middle of the screen — only the icons show.
     }
 
     private void RefreshWeapon()
@@ -843,16 +835,11 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         row.anchorMin = new Vector2(0.5f, 0f);
         row.anchorMax = new Vector2(0.5f, 0f);
         row.pivot = new Vector2(0.5f, 0f);
-        row.anchoredPosition = new Vector2(0f, 16f);
+        row.anchoredPosition = new Vector2(0f, 32f);
 
-        // Optional background art for the whole perk strip. Placed on the row object itself so
-        // it sits BEHIND the perk slots (the layout group arranges the slots, not this graphic)
-        // and auto-sizes to the row via the ContentSizeFitter + layout padding. If perk_row.png
-        // is missing it is disabled, leaving the row transparent exactly as before.
-        Image rowBg = rowGo.AddComponent<Image>();
-        rowBg.raycastTarget = false;
-        rowBg.enabled = false; // toggled on in RefreshPerks only when art loaded + perks owned
-        perkRowBackground = ApplyPanelSprite(rowBg, "Perk", "perk_row", "perk") ? rowBg : null;
+        // No background board: the perk row is a transparent layout container (no Image), so
+        // buying a perk never draws a giant panel across the middle of the screen — only the perk
+        // icons render.
 
         HorizontalLayoutGroup layout = rowGo.AddComponent<HorizontalLayoutGroup>();
         layout.spacing = 8f;
@@ -879,18 +866,18 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             GameObject slot = new GameObject("Perk_" + PerkOrder[i], typeof(RectTransform));
             RectTransform slotRt = slot.GetComponent<RectTransform>();
             slotRt.SetParent(row, false);
-            slotRt.sizeDelta = new Vector2(40f, 52f);
+            slotRt.sizeDelta = new Vector2(76f, 88f);
             // LayoutElement so the HorizontalLayoutGroup + ContentSizeFitter can measure and
             // centre the row (a bare RectTransform reports no preferred size and collapses it).
             LayoutElement le = slot.AddComponent<LayoutElement>();
-            le.preferredWidth = 40f;
-            le.preferredHeight = 52f;
+            le.preferredWidth = 76f;
+            le.preferredHeight = 88f;
 
             RectTransform square = MakeChildImage("Square", slotRt, Color.gray);
             square.anchorMin = new Vector2(0.5f, 1f);
             square.anchorMax = new Vector2(0.5f, 1f);
             square.pivot = new Vector2(0.5f, 1f);
-            square.sizeDelta = new Vector2(36f, 36f);
+            square.sizeDelta = new Vector2(64f, 64f);
             square.anchoredPosition = Vector2.zero;
             Image squareImg = square.GetComponent<Image>();
             squareImg.preserveAspect = true; // custom icons keep their aspect
@@ -899,8 +886,8 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
             // RefreshPerks. Falls back to the coloured square + abbreviation when absent.
             perkIcons[i] = LoadPerkIcon(PerkOrder[i]);
 
-            TMP_Text label = MakeLabel("Label", slotRt, "", OffWhite, 11, TextAlignmentOptions.Top,
-                new Vector2(0f, 2f), new Vector2(48f, 14f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
+            TMP_Text label = MakeLabel("Label", slotRt, "", OffWhite, 15, TextAlignmentOptions.Top,
+                new Vector2(0f, 2f), new Vector2(72f, 18f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
 
             perkSlots[i] = slot;
             perkSquares[i] = squareImg;
