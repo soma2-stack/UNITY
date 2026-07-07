@@ -942,19 +942,19 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         // Weapon name floats well ABOVE the panel on the right (top-right anchor/pivot, y>0 lifts
         // it above the panel's top edge), big and white with a black outline so it reads over
         // gameplay. Taller box so the larger font never clips.
-        weaponNameText = MakeLabel("WeaponName", panel, "—", Color.white, 40, TextAlignmentOptions.BottomRight,
+        weaponNameText = MakeLabel("WeaponName", panel, "—", Color.white, 36, TextAlignmentOptions.BottomRight,
             new Vector2(-8f, 34f), new Vector2(innerW + 40f, 48f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f));
         // Long gun names: shrink-to-fit on one line, then ellipsis as a last resort (MakeLabel
         // already disabled word wrap). Keeps names inside the ammo panel without touching weapon data.
         weaponNameText.enableAutoSizing = true;
-        weaponNameText.fontSizeMin = 20f;
-        weaponNameText.fontSizeMax = 40f;
+        weaponNameText.fontSizeMin = 18f;
+        weaponNameText.fontSizeMax = 36f;
         weaponNameText.overflowMode = TextOverflowModes.Ellipsis;
         ApplyWhiteBlackOutline(weaponNameText);
 
         // Ammo count sits CENTERED inside the panel, big and readable. White with a black outline.
         ammoText = MakeLabel("Ammo", panel, "--/--", OffWhite, 44, TextAlignmentOptions.Center,
-            new Vector2(0f, -2f), new Vector2(AmmoPanelSize.x - 36f, 58f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+            new Vector2(8f, -2f), new Vector2(AmmoPanelSize.x - 36f, 58f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
         // Auto-size so small values like "8/80" stay large while wider ones like "100/400" and the
         // "RELOADING" string shrink enough to stay inside the panel instead of spilling out.
         ammoText.enableAutoSizing = true;
