@@ -61,6 +61,17 @@ public class PowerupManager : MonoBehaviour
     [Tooltip("Seconds a dropped pickup stays in the world before despawning.")]
     public float pickupLifetime = 15f;
 
+    [Header("Pickup Prefabs (optional 3D models)")]
+    [Tooltip("Optional 3D pickup model for each power-up type. When assigned, that prefab is " +
+             "spawned instead of the generated coloured cube; leave one empty to keep the cube " +
+             "fallback for that type. Purely visual — effects, timers, drop rates and networking " +
+             "are unchanged. Assign these on the scene PowerupManager in the Inspector.")]
+    public GameObject maxAmmoPrefab;
+    public GameObject instaKillPrefab;
+    public GameObject doublePointsPrefab;
+    public GameObject nukePrefab;
+    public GameObject infiniteAmmoPrefab;
+
     // --- Active timed-effect state (static so anything can read it) ---
 
     /// <summary>True while Insta-Kill is active (read by WeaponController.Fire).</summary>
@@ -446,6 +457,34 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InfiniteAmmo: return new Color(0.7f, 0.45f, 0.2f); // placeholder (inherited Carpenter brown) — recolor later
             default: return Color.white;
         }
+    }
+
+    /// <summary>
+    /// The assigned 3D pickup prefab for a power-up type, or null when none is set (the caller
+    /// then uses the generated-cube fallback). Purely a visual model lookup.
+    /// </summary>
+    public GameObject GetPickupPrefab(PowerupType type)
+    {
+        switch (type)
+        {
+            case PowerupType.MaxAmmo: return maxAmmoPrefab;
+            case PowerupType.InstaKill: return instaKillPrefab;
+            case PowerupType.DoublePoints: return doublePointsPrefab;
+            case PowerupType.Nuke: return nukePrefab;
+            case PowerupType.InfiniteAmmo: return infiniteAmmoPrefab;
+            default: return null;
+        }
+    }
+
+    /// <summary>
+    /// Null-safe resolver so <see cref="Powerup.Spawn"/> — which runs on every peer, including
+    /// clients — can look up the LOCAL pickup prefab without a hard dependency on a live manager.
+    /// Returns null when there is no manager or no prefab assigned, so the caller falls back to
+    /// the generated cube. Never affects effects/timers/networking.
+    /// </summary>
+    public static GameObject ResolvePickupPrefab(PowerupType type)
+    {
+        return Instance != null ? Instance.GetPickupPrefab(type) : null;
     }
 
     private void OnGUI()

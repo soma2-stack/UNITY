@@ -2,11 +2,13 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// A single power-up pickup dropped by a killed zombie. A small glowing, spinning
-/// cube the player collects by walking over it (trigger) or pressing E nearby.
+/// A single power-up pickup dropped by a killed zombie. A small spinning, bobbing pickup
+/// the player collects by walking over it (trigger) or getting close.
 ///
-/// Created entirely from code via <see cref="Spawn"/> (no prefab needed). On collect
-/// it tells <see cref="PowerupManager"/> to apply its effect, then destroys itself.
+/// Spawned via <see cref="Spawn"/>: it uses the assigned 3D model prefab for the power-up
+/// type (resolved from the local <see cref="PowerupManager"/>) when one exists, and otherwise
+/// falls back to a code-generated glowing cube, so pickups still work with no prefab set. On
+/// collect it tells <see cref="PowerupManager"/> to apply its effect, then destroys itself.
 /// It despawns automatically after a lifetime, flashing near the end.
 /// </summary>
 public class Powerup : MonoBehaviour
@@ -31,7 +33,7 @@ public class Powerup : MonoBehaviour
 
     private float spawnTime;
     private Transform player;
-    private Renderer rend;
+    private Renderer[] renderers;  // all renderers under this pickup (cube = one; model = many)
     private Vector3 spawnPosition; // captured once so the bob oscillates without drifting
     private bool networked;
     private int networkId;
@@ -44,8 +46,56 @@ public class Powerup : MonoBehaviour
     /// <summary>Create a power-up pickup at a world position. Returns the new instance.</summary>
     public static Powerup Spawn(PowerupType type, Vector3 position, float lifetime, int networkId = 0, bool networked = false)
     {
-        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        // Prefer the assigned 3D pickup model (resolved from the LOCAL PowerupManager, so server
+        // and clients each use their own reference). Fall back to the original generated cube when
+        // no prefab is assigned or no manager is present — pickups never break if refs are missing.
+        GameObject prefab = PowerupManager.ResolvePickupPrefab(type);
+        GameObject go;
+        if (prefab != null)
+        {
+            // Instantiate the model AS-IS: its own rotation, scale, colliders and materials are
+            // preserved (the visual model is never modified). Only move it to the spawn position.
+            go = Object.Instantiate(prefab);
+            go.transform.position = position;
+
+            // The Powerup component (added below) lives on the ROOT, so OnTriggerEnter only fires
+            // if the root carries a trigger collider. The prefabs ship with their own colliders, so
+            // this ONLY adds a small fallback when the root itself has none — nothing is overwritten.
+            EnsureRootTriggerCollider(go);
+        }
+        else
+        {
+            go = BuildFallbackCube(type, position);
+        }
+
         go.name = "Powerup_" + type;
+
+        // Reuse the prefab's own Powerup component if it already has one; otherwise add it at
+        // runtime (the cube path never has one). Never duplicate it.
+        Powerup p = go.GetComponent<Powerup>();
+        if (p == null)
+        {
+            p = go.AddComponent<Powerup>();
+        }
+        p.type = type;
+        p.lifetime = Mathf.Max(1f, lifetime);
+        p.networkId = networkId;
+        p.networked = networked;
+        // Initialise spawnTime HERE (not in Start, which runs a frame later) so that
+        // RemainingLifetime is already valid when the server broadcasts this powerup's spawn
+        // on the same frame. Otherwise the broadcast reads spawnTime=0 and sends a bogus
+        // (near-zero) lifetime, causing clients to despawn the pickup almost immediately.
+        p.spawnTime = Time.time;
+        p.spawnPosition = position;
+        p.RegisterNetworked();
+        return p;
+    }
+
+    // Original generated glowing cube — the fallback used when a type has no assigned prefab.
+    // Behaviour is identical to the pre-prefab implementation.
+    private static GameObject BuildFallbackCube(PowerupType type, Vector3 position)
+    {
+        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
         go.transform.position = position;
         go.transform.localScale = Vector3.one * 0.6f;
 
@@ -77,24 +127,34 @@ public class Powerup : MonoBehaviour
             r.material = mat;
         }
 
-        Powerup p = go.AddComponent<Powerup>();
-        p.type = type;
-        p.lifetime = Mathf.Max(1f, lifetime);
-        p.networkId = networkId;
-        p.networked = networked;
-        // Initialise spawnTime HERE (not in Start, which runs a frame later) so that
-        // RemainingLifetime is already valid when the server broadcasts this powerup's spawn
-        // on the same frame. Otherwise the broadcast reads spawnTime=0 and sends a bogus
-        // (near-zero) lifetime, causing clients to despawn the pickup almost immediately.
-        p.spawnTime = Time.time;
-        p.spawnPosition = position;
-        p.RegisterNetworked();
-        return p;
+        return go;
+    }
+
+    // Ensure the pickup's ROOT has a trigger collider for OnTriggerEnter. If the root already
+    // carries any trigger collider (as the pickup prefabs and the cube do), it is left untouched;
+    // otherwise a small trigger sphere is added on the root. The sphere is a pickup volume only —
+    // it does not resize or alter the visual model, and child colliders are never modified.
+    private static void EnsureRootTriggerCollider(GameObject go)
+    {
+        Collider[] rootColliders = go.GetComponents<Collider>();
+        foreach (Collider c in rootColliders)
+        {
+            if (c != null && c.isTrigger)
+            {
+                return;
+            }
+        }
+
+        SphereCollider trigger = go.AddComponent<SphereCollider>();
+        trigger.isTrigger = true;
+        trigger.radius = 0.5f;
     }
 
     private void Start()
     {
-        rend = GetComponent<Renderer>();
+        // Gather EVERY renderer under the pickup so the despawn flash works for multi-renderer
+        // model prefabs as well as the single-renderer cube fallback.
+        renderers = GetComponentsInChildren<Renderer>(true);
         // Capture the spawn position ONCE so the bob oscillates around it instead of
         // accumulating (which would make the pickup drift upward forever).
         spawnPosition = transform.position;
@@ -147,11 +207,17 @@ public class Powerup : MonoBehaviour
             return;
         }
 
-        // Flash in the final 3 seconds.
-        if (rend != null && lifetime - age < 3f)
+        // Flash in the final 3 seconds — toggle ALL renderers (root + children).
+        if (renderers != null && lifetime - age < 3f)
         {
             bool visible = Mathf.FloorToInt(age * 6f) % 2 == 0;
-            rend.enabled = visible;
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (renderers[i] != null)
+                {
+                    renderers[i].enabled = visible;
+                }
+            }
         }
 
         if (player == null)
