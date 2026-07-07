@@ -110,11 +110,12 @@ public class WeaponController : NetworkBehaviour
     [Tooltip("Optional first-person knife model shown during the melee swing. Leave empty for no " +
              "visual — melee still works. Assign Assets/Prefabs/Weapons/Knife.prefab here once made.")]
     public GameObject knifeModelPrefab;
-    [Tooltip("Local position of the knife model under the WeaponHolder.")]
-    public Vector3 knifeLocalPosition;
-    [Tooltip("Local euler rotation (degrees) of the knife model.")]
-    public Vector3 knifeLocalEuler;
-    [Tooltip("Local scale of the knife model.")]
+    [Tooltip("Local position of the knife wrapper under the WeaponHolder (first-person placement).")]
+    public Vector3 knifeLocalPosition = new Vector3(0.25f, -0.20f, 0.45f);
+    [Tooltip("Local euler rotation (degrees) of the knife wrapper.")]
+    public Vector3 knifeLocalEuler = new Vector3(20f, 100f, -20f);
+    [Tooltip("Local scale of the knife wrapper. Keep at 1,1,1 — the Meshy prefab keeps its own " +
+             "authored scale; this is not multiplied by a big default. Tune in the Inspector.")]
     public Vector3 knifeLocalScale = Vector3.one;
 
     [Header("Hit Feedback")]
@@ -1258,6 +1259,10 @@ public class WeaponController : NetworkBehaviour
 
     // Lazily spawn the knife model under the WeaponHolder the first time it is needed. Null-safe:
     // does nothing (and melee still works) when no prefab is assigned or no holder exists yet.
+    //
+    // The visual root is an empty wrapper we fully control (KnifeVisualRoot). The Meshy prefab is
+    // spawned as a CHILD, preserving its authored local transform, then its visible renderers are
+    // recentered on the wrapper origin so internal Meshy offsets/scales can't push it off-camera.
     private void EnsureKnifeModel()
     {
         if (_knifeModel != null || knifeModelPrefab == null || weaponHolder == null)
@@ -1265,11 +1270,58 @@ public class WeaponController : NetworkBehaviour
             return;
         }
 
-        _knifeModel = Instantiate(knifeModelPrefab, weaponHolder);
-        _knifeModel.transform.localPosition = knifeLocalPosition;
-        _knifeModel.transform.localRotation = Quaternion.Euler(knifeLocalEuler);
-        _knifeModel.transform.localScale = knifeLocalScale;
+        // Wrapper: knifeLocalPosition/Euler/Scale drive THIS transform (not the prefab root), so
+        // the first-person placement is independent of whatever the prefab bakes internally.
+        GameObject wrapper = new GameObject("KnifeVisualRoot");
+        wrapper.transform.SetParent(weaponHolder, false);
+        wrapper.transform.localPosition = knifeLocalPosition;
+        wrapper.transform.localRotation = Quaternion.Euler(knifeLocalEuler);
+        wrapper.transform.localScale = knifeLocalScale;
+
+        // Spawn the prefab as a child, PRESERVING its authored local transform (worldPositionStays
+        // = false), then recenter the visible mesh onto the wrapper origin.
+        GameObject knife = Instantiate(knifeModelPrefab, wrapper.transform, false);
+        CenterKnifeRenderers(wrapper.transform, knife);
+
+        _knifeModel = wrapper;
         _knifeModel.SetActive(false); // hidden until a swing shows it
+    }
+
+    // Shift the spawned knife child locally so the combined bounds-center of its visible renderers
+    // sits at the wrapper origin. This neutralises Meshy child offsets that would otherwise place
+    // the model far off-camera. Logs the prefab + renderer count once (editor/dev builds only); a
+    // rendererless prefab is warned about clearly. Runs once per knife spawn, so it never spams.
+    private void CenterKnifeRenderers(Transform wrapper, GameObject knife)
+    {
+        Renderer[] renderers = knife != null ? knife.GetComponentsInChildren<Renderer>(true) : null;
+        if (renderers == null || renderers.Length == 0)
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Debug.LogWarning("[WeaponController] Knife prefab '" +
+                (knifeModelPrefab != null ? knifeModelPrefab.name : "<null>") +
+                "' has no renderers — nothing will be visible during melee. Check the prefab.");
+#endif
+            return;
+        }
+
+        Bounds bounds = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+        {
+            if (renderers[i] != null)
+            {
+                bounds.Encapsulate(renderers[i].bounds);
+            }
+        }
+
+        // Convert the world-space bounds center into the wrapper's local space and subtract it
+        // from the knife child's local position (both are in wrapper-local space).
+        Vector3 localCenter = wrapper.InverseTransformPoint(bounds.center);
+        knife.transform.localPosition -= localCenter;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        Debug.Log("[WeaponController] Knife visual spawned: '" + knifeModelPrefab.name +
+            "' with " + renderers.Length + " renderer(s); recentered on the wrapper.");
+#endif
     }
 
     // Show the knife for the swing and hide the current gun view model. No-op (melee still works)
