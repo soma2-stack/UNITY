@@ -515,7 +515,7 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         {
             if (!hasWeapon)
             {
-                ammoText.text = "-- / --";
+                ammoText.text = "--/--";
             }
             else if (weapon.IsReloading)
             {
@@ -955,6 +955,12 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         // black outline (not red), matching the reference "8/78".
         ammoText = MakeLabel("Ammo", panel, "--/--", OffWhite, 38, TextAlignmentOptions.BottomRight,
             new Vector2(-18f, 12f), new Vector2(innerW, 46f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
+        // Auto-size so a big "8/78" stays large while the wider "RELOADING" string shrinks enough
+        // to stay inside the panel instead of spilling out the sides.
+        ammoText.enableAutoSizing = true;
+        ammoText.fontSizeMin = 24f;
+        ammoText.fontSizeMax = 38f;
+        ammoText.overflowMode = TextOverflowModes.Ellipsis;
         ApplyWhiteBlackOutline(ammoText);
     }
 
@@ -1096,18 +1102,30 @@ public sealed class SchoolOfTheDeadHud : MonoBehaviour
         mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.2f);
     }
 
-    // Give a TMP label a BLACK outline (text left at whatever colour the caller set) so light /
-    // white HUD text reads over bright gameplay. Uses an INSTANCED font material (text.fontMaterial)
-    // so the outline applies to this label only and never bleeds onto other HUD text.
+    // Give a TMP label a clearly visible BLACK border (text left at whatever colour the caller
+    // set) so light / white HUD text reads over bright gameplay. Two complementary effects:
+    //   1) TMP SDF material outline on an INSTANCED font material (per-label, never shared), and
+    //   2) a UnityEngine.UI.Outline mesh effect as an offset black border, so the border still
+    //      shows even where the SDF outline is subtle. No background box is added either way.
     private static void ApplyWhiteBlackOutline(TMP_Text text)
     {
         if (text == null)
         {
             return;
         }
+
         Material mat = text.fontMaterial; // getter returns a per-text material instance
         mat.EnableKeyword(ShaderUtilities.Keyword_Outline);
         mat.SetColor(ShaderUtilities.ID_OutlineColor, Color.black);
-        mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.2f);
+        mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.3f);
+
+        UnityEngine.UI.Outline uiOutline = text.GetComponent<UnityEngine.UI.Outline>();
+        if (uiOutline == null)
+        {
+            uiOutline = text.gameObject.AddComponent<UnityEngine.UI.Outline>();
+        }
+        uiOutline.effectColor = Color.black;
+        uiOutline.effectDistance = new Vector2(1.5f, -1.5f);
+        uiOutline.useGraphicAlpha = true;
     }
 }
