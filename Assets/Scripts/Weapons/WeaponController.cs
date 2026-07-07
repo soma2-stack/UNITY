@@ -92,10 +92,14 @@ public class WeaponController : NetworkBehaviour
     [Tooltip("Key to perform an instant-kill knife/melee attack.")]
     public KeyCode meleeKey = KeyCode.V;
     [Tooltip("Range of the knife attack in world units.")]
-    public float meleeRange = 2.5f;
+    public float meleeRange = 2.15f;
     [Tooltip("Forgiveness radius for the knife's close-range sphere sweep, in world units. " +
              "Wider = easier to connect on nearby zombies without pinpoint aim.")]
-    public float meleeRadius = 0.65f;
+    public float meleeRadius = 0.45f;
+    [Tooltip("Radius of the overlap-sphere fallback used when the forward sweep misses. Kept " +
+             "modest (not the full melee range) so the fallback stays a short-range grab, not a " +
+             "wide vacuum.")]
+    public float meleeFallbackRadius = 0.85f;
     [Tooltip("Cooldown between knife attacks in seconds.")]
     public float meleeCooldown = 0.8f;
 
@@ -1200,10 +1204,12 @@ public class WeaponController : NetworkBehaviour
             }
         }
 
-        // 2) Fallback: the nearest LIVING zombie inside an overlap sphere just in front of the
-        //    player. Guards line-of-sight so we never knife a zombie through a wall.
-        Vector3 sphereCenter = origin + forward * (range * 0.5f);
-        ZombieAgent nearest = FindNearestZombieInSphere(sphereCenter, range, out Collider nearestCol);
+        // 2) Fallback: the nearest LIVING zombie inside a MODEST overlap sphere just in front of
+        //    the player (its own radius, not the full melee range, so it stays a short grab).
+        //    Guards line-of-sight so we never knife a zombie through a wall.
+        Vector3 sphereCenter = origin + forward * (range * 0.55f);
+        float fallbackRadius = Mathf.Max(0.05f, meleeFallbackRadius);
+        ZombieAgent nearest = FindNearestZombieInSphere(sphereCenter, fallbackRadius, out Collider nearestCol);
         if (nearest != null && HasMeleeLineOfSight(origin, nearest, nearestCol, range))
         {
             Debug.Log("[WeaponController] Melee (overlap) by client " + shooterClientId +
