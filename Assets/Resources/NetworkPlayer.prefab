@@ -234,6 +234,8 @@ MonoBehaviour:
   muzzleFlashLocalEuler: {x: 0, y: 0, z: 0}
   meleeKey: 118
   meleeRange: 2.5
+  meleeRadius: 0.65
+  meleeFallbackRadius: 0.85
   meleeCooldown: 0.8
   bloodHitEffect: {fileID: 0}
   bloodEffectLifetime: 1.5
