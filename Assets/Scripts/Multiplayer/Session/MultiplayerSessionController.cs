@@ -26,6 +26,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
     private const string CharacterSelectMessage = "SOTD_CHARACTER_SELECT";
     private const string GameplayScene = "SchoolOfTheDead";
     private const string MenuScene = "MainMenu";
+    private const string DeathCinematicScene = "DeathCinematic";
 
     private readonly List<RosterEntry> roster = new List<RosterEntry>(MaximumPlayers);
     private readonly Dictionary<ulong, ConnectionPayload> pendingPayloads = new Dictionary<ulong, ConnectionPayload>();
@@ -332,6 +333,31 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         {
             Debug.Log("[MP] Restart: reloading " + GameplayScene);
         }
+    }
+
+    /// <summary>
+    /// Server-only: transition every connected player to the DeathCinematic game-over scene
+    /// through NGO so all peers load it in sync (clients follow automatically and must not
+    /// raw-load). This is purely a synchronized scene change — no gameplay state is altered and
+    /// no players are (re)spawned (the scene isn't the gameplay scene). Returns true only if the
+    /// network scene load actually started, so the caller can fall back to the old overlay.
+    /// </summary>
+    public bool LoadDeathCinematic()
+    {
+        if (networkManager == null || !networkManager.IsServer || networkManager.SceneManager == null)
+        {
+            return false;
+        }
+
+        SceneEventProgressStatus result = networkManager.SceneManager.LoadScene(DeathCinematicScene, LoadSceneMode.Single);
+        if (result != SceneEventProgressStatus.Started)
+        {
+            Debug.LogWarning("[MP] DeathCinematic scene load could not start: " + result);
+            return false;
+        }
+
+        Debug.Log("[MP] Game over: loading " + DeathCinematicScene + " for all players.");
+        return true;
     }
 
     public Task LeaveAsync()

@@ -22,9 +22,11 @@ using UnityEngine.UI;
 /// Death Room (see DeathCinematicSceneCreator). The room construction lives in shared static
 /// builders used by BOTH the runtime fallback and that editor tool, so they always match.
 ///
-/// This controller never references any gameplay system — stats arrive as plain values.
-/// Buttons load scenes directly (no multiplayer/session logic yet):
-///   Restart Match -> SchoolOfTheDead, Main Menu -> MainMenu, Quit -> Application.Quit.
+/// This controller never references gameplay systems (health/zombies/weapons/etc.) — stats arrive
+/// as plain values. Buttons route by run type:
+///   Solo/offline: Restart -> SchoolOfTheDead, Main Menu -> MainMenu (direct loads); Quit -> Application.Quit.
+///   Networked (_networkedRun): Restart -> NetworkGameplayCoordinator.RequestRestartMatch()
+///   (server-safe; clients never raw-load), Main Menu -> MultiplayerSessionController.LeaveAsync().
 /// </summary>
 public sealed class DeathCinematicSceneController : MonoBehaviour
 {
@@ -234,6 +236,28 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
         _pendingBestScore = bestScore;
         _pendingNetworked = networked;
         _hasPendingStats = true;
+
+        // Ordering safety (multiplayer): if the cinematic is ALREADY live when the stats arrive
+        // (e.g. a client where the NGO scene load beat this message), apply + refresh them now so
+        // the chalkboard and UI card update from placeholders to the real run stats.
+        if (_instance != null)
+        {
+            _instance.ApplyPendingStats();
+            _instance.RefreshDisplayedStats();
+        }
+    }
+
+    // Re-push the current stats onto the already-built chalkboard + UI card (used when stats arrive
+    // after the scene is up). No-op until the scene has finished building.
+    private void RefreshDisplayedStats()
+    {
+        if (!built || deathRoomRoot == null)
+        {
+            return;
+        }
+        RefreshChalkboardText(FindChildByName(deathRoomRoot, ChalkboardName));
+        statTargets = new[] { roundSurvived, zombiesKilled, finalPoints, bestRound, bestScore };
+        statsCountDone = false; // let the count-up re-settle on the new values
     }
 
     private void ApplyPendingStats()
@@ -493,8 +517,8 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
         statTargets = new[] { roundSurvived, zombiesKilled, finalPoints, bestRound, bestScore };
         statsCountDone = false;
 
-        WireButton(uiGo.transform, "Btn_Restart", () => SceneManager.LoadScene(GameplayScene));
-        WireButton(uiGo.transform, "Btn_MainMenu", () => SceneManager.LoadScene(MainMenuScene));
+        WireButton(uiGo.transform, "Btn_Restart", OnRestartPressed);
+        WireButton(uiGo.transform, "Btn_MainMenu", OnMainMenuPressed);
         WireButton(uiGo.transform, "Btn_Quit", Application.Quit);
 
         // Everything starts invisible; UpdateReveals fades the groups in on schedule.
@@ -1295,5 +1319,33 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
         }
         b.onClick.RemoveAllListeners();
         b.onClick.AddListener(action);
+    }
+
+    // --- Button actions -------------------------------------------------------------------------
+    // These route through the multiplayer SESSION controllers (not gameplay systems). A client must
+    // never raw-load a scene while networked, so the networked branch uses the server-safe request
+    // paths; the solo/offline branch loads scenes directly.
+
+    private void OnRestartPressed()
+    {
+        if (_networkedRun && NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            // Server-safe restart: host reloads via NGO; a client asks the server to. No raw load.
+            NetworkGameplayCoordinator.RequestRestartMatch();
+            return;
+        }
+        SceneManager.LoadScene(GameplayScene);
+    }
+
+    private void OnMainMenuPressed()
+    {
+        if (_networkedRun && NetworkGameplayCoordinator.IsNetworkActive &&
+            MultiplayerSessionController.Instance != null)
+        {
+            // Leave the session cleanly (shuts down NGO, returns this peer to the menu).
+            _ = MultiplayerSessionController.Instance.LeaveAsync();
+            return;
+        }
+        SceneManager.LoadScene(MainMenuScene);
     }
 }

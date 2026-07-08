@@ -26,6 +26,7 @@ public class GameOverController : MonoBehaviour
     private readonly List<PlayerHealth> trackedPlayers = new List<PlayerHealth>();
     private readonly HashSet<PlayerHealth> deadPlayers = new HashSet<PlayerHealth>();
     private bool showScreen;
+    private bool suppressOverlay; // true when the DeathCinematic scene handles game over (no IMGUI)
     private int finalRound;
     private int finalScore;
     private int finalKills;
@@ -196,42 +197,74 @@ public class GameOverController : MonoBehaviour
 
     public static void ShowLocalGameOver(int round, int score, int kills, bool networked)
     {
+        // This peer's PERSONAL best records (per-player; may differ between players).
+        int localBestRound = PlayerPrefs.GetInt("BestRound", 0);
+        int localBestScore = PlayerPrefs.GetInt("BestScore", 0);
+
+        bool cinematic = Application.CanStreamedLevelBeLoaded(DeathCinematicScene);
+
+        // Store the stats UP FRONT — before any GameOverController lookup — so DeathCinematic
+        // shows them whether this call or the NGO scene load arrives first (SetRunStats also
+        // late-applies to an already-loaded cinematic, covering a client whose scene swapped
+        // before this message). No live controller is needed for this.
+        if (cinematic)
+        {
+            DeathCinematicSceneController.SetRunStats(round, kills, score, localBestRound, localBestScore, networked);
+        }
+
+        // Overlay/re-entry bookkeeping needs the live controller. It exists on the server/solo
+        // peer (still in the gameplay scene here); on a client whose scene already swapped it may
+        // be gone — that's fine, the stats above are already stored.
         GameOverController controller = Instance;
-        if (controller == null || controller.showScreen)
+        if (controller != null)
         {
-            return;
-        }
-
-        controller.finalRound = round;
-        controller.finalScore = score;
-        controller.finalKills = kills;
-        controller.bestRound = PlayerPrefs.GetInt("BestRound", 0);
-        controller.bestScore = PlayerPrefs.GetInt("BestScore", 0);
-        controller.showScreen = true;
-
-        // SOLO (Phase 2): route to the DeathCinematic cinematic scene when it exists in the build.
-        // Multiplayer is intentionally unchanged for now (no multiplayer scene routing yet). If the
-        // cinematic scene isn't in the build settings yet, fall through to the old IMGUI overlay so
-        // solo game over never breaks.
-        if (!networked && Application.CanStreamedLevelBeLoaded(DeathCinematicScene))
-        {
-            DeathCinematicSceneController.SetRunStats(
-                round, kills, score, controller.bestRound, controller.bestScore, false);
-            Time.timeScale = 1f;
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
-            SceneManager.LoadScene(DeathCinematicScene);
-            return;
-        }
-
-        // Fallback path (multiplayer, or cinematic scene not in build): keep the old overlay.
-        if (!networked)
-        {
-            Time.timeScale = 0f;
+            if (controller.showScreen)
+            {
+                return; // game over already handled this run
+            }
+            controller.finalRound = round;
+            controller.finalScore = score;
+            controller.finalKills = kills;
+            controller.bestRound = localBestRound;
+            controller.bestScore = localBestScore;
+            controller.showScreen = true;          // re-entry guard (stops repeat game-over handling)
+            controller.suppressOverlay = cinematic; // cinematic path draws no IMGUI overlay
         }
 
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
+
+        if (cinematic)
+        {
+            Time.timeScale = 1f;
+
+            if (!networked)
+            {
+                // SOLO: load the cinematic directly (unchanged Phase 2 path).
+                SceneManager.LoadScene(DeathCinematicScene);
+                return;
+            }
+
+            // MULTIPLAYER: only the SERVER/host initiates the NGO scene load; every client follows
+            // automatically and must NOT raw-load (that would desync). If the server's load can't
+            // start, fall back to the old overlay for this peer.
+            if (NetworkGameplayCoordinator.IsServer)
+            {
+                bool started = MultiplayerSessionController.Instance != null &&
+                               MultiplayerSessionController.Instance.LoadDeathCinematic();
+                if (!started && controller != null)
+                {
+                    controller.suppressOverlay = false;
+                }
+            }
+            return;
+        }
+
+        // FALLBACK (DeathCinematic not in build): keep the old IMGUI overlay. Solo also pauses.
+        if (!networked)
+        {
+            Time.timeScale = 0f;
+        }
     }
 
     private void Restart()
@@ -272,7 +305,9 @@ public class GameOverController : MonoBehaviour
 
     private void OnGUI()
     {
-        if (!showScreen)
+        // suppressOverlay is set when the DeathCinematic scene owns the game-over presentation, so
+        // the legacy IMGUI overlay never flashes during the transition.
+        if (!showScreen || suppressOverlay)
         {
             return;
         }
