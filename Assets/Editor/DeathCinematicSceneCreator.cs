@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using UnityEditor;
@@ -162,8 +163,15 @@ public static class DeathCinematicSceneCreator
         }
 
         int repaired = 0;
+        int rebuilt = 0;
         int missingRemoved = 0;
+        List<UnityEngine.Transform> monitorRoots = new List<UnityEngine.Transform>();
         foreach (UnityEngine.Transform child in bank.transform)
+        {
+            monitorRoots.Add(child);
+        }
+
+        foreach (UnityEngine.Transform child in monitorRoots)
         {
             // A monitor is a bank child that owns a 'Screen' renderer and/or a 'FeedLabel' (this
             // skips non-monitor children like the 'FeedStrip' header).
@@ -176,32 +184,53 @@ public static class DeathCinematicSceneCreator
                 continue;
             }
 
-            // Strip leftover missing-script components (the old nested DeathCinematicMonitor).
-            missingRemoved += GameObjectUtility.RemoveMonoBehavioursWithMissingScript(child.gameObject);
+            // Some Unity versions keep the old nested MonoBehaviour as a valid-looking serialized
+            // script object instead of a normal missing component. Rebuild the monitor root through
+            // Unity APIs so the old component record is definitely dropped while preserving children.
+            UnityEngine.GameObject monitorGo = RebuildMonitorRoot(child);
+            rebuilt++;
+            missingRemoved += GameObjectUtility.RemoveMonoBehavioursWithMissingScript(monitorGo);
 
-            DeathCinematicMonitor dm = child.GetComponent<DeathCinematicMonitor>();
-            if (dm == null)
-            {
-                dm = child.gameObject.AddComponent<DeathCinematicMonitor>();
-            }
-            if (dm.screenRenderer == null)
-            {
-                dm.screenRenderer = screen;
-            }
-            if (dm.feedLabel == null)
-            {
-                dm.feedLabel = label;
-            }
-            EditorUtility.SetDirty(child.gameObject);
+            DeathCinematicMonitor dm = monitorGo.AddComponent<DeathCinematicMonitor>();
+            dm.screenRenderer = screen;
+            dm.feedLabel = label;
+            EditorUtility.SetDirty(monitorGo);
             repaired++;
         }
 
         EditorSceneManager.MarkSceneDirty(scene);
         bool saved = EditorSceneManager.SaveScene(scene);
         UnityEngine.Debug.Log("[DeathCinematic] Monitor repair: " + repaired +
-            " monitor(s) now carry a top-level DeathCinematicMonitor; " + missingRemoved +
+            " monitor(s) now carry a top-level DeathCinematicMonitor; " + rebuilt +
+            " monitor root(s) rebuilt; " + missingRemoved +
             " missing-script component(s) removed. " + (saved ? "Scene saved." : "SAVE FAILED — save manually.") +
             " Only DeathCinematic.unity was modified.");
+    }
+
+    private static UnityEngine.GameObject RebuildMonitorRoot(UnityEngine.Transform oldRoot)
+    {
+        UnityEngine.Transform parent = oldRoot.parent;
+        int siblingIndex = oldRoot.GetSiblingIndex();
+        string name = oldRoot.name;
+        UnityEngine.Vector3 localPosition = oldRoot.localPosition;
+        UnityEngine.Quaternion localRotation = oldRoot.localRotation;
+        UnityEngine.Vector3 localScale = oldRoot.localScale;
+
+        UnityEngine.GameObject cleanRoot = new UnityEngine.GameObject(name);
+        cleanRoot.transform.SetParent(parent, false);
+        cleanRoot.transform.SetSiblingIndex(siblingIndex);
+        cleanRoot.transform.localPosition = localPosition;
+        cleanRoot.transform.localRotation = localRotation;
+        cleanRoot.transform.localScale = localScale;
+
+        while (oldRoot.childCount > 0)
+        {
+            oldRoot.GetChild(0).SetParent(cleanRoot.transform, true);
+        }
+
+        UnityEngine.Object.DestroyImmediate(oldRoot.gameObject);
+        EditorUtility.SetDirty(cleanRoot);
+        return cleanRoot;
     }
 
     // Make DeathCinematic the active/open scene. Already-open => use in place; otherwise open Single
