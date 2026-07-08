@@ -512,6 +512,14 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
         WireButton(uiGo.transform, "Btn_MainMenu", OnMainMenuPressed);
         WireButton(uiGo.transform, "Btn_Quit", Application.Quit);
 
+        // In a networked run only the host may restart the match; hide Restart on clients (Main
+        // Menu + Quit stay visible for everyone; solo/offline always shows Restart).
+        Transform restartBtn = FindChildByName(uiGo.transform, "Btn_Restart");
+        if (restartBtn != null)
+        {
+            restartBtn.gameObject.SetActive(ShouldShowRestartButton());
+        }
+
         // Everything starts invisible; UpdateReveals fades the groups in on schedule.
         if (titleGroup != null) titleGroup.alpha = 0f;
         if (subtitleGroup != null) subtitleGroup.alpha = 0f;
@@ -1317,8 +1325,25 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
     // never raw-load a scene while networked, so the networked branch uses the server-safe request
     // paths; the solo/offline branch loads scenes directly.
 
+    // True when the Restart Match button should be shown: solo/offline runs, or the networked HOST.
+    // Networked clients get it hidden (only the host may restart the match).
+    private bool ShouldShowRestartButton()
+    {
+        if (!_networkedRun || !NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            return true; // solo / offline
+        }
+        return MultiplayerSessionController.Instance != null && MultiplayerSessionController.Instance.IsHost;
+    }
+
     private void OnRestartPressed()
     {
+        // Defensive: a networked non-host should never restart even if the button is somehow active.
+        if (!ShouldShowRestartButton())
+        {
+            return;
+        }
+
         if (_networkedRun && NetworkGameplayCoordinator.IsNetworkActive)
         {
             // Server-safe restart: host reloads via NGO; a client asks the server to. No raw load.
