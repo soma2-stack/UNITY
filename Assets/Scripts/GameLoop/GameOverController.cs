@@ -16,6 +16,7 @@ public class GameOverController : MonoBehaviour
 {
     private const string GameplayScene = "SchoolOfTheDead";
     private const string MainMenuScene = "MainMenu";
+    private const string DeathCinematicScene = "DeathCinematic";
     private static GameOverController _runtimeInstance;
     private static GameOverController Instance => _runtimeInstance != null
         ? _runtimeInstance
@@ -208,6 +209,22 @@ public class GameOverController : MonoBehaviour
         controller.bestScore = PlayerPrefs.GetInt("BestScore", 0);
         controller.showScreen = true;
 
+        // SOLO (Phase 2): route to the DeathCinematic cinematic scene when it exists in the build.
+        // Multiplayer is intentionally unchanged for now (no multiplayer scene routing yet). If the
+        // cinematic scene isn't in the build settings yet, fall through to the old IMGUI overlay so
+        // solo game over never breaks.
+        if (!networked && Application.CanStreamedLevelBeLoaded(DeathCinematicScene))
+        {
+            DeathCinematicSceneController.SetRunStats(
+                round, kills, score, controller.bestRound, controller.bestScore, false);
+            Time.timeScale = 1f;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            SceneManager.LoadScene(DeathCinematicScene);
+            return;
+        }
+
+        // Fallback path (multiplayer, or cinematic scene not in build): keep the old overlay.
         if (!networked)
         {
             Time.timeScale = 0f;

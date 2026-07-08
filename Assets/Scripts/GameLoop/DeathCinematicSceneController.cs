@@ -6,9 +6,11 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
-/// PHASE 1 (preview only) — self-contained "SCHOOL OVERRUN" game-over cinematic scene
-/// controller for the DeathCinematic scene. NOT wired into the real death/game-over flow;
-/// GameOverController is untouched and still owns the live game-over path.
+/// Self-contained "SCHOOL OVERRUN" game-over cinematic scene controller for the DeathCinematic
+/// scene. As of Phase 2 it is used for SOLO game over: GameOverController pushes the run's stats
+/// via <see cref="SetRunStats"/> and loads this scene. It still previews standalone (open the
+/// scene directly in Play Mode) using the inspector placeholder values when no stats were handed
+/// off. This controller never references any gameplay system — stats arrive as plain values.
 ///
 /// Concept: an abandoned school security office / final broadcast room. A slow camera
 /// dolly tours a small staged set — flickering CRT security monitors cycling fake school
@@ -22,9 +24,9 @@ using UnityEngine.UI;
 /// controller bootstraps itself only in that scene (exact name match), exactly like the
 /// project's other RuntimeInitializeOnLoadMethod systems, and never runs in gameplay.
 ///
-/// Phase 1 buttons load scenes directly (no multiplayer/session logic):
+/// Buttons load scenes directly (no multiplayer/session logic yet):
 ///   Restart Match -> SchoolOfTheDead, Main Menu -> MainMenu, Quit -> Application.Quit.
-/// Stats are inspector-tunable placeholders for the preview.
+/// Stats are inspector-tunable placeholders used only when no run was handed off.
 /// </summary>
 public sealed class DeathCinematicSceneController : MonoBehaviour
 {
@@ -34,8 +36,24 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
 
     private static DeathCinematicSceneController _instance;
 
-    // --- Placeholder stats (Phase 1 preview values; later phases will feed real data) ---
-    [Header("Placeholder Stats (Phase 1 preview)")]
+    // --- Static stats handoff (Phase 2) --------------------------------------------------
+    // The finished run's stats are pushed here (via SetRunStats) BEFORE the DeathCinematic
+    // scene loads, then consumed once by this controller's Start. Kept as plain ints/bool so
+    // this controller never references any gameplay system. When nothing was set (e.g. the
+    // scene is opened directly in Play Mode), the inspector placeholder values below are used.
+    private static bool _hasPendingStats;
+    private static int _pendingRound;
+    private static int _pendingKills;
+    private static int _pendingPoints;
+    private static int _pendingBestRound;
+    private static int _pendingBestScore;
+    private static bool _pendingNetworked;
+
+    private bool _networkedRun;    // whether the handed-off run was networked (reserved for later)
+    private bool _usedHandoffStats; // true when real run stats were applied (vs. placeholder preview)
+
+    // --- Placeholder stats (used as preview defaults when no run stats were handed off) ---
+    [Header("Placeholder Stats (preview defaults)")]
     public int roundSurvived = 6;
     public int zombiesKilled = 83;
     public int finalPoints = 630;
@@ -171,6 +189,41 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
     // Build
     // ---------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Hand off the finished run's stats to the cinematic BEFORE loading the DeathCinematic scene.
+    /// Static so the caller (e.g. <c>GameOverController</c>) needs no live instance and this
+    /// controller never touches gameplay systems. If it is never called, the inspector placeholder
+    /// values are kept so opening the scene directly in Play Mode still previews correctly.
+    /// </summary>
+    public static void SetRunStats(int round, int kills, int points, int bestRound, int bestScore, bool networked)
+    {
+        _pendingRound = round;
+        _pendingKills = kills;
+        _pendingPoints = points;
+        _pendingBestRound = bestRound;
+        _pendingBestScore = bestScore;
+        _pendingNetworked = networked;
+        _hasPendingStats = true;
+    }
+
+    // Consume the handed-off stats (once) into the instance fields the room/UI read. No handoff
+    // leaves the placeholder preview values untouched.
+    private void ApplyPendingStats()
+    {
+        if (!_hasPendingStats)
+        {
+            return;
+        }
+        roundSurvived = _pendingRound;
+        zombiesKilled = _pendingKills;
+        finalPoints = _pendingPoints;
+        bestRound = _pendingBestRound;
+        bestScore = _pendingBestScore;
+        _networkedRun = _pendingNetworked;
+        _usedHandoffStats = true;
+        _hasPendingStats = false; // consumed: a later direct-open falls back to placeholders
+    }
+
     private void Start()
     {
         // Scene-local safety: arriving here should never inherit a paused timescale.
@@ -179,6 +232,9 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
         Cursor.visible = true;
 
         sceneStartTime = Time.time;
+
+        // Apply real run stats (if handed off) BEFORE anything reads them (chalkboard + UI).
+        ApplyPendingStats();
 
         ApplyAtmosphere();
         BuildRoom();
@@ -191,7 +247,9 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
         BuildUi();
 
         built = true;
-        Debug.Log("[DeathCinematic] Scene built (Phase 1 preview; not wired to the real death flow).");
+        Debug.Log("[DeathCinematic] Scene built. Stats: " +
+                  (_usedHandoffStats ? "run handoff" : "placeholder preview") +
+                  " — round " + roundSurvived + ", kills " + zombiesKilled + ", points " + finalPoints + ".");
     }
 
     private void Update()
