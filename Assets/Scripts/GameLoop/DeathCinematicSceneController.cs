@@ -988,14 +988,17 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
             new Vector3(3.4f, 1.75f, -3.1f),  // doorway corner: wide establishing shot
             new Vector3(1.5f, 1.5f, 0.9f),    // dolly toward the monitor bank
             new Vector3(-1.9f, 1.5f, 0.4f),   // swing to the chalkboard report
-            new Vector3(2.5f, 1.85f, -2.3f),  // settle: composed wide (monitors + board)
+            new Vector3(3.8f, 2.15f, -3.3f),  // settle: SE pull-back looking NW so BOTH the
+                                              // west-wall chalkboard (center-left, above the stats
+                                              // card) and the monitor bank (center-right) are fully
+                                              // framed — the old (2.5,1.85,-2.3) clipped the board.
         };
         Vector3[] lookPos =
         {
             new Vector3(0f, 1.3f, 3.5f),
             new Vector3(0.4f, 1.7f, 3.95f),
             new Vector3(-4.9f, 1.55f, 0.4f),
-            new Vector3(-0.4f, 1.35f, 2.2f),
+            new Vector3(-1.4f, 1.75f, 2.4f),  // aim center-left between board + monitors, slightly up
         };
 
         points = new Transform[TourPointCount];
