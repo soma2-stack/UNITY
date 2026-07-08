@@ -129,6 +129,81 @@ public static class DeathCinematicSceneCreator
             " Only DeathCinematic.unity was modified.");
     }
 
+    // -----------------------------------------------------------------------------------------
+    // Migration: after DeathCinematicMonitor moved from a nested MonoBehaviour to a top-level
+    // script, any already-baked monitor objects carry a MISSING script where the old nested
+    // component was. This repairs them in place — strips the missing component, adds the new
+    // top-level DeathCinematicMonitor, and re-wires its screen renderer + feed label from the
+    // monitor's children — WITHOUT rebuilding the room (so hand-edits are preserved). Touches
+    // ONLY DeathCinematic.unity.
+    // -----------------------------------------------------------------------------------------
+
+    [MenuItem("Tools/Death Cinematic/Repair Monitor Components")]
+    public static void RepairMonitorComponents()
+    {
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+        {
+            UnityEngine.Debug.LogWarning("[DeathCinematic] Repair cancelled at the save prompt — nothing changed.");
+            return;
+        }
+
+        if (!EnsureCinematicSceneOpen(out Scene scene))
+        {
+            return; // reason already logged
+        }
+
+        UnityEngine.GameObject bank = FindInScene(scene, DeathCinematicSceneController.MonitorBankName);
+        if (bank == null)
+        {
+            UnityEngine.Debug.LogWarning("[DeathCinematic] No '" + DeathCinematicSceneController.MonitorBankName +
+                "' found in DeathCinematic.unity — nothing to repair. If the room is missing, run " +
+                "'Tools > Death Cinematic > Rebuild Editable Death Room'.");
+            return;
+        }
+
+        int repaired = 0;
+        int missingRemoved = 0;
+        foreach (UnityEngine.Transform child in bank.transform)
+        {
+            // A monitor is a bank child that owns a 'Screen' renderer and/or a 'FeedLabel' (this
+            // skips non-monitor children like the 'FeedStrip' header).
+            UnityEngine.GameObject screenGo = FindRecursive(child, "Screen");
+            UnityEngine.Renderer screen = screenGo != null ? screenGo.GetComponent<UnityEngine.Renderer>() : null;
+            UnityEngine.GameObject labelGo = FindRecursive(child, "FeedLabel");
+            TMPro.TMP_Text label = labelGo != null ? labelGo.GetComponent<TMPro.TMP_Text>() : null;
+            if (screen == null && label == null)
+            {
+                continue;
+            }
+
+            // Strip leftover missing-script components (the old nested DeathCinematicMonitor).
+            missingRemoved += GameObjectUtility.RemoveMonoBehavioursWithMissingScript(child.gameObject);
+
+            DeathCinematicMonitor dm = child.GetComponent<DeathCinematicMonitor>();
+            if (dm == null)
+            {
+                dm = child.gameObject.AddComponent<DeathCinematicMonitor>();
+            }
+            if (dm.screenRenderer == null)
+            {
+                dm.screenRenderer = screen;
+            }
+            if (dm.feedLabel == null)
+            {
+                dm.feedLabel = label;
+            }
+            EditorUtility.SetDirty(child.gameObject);
+            repaired++;
+        }
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        bool saved = EditorSceneManager.SaveScene(scene);
+        UnityEngine.Debug.Log("[DeathCinematic] Monitor repair: " + repaired +
+            " monitor(s) now carry a top-level DeathCinematicMonitor; " + missingRemoved +
+            " missing-script component(s) removed. " + (saved ? "Scene saved." : "SAVE FAILED — save manually.") +
+            " Only DeathCinematic.unity was modified.");
+    }
+
     // Make DeathCinematic the active/open scene. Already-open => use in place; otherwise open Single
     // (safe — the save prompt ran above) so every new object lands in DeathCinematic, never elsewhere.
     private static bool EnsureCinematicSceneOpen(out Scene scene)

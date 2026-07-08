@@ -115,18 +115,9 @@ public sealed class DeathCinematicSceneController : MonoBehaviour
     private static readonly Color ScreenBase = new Color(0.06f, 0.11f, 0.08f, 1f);
     private static readonly Color ScreenText = new Color(0.62f, 0.92f, 0.68f, 1f);
 
-    /// <summary>
-    /// Marker + authoring data placed on each editable monitor object. Holds the references the
-    /// controller needs to drive that monitor's flicker/feed at runtime, so you can move, rename,
-    /// or restyle the monitor freely as long as these two fields stay wired.
-    /// </summary>
-    public sealed class DeathCinematicMonitor : MonoBehaviour
-    {
-        [Tooltip("The CRT screen quad whose material colour is driven for the glow/flicker/static.")]
-        public Renderer screenRenderer;
-        [Tooltip("The feed label (camera name) shown on this monitor.")]
-        public TMP_Text feedLabel;
-    }
+    // The per-monitor marker/authoring component (screenRenderer + feedLabel) now lives in its own
+    // top-level file, DeathCinematicMonitor.cs — a NESTED MonoBehaviour here corrupted the scene in
+    // standalone player builds. All references below use that top-level type.
 
     // --- Runtime monitor state (one per resolved DeathCinematicMonitor) ---
     private sealed class MonitorState
