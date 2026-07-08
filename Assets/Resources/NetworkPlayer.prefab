@@ -239,9 +239,13 @@ MonoBehaviour:
   meleeCooldown: 0.8
   meleeDamage: 130
   knifeModelPrefab: {fileID: 3683292098162653686, guid: dd93ff567f247364f95f21609ebdcfae, type: 3}
-  knifeLocalPosition: {x: 0.25, y: -2, z: 0.45}
+  knifeLocalPosition: {x: 0.25, y: -0.2, z: 0.45}
   knifeLocalEuler: {x: 20, y: 100, z: -20}
   knifeLocalScale: {x: 1, y: 1, z: 1}
+  knifeUseCameraSpace: 1
+  knifeCameraLocalPosition: {x: 0.35, y: -0.32, z: 0.75}
+  knifeCameraLocalEuler: {x: 20, y: -35, z: -20}
+  knifeVisualDuration: 0.35
   bloodHitEffect: {fileID: 0}
   bloodEffectLifetime: 1.5
   fireRateMultiplier: 1
