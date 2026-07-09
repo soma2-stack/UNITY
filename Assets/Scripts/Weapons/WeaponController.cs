@@ -2058,6 +2058,26 @@ public class WeaponController : NetworkBehaviour
             origin = cam.position;
             aimForward = cam.forward;
         }
+        // Dispatch by damage mode. Normal preserves the exact original single-ray behavior;
+        // Shotgun/Explosive are resolved by the shooter and applied server-authoritatively.
+        WeaponDamageMode mode = ResolveDamageMode(w);
+        if (mode == WeaponDamageMode.Shotgun)
+        {
+            FireShotgun(w, origin, aimForward);
+        }
+        else if (mode == WeaponDamageMode.Explosive)
+        {
+            FireExplosive(w, origin, aimForward);
+        }
+        else
+        {
+            FireNormal(w, origin, aimForward);
+        }
+    }
+
+    // The classic single hitscan ray. Unchanged behavior — just extracted so Fire() can branch.
+    private void FireNormal(Weapon w, Vector3 origin, Vector3 aimForward)
+    {
         Vector3 dir = ApplySpread(aimForward, w.spread);
 
         ResolveShot(origin, dir, Mathf.Max(0.1f, w.range),
@@ -2106,6 +2126,296 @@ public class WeaponController : NetworkBehaviour
             }
         }
         FireDamageServerRpc(hasTarget, targetId, isHeadshot, w.damage, ResolveFireSoundId(w.weaponName));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Shotgun + explosive support. The shooter resolves what it hits in its OWN view (matching
+    // the Normal path), accumulates damage PER zombie so one shot awards points/hit only once,
+    // then dispatches: solo applies locally, the host applies directly, and a remote client
+    // sends the per-zombie result to the server which applies the authoritative damage.
+    // ---------------------------------------------------------------------------------------
+
+    // Sensible fallbacks applied only when a weapon's field is left at its neutral default, so
+    // name-inferred shotguns/RPGs behave well without editing the serialized weapon.
+    private const int ShotgunDefaultPellets = 8;
+    private const int ShotgunDefaultPelletDamage = 22;
+    private const float ShotgunDefaultSpread = 7.5f;
+    private const float ExplosionDefaultRadius = 5f;
+    private const int ExplosionDefaultDamage = 300;
+    private const int MaxBloodPerShot = 5; // cap blood spawns so a blast can't spam the pool
+
+    // Overlap buffer for explosion queries (never allocates).
+    private static readonly Collider[] _explosionOverlap = new Collider[64];
+
+    // Per-shot accumulator (parallel lists), so each zombie gets exactly one TakeDamage call.
+    private readonly List<ZombieAgent> _hitZombies = new List<ZombieAgent>();
+    private readonly List<int> _hitDamage = new List<int>();
+    private readonly List<bool> _hitHead = new List<bool>();
+    private readonly List<Vector3> _hitPoint = new List<Vector3>();
+    private readonly List<Vector3> _hitNormal = new List<Vector3>();
+    // Scratch for the networked dispatch (built from the accumulator).
+    private readonly List<ulong> _netIds = new List<ulong>();
+    private readonly List<int> _netSignedDamage = new List<int>();
+
+    // Explicit damageMode wins; otherwise infer from the weapon name so serialized weapons work.
+    private static WeaponDamageMode ResolveDamageMode(Weapon w)
+    {
+        if (w == null)
+        {
+            return WeaponDamageMode.Normal;
+        }
+        if (w.damageMode != WeaponDamageMode.Normal)
+        {
+            return w.damageMode;
+        }
+        string n = string.IsNullOrEmpty(w.weaponName) ? "" : w.weaponName.ToLowerInvariant();
+        if (n.Contains("pump") || n.Contains("shotgun") || n.Contains("benelli"))
+        {
+            return WeaponDamageMode.Shotgun;
+        }
+        if (n.Contains("rpg") || n.Contains("rocket") || n.Contains("launcher"))
+        {
+            return WeaponDamageMode.Explosive;
+        }
+        return WeaponDamageMode.Normal;
+    }
+
+    private static int EffectivePelletCount(Weapon w) => w.pelletCount >= 2 ? w.pelletCount : ShotgunDefaultPellets;
+    private static int EffectivePelletDamage(Weapon w) => w.pelletDamage > 0 ? w.pelletDamage : ShotgunDefaultPelletDamage;
+    private static float EffectiveShotgunSpread(Weapon w) => w.spread >= 3f ? w.spread : ShotgunDefaultSpread;
+    private static float EffectiveExplosionRadius(Weapon w) => w.explosionRadius > 0f ? w.explosionRadius : ExplosionDefaultRadius;
+    private static int EffectiveExplosionDamage(Weapon w) => w.explosionDamage > 0 ? w.explosionDamage : ExplosionDefaultDamage;
+
+    // Fire several pellet rays, each with its own spread, accumulating damage per zombie.
+    private void FireShotgun(Weapon w, Vector3 origin, Vector3 aimForward)
+    {
+        ClearAccumulator();
+        int pellets = EffectivePelletCount(w);
+        int perPellet = EffectivePelletDamage(w);
+        float spread = EffectiveShotgunSpread(w);
+        float range = Mathf.Max(0.1f, w.range);
+
+        for (int i = 0; i < pellets; i++)
+        {
+            Vector3 dir = ApplySpread(aimForward, spread);
+            if (ResolvePelletHit(origin, dir, range, out ZombieAgent z, out bool head, out Vector3 p, out Vector3 nrm))
+            {
+                AccumulateHit(z, perPellet, head, p, nrm);
+            }
+        }
+        DispatchAccumulated(w);
+    }
+
+    // Find an impact point along the aim, then damage every zombie within the blast radius with
+    // distance falloff. No self-damage / friendly-fire and no projectile yet (kept simple).
+    private void FireExplosive(Weapon w, Vector3 origin, Vector3 aimForward)
+    {
+        ClearAccumulator();
+        float range = Mathf.Max(0.1f, w.range);
+        Vector3 dir = ApplySpread(aimForward, w.spread);
+        Vector3 impact = CastNonSelf(origin, 0f, dir, range, false, out RaycastHit hit)
+            ? hit.point
+            : origin + dir * range;
+
+        float radius = EffectiveExplosionRadius(w);
+        int centerDamage = EffectiveExplosionDamage(w);
+        int count = Physics.OverlapSphereNonAlloc(impact, radius, _explosionOverlap, hitMask, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < count; i++)
+        {
+            Collider c = _explosionOverlap[i];
+            if (c == null)
+            {
+                continue;
+            }
+            ZombieAgent z = c.GetComponentInParent<ZombieAgent>();
+            if (z == null || z.IsDead || _hitZombies.Contains(z))
+            {
+                continue;
+            }
+            float d = Vector3.Distance(impact, z.transform.position);
+            int dmg = ExplosionFalloff(centerDamage, d, radius);
+            Vector3 nrm = (z.transform.position - impact).sqrMagnitude > 0.0001f
+                ? (z.transform.position - impact).normalized
+                : Vector3.up;
+            AccumulateHit(z, dmg, false, z.transform.position + Vector3.up, nrm);
+        }
+        DispatchAccumulated(w);
+    }
+
+    // Full damage at the center, linearly down to a minimum of 1 at the edge of the radius.
+    private static int ExplosionFalloff(int centerDamage, float distance, float radius)
+    {
+        if (radius <= 0f)
+        {
+            return Mathf.Max(1, centerDamage);
+        }
+        float t = Mathf.Clamp01(distance / radius);
+        return Mathf.Max(1, Mathf.RoundToInt(centerDamage * (1f - t)));
+    }
+
+    // A single precise pellet ray (no aim assist, so spread genuinely disperses the pellets).
+    // Returns true only for a zombie hit; walls/props/nothing return false.
+    private bool ResolvePelletHit(Vector3 origin, Vector3 dir, float range,
+        out ZombieAgent zombie, out bool isHeadshot, out Vector3 point, out Vector3 normal)
+    {
+        zombie = null;
+        isHeadshot = false;
+        point = origin + dir * range;
+        normal = -dir;
+
+        if (CastNonSelf(origin, 0f, dir, range, false, out RaycastHit hit))
+        {
+            point = hit.point;
+            normal = hit.normal;
+            zombie = hit.collider.GetComponentInParent<ZombieAgent>();
+            if (zombie != null)
+            {
+                isHeadshot = hit.collider.CompareTag("Head");
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void ClearAccumulator()
+    {
+        _hitZombies.Clear();
+        _hitDamage.Clear();
+        _hitHead.Clear();
+        _hitPoint.Clear();
+        _hitNormal.Clear();
+    }
+
+    // Add a hit to the accumulator, summing damage onto an existing zombie entry so a single
+    // shot only ever calls TakeDamage once per zombie (no per-pellet +10 point farming).
+    private void AccumulateHit(ZombieAgent z, int damage, bool head, Vector3 point, Vector3 normal)
+    {
+        int idx = _hitZombies.IndexOf(z);
+        if (idx >= 0)
+        {
+            _hitDamage[idx] += damage;
+            _hitHead[idx] = _hitHead[idx] || head;
+            return;
+        }
+        _hitZombies.Add(z);
+        _hitDamage.Add(damage);
+        _hitHead.Add(head);
+        _hitPoint.Add(point);
+        _hitNormal.Add(normal);
+    }
+
+    // Apply the accumulated per-zombie damage: solo locally, host directly, remote via the
+    // server. One hit marker per shot for the shooter, one fire-effects broadcast per shot.
+    private void DispatchAccumulated(Weapon w)
+    {
+        int n = _hitZombies.Count;
+
+        // One hit marker per shot when at least one zombie was damaged (instant, no round-trip).
+        if (n > 0)
+        {
+            HitMarkerHud.Show();
+        }
+
+        // Solo: apply damage + blood locally.
+        if (!IsSpawned)
+        {
+            int blood = 0;
+            for (int i = 0; i < n; i++)
+            {
+                _hitZombies[i].TakeDamage(ComputeDamage(_hitDamage[i], 0), _hitHead[i], 0);
+                if (blood++ < MaxBloodPerShot)
+                {
+                    SpawnBloodLocal(_hitPoint[i], _hitNormal[i]);
+                }
+            }
+            return;
+        }
+
+        // Host (server is also the shooter): apply authoritative damage and broadcast blood.
+        if (IsServer)
+        {
+            int blood = 0;
+            for (int i = 0; i < n; i++)
+            {
+                _hitZombies[i].TakeDamage(ComputeDamage(_hitDamage[i], OwnerClientId), _hitHead[i], OwnerClientId);
+                if (blood++ < MaxBloodPerShot)
+                {
+                    SpawnBloodClientRpc(_hitPoint[i], _hitNormal[i]);
+                }
+            }
+            FireEffectsClientRpc(OwnerClientId, ResolveFireSoundId(w.weaponName));
+            return;
+        }
+
+        // Remote client: send the per-zombie result (sign of the damage encodes headshot) to
+        // the server, which applies the authoritative damage. Sent even when empty so the shot
+        // still plays its muzzle/sound on the other peers.
+        _netIds.Clear();
+        _netSignedDamage.Clear();
+        for (int i = 0; i < n; i++)
+        {
+            if (_hitDamage[i] <= 0)
+            {
+                continue;
+            }
+            NetworkObject zno = _hitZombies[i].GetComponentInParent<NetworkObject>();
+            if (zno == null || !zno.IsSpawned)
+            {
+                continue;
+            }
+            _netIds.Add(zno.NetworkObjectId);
+            _netSignedDamage.Add(_hitHead[i] ? -_hitDamage[i] : _hitDamage[i]);
+        }
+        FireMultiDamageServerRpc(_netIds.ToArray(), _netSignedDamage.ToArray(), ResolveFireSoundId(w.weaponName));
+    }
+
+    // Server-authoritative multi-target damage for shotgun/explosive shots. The client resolved
+    // the targets in its own view (as the Normal path already trusts); the server validates the
+    // shooter, applies ComputeDamage per zombie, and broadcasts blood + fire effects once.
+    [ServerRpc(RequireOwnership = false)]
+    private void FireMultiDamageServerRpc(ulong[] targetIds, int[] signedDamages, int fireSoundId, ServerRpcParams rpcParams = default)
+    {
+        ulong shooter = rpcParams.Receive.SenderClientId;
+        if (shooter != OwnerClientId)
+        {
+            return;
+        }
+
+        if (targetIds != null && signedDamages != null && targetIds.Length == signedDamages.Length)
+        {
+            int budget = MaxBloodPerShot;
+            int max = Mathf.Min(targetIds.Length, 64); // sane per-shot cap
+            for (int i = 0; i < max; i++)
+            {
+                int baseDamage = Mathf.Abs(signedDamages[i]);
+                if (baseDamage <= 0)
+                {
+                    continue;
+                }
+                bool isHeadshot = signedDamages[i] < 0;
+                if (NetworkManager == null || NetworkManager.SpawnManager == null ||
+                    !NetworkManager.SpawnManager.SpawnedObjects.TryGetValue(targetIds[i], out NetworkObject zno) ||
+                    zno == null)
+                {
+                    continue;
+                }
+                ZombieAgent zombie = zno.GetComponentInParent<ZombieAgent>();
+                if (zombie == null)
+                {
+                    zombie = zno.GetComponentInChildren<ZombieAgent>();
+                }
+                if (zombie != null)
+                {
+                    zombie.TakeDamage(ComputeDamage(baseDamage, shooter), isHeadshot, shooter);
+                    if (budget-- > 0)
+                    {
+                        SpawnBloodClientRpc(zombie.transform.position + Vector3.up, Vector3.up);
+                    }
+                }
+            }
+        }
+
+        FireEffectsClientRpc(shooter, fireSoundId);
     }
 
     // Reusable buffer so the shot cast never allocates.
