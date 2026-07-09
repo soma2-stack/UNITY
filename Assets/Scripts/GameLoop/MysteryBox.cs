@@ -136,6 +136,32 @@ public class MysteryBox : InteractableBase
         Weapon prize = pool[Mathf.Clamp(weaponIndex, 0, pool.Count - 1)].Clone();
         wc.GiveWeapon(prize);
         Debug.Log("[MysteryBox] Granted: " + prize.weaponName);
+
+        // Cosmetic-only local reveal (purchasing player only). The weapon is already granted
+        // above; this never selects/rerolls and is fully optional — the box works without it.
+        ShowRevealSafe(prize.weaponName, pool);
+    }
+
+    // Kick off the local HUD reveal, landing on the authoritative prize name. Wrapped so a
+    // presentation hiccup can never affect the actual (already-completed) weapon grant.
+    private static void ShowRevealSafe(string prizeName, List<Weapon> pool)
+    {
+        try
+        {
+            List<string> names = new List<string>(pool.Count);
+            for (int i = 0; i < pool.Count; i++)
+            {
+                if (pool[i] != null && !string.IsNullOrEmpty(pool[i].weaponName))
+                {
+                    names.Add(pool[i].weaponName);
+                }
+            }
+            MysteryBoxRevealHud.Show(prizeName, names);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[MysteryBox] Reveal presentation skipped: " + e.Message);
+        }
     }
 
     /// <summary>
