@@ -90322,7 +90322,9 @@ MonoBehaviour:
     magazineSize: 30
     reserveAmmo: 210
     reloadTime: 2.2
-    weaponModel: {fileID: 6722624758580609244, guid: c603e37730f73da4d9fda8189874fd97, type: 3}
+    weaponModel: {fileID: 6213425214881797772, guid: 538d4933cc37fae45b3e8ef7c726f00e, type: 3}
+    fireSound: {fileID: 8300000, guid: 8c76310d2b39a834494a6adf46cc0f0e, type: 3}
+    reloadSound: {fileID: 8300000, guid: e2040ed6404a87a498812502a7554258, type: 3}
   - weaponName: UZI
     damage: 24
     fireRate: 13
@@ -90333,26 +90335,92 @@ MonoBehaviour:
     reserveAmmo: 192
     reloadTime: 1.8
     weaponModel: {fileID: 851652609436101254, guid: ae56add955b981e44b0184224f4fa2cf, type: 3}
-  - weaponName: M4
-    damage: 38
-    fireRate: 10
+    fireSound: {fileID: 8300000, guid: 7b25ed7216ecf274da7d7572fb672bad, type: 3}
+    reloadSound: {fileID: 8300000, guid: 5aa5e212a1701d444b322b726d93935b, type: 3}
+  - weaponName: Revolver
+    damage: 110
+    fireRate: 2.5
+    automatic: 0
+    range: 95
+    spread: 1.1
+    magazineSize: 6
+    reserveAmmo: 60
+    reloadTime: 2.6
+    weaponModel: {fileID: 227817357821810070, guid: 75fb4d5fae67ab646a0e58ea49343848, type: 3}
+    fireSound: {fileID: 8300000, guid: 7a88181c67c1236409a11ce7512bbd3a, type: 3}
+    reloadSound: {fileID: 8300000, guid: 4be2e3892a837204e924b77af80f2a4c, type: 3}
+  - weaponName: M137
+    damage: 55
+    fireRate: 9.5
     automatic: 1
-    range: 120
-    spread: 1.4
+    range: 130
+    spread: 2
+    magazineSize: 75
+    reserveAmmo: 300
+    reloadTime: 4.3
+    weaponModel: {fileID: 3102398993439791441, guid: a2070796f4ea52b459cab61446274af4, type: 3}
+    fireSound: {fileID: 0}
+    reloadSound: {fileID: 0}
+  - weaponName: RPG
+    damage: 350
+    fireRate: 0.6
+    automatic: 0
+    range: 80
+    spread: 1
+    magazineSize: 1
+    reserveAmmo: 8
+    reloadTime: 3.2
+    weaponModel: {fileID: 4244200403310716382, guid: de360f8b4482e9149b9a62ea27a6b8df, type: 3}
+    fireSound: {fileID: 0}
+    reloadSound: {fileID: 0}
+  - weaponName: Dragunov
+    damage: 180
+    fireRate: 1.6
+    automatic: 0
+    range: 250
+    spread: 0.2
+    magazineSize: 10
+    reserveAmmo: 70
+    reloadTime: 2.8
+    weaponModel: {fileID: 5258910346574682001, guid: 1e9d03440936a604695ccc1960fafb37, type: 3}
+    fireSound: {fileID: 0}
+    reloadSound: {fileID: 0}
+  - weaponName: MP5
+    damage: 32
+    fireRate: 12.5
+    automatic: 1
+    range: 85
+    spread: 2
     magazineSize: 30
     reserveAmmo: 240
-    reloadTime: 2
-    weaponModel: {fileID: 397265803289229847, guid: f7ce4edd882adf340a7fa237ab8fdc78, type: 3}
-  - weaponName: Benelli M4
-    damage: 160
-    fireRate: 1.25
+    reloadTime: 1.8
+    weaponModel: {fileID: 3422144820320493187, guid: 83224d9336f6d9c46833cfa07bf05767, type: 3}
+    fireSound: {fileID: 8300000, guid: cd2d1b6af69d0034abbf3b6e2a76d4fb, type: 3}
+    reloadSound: {fileID: 8300000, guid: 3e721928f1fc9bb488f9e77064f1ca3b, type: 3}
+  - weaponName: Pump
+    damage: 120
+    fireRate: 1.1
     automatic: 0
     range: 28
-    spread: 6.5
-    magazineSize: 7
-    reserveAmmo: 49
-    reloadTime: 2.7
-    weaponModel: {fileID: 458883516534183291, guid: aee9f192b1ff85d41887553b2ea6c8cc, type: 3}
+    spread: 7
+    magazineSize: 6
+    reserveAmmo: 48
+    reloadTime: 3
+    weaponModel: {fileID: 1045526157547562175, guid: 98b9263abc5edf44fa2a9ed93951af83, type: 3}
+    fireSound: {fileID: 8300000, guid: f142e8142b293ea4aa0df7a46049f384, type: 3}
+    reloadSound: {fileID: 8300000, guid: 1841333544c089f499fc348a9dfe94f1, type: 3}
+  - weaponName: Kar98k
+    damage: 170
+    fireRate: 1.1
+    automatic: 0
+    range: 230
+    spread: 0.3
+    magazineSize: 5
+    reserveAmmo: 45
+    reloadTime: 2.6
+    weaponModel: {fileID: 4248616485760114442, guid: b60deb1b18fb4194a9fcd362ca866ff4, type: 3}
+    fireSound: {fileID: 8300000, guid: 770fa7fd6353bf44dbb8f9da1e54edf6, type: 3}
+    reloadSound: {fileID: 8300000, guid: 1473250f79ad75e4f8e074dd0fcf3165, type: 3}
   teddyBearChance: 0.2
   boxLocations:
   - {fileID: 414717903}
@@ -122935,6 +123003,63 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 350488081377105641, guid: daf3ce4d3ff4e464e8206f86bc905fa0, type: 3}
   m_PrefabInstance: {fileID: 6189048827703933283}
   m_PrefabAsset: {fileID: 0}
+--- !u!1001 &6759247578619220357
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 6987900879920575031, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_Name
+      value: Thompson
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.45154783
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 1.607
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -2.0830722
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7760215076711065741, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 73b928d4fc710c14fb8c6e774671e97f, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -122963,3 +123088,4 @@ SceneRoots:
   - {fileID: 1993815972}
   - {fileID: 317193037}
   - {fileID: 711115701}
+  - {fileID: 6759247578619220357}
