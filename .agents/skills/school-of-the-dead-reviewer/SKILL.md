@@ -78,6 +78,16 @@ When reviewing changes:
 6. Decide whether I should accept, reject, or ask for a smaller fix.
 7. Tell me the safest next step.
 
+## Pull After Review
+
+After auditing a Claude commit or remote branch change:
+
+1. Do not pull before completing the review.
+2. If the verdict is **Safe** or **Mostly safe**, the changed files match the task, there are no medium-high or high risks, and pulling will not overwrite or complicate local work, pull the reviewed change with `git pull --rebase` automatically.
+3. If there is a medium-high or high risk, a compile/setup blocker, a broad unrelated change, or a possible conflict with local work, do not pull. Explain the risk clearly and wait for my decision.
+4. Treat low visual/polish risks as acceptable to pull when the core gameplay and multiplayer behavior are protected.
+5. After a successful automatic pull, say exactly which commit was pulled and what I should test. Do not commit or push unless I ask.
+
 ## Output Format
 
 Use this format:
@@ -117,3 +127,7 @@ Tell me exactly what I should ask Claude or Codex to do next.
 ### Copy/paste prompt
 
 Give me one clean prompt I can paste into Claude or Codex.
+
+### Pull result
+
+Say whether the reviewed change was pulled automatically or left unpulled, and why.
