@@ -19,7 +19,7 @@ public class MysteryBoxRevealHud : MonoBehaviour
     private static MysteryBoxRevealHud _instance;
 
     // Timing (seconds, unscaled): fast name cycling, then a short "landed" hold on the real prize.
-    private const float RollDuration = 1.15f;
+    private const float RollDuration = MysteryBox.RevealDuration - LandDuration;
     private const float LandDuration = 0.4f;
     private const float CycleInterval = 0.07f;
     private const float TotalDuration = RollDuration + LandDuration;
@@ -134,7 +134,6 @@ public class MysteryBoxRevealHud : MonoBehaviour
         if (landed)
         {
             alpha = 1f - Mathf.Clamp01((age - RollDuration) / Mathf.Max(0.01f, LandDuration));
-            alpha = Mathf.Clamp01(alpha + 0.35f); // hold mostly-opaque, then fade at the very end
         }
 
         if (backTex == null)

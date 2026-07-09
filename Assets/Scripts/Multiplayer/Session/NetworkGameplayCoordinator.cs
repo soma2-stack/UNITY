@@ -17,6 +17,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
     private const string PurchaseRequestMessage = "SOTD_PURCHASE_REQUEST";
     private const string PurchaseGrantMessage = "SOTD_PURCHASE_GRANT";
     private const string BoxTransformMessage = "SOTD_BOX_TRANSFORM";
+    private const string BoxPrizeStateMessage = "SOTD_BOX_PRIZE_STATE";
     private const string PerkStateMessage = "SOTD_PERK_STATE";
     private const string PowerupSpawnMessage = "SOTD_POWERUP_SPAWN";
     private const string PowerupCollectRequestMessage = "SOTD_POWERUP_COLLECT_REQUEST";
@@ -36,6 +37,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         WallBuy = 2,
         PackAPunch = 3,
         Perk = 4,
+        MysteryBoxClaim = 5,
     }
 
     private static NetworkGameplayCoordinator instance;
@@ -74,6 +76,9 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
 
     public static bool IsNetworkActive => NetworkActive;
     public static bool IsServer => IsServerRole;
+    public static double SharedTime => NetworkActive && NetworkManager.Singleton != null
+        ? NetworkManager.Singleton.ServerTime.Time
+        : Time.unscaledTime;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     private static void Bootstrap()
@@ -169,6 +174,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.RegisterNamedMessageHandler(PurchaseRequestMessage, ReceivePurchaseRequest);
         messaging.RegisterNamedMessageHandler(PurchaseGrantMessage, ReceivePurchaseGrant);
         messaging.RegisterNamedMessageHandler(BoxTransformMessage, ReceiveBoxTransform);
+        messaging.RegisterNamedMessageHandler(BoxPrizeStateMessage, ReceiveBoxPrizeState);
         messaging.RegisterNamedMessageHandler(PerkStateMessage, ReceivePerkState);
         messaging.RegisterNamedMessageHandler(PowerupSpawnMessage, ReceivePowerupSpawn);
         messaging.RegisterNamedMessageHandler(PowerupCollectRequestMessage, ReceivePowerupCollectRequest);
@@ -202,6 +208,7 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         messaging.UnregisterNamedMessageHandler(PurchaseRequestMessage);
         messaging.UnregisterNamedMessageHandler(PurchaseGrantMessage);
         messaging.UnregisterNamedMessageHandler(BoxTransformMessage);
+        messaging.UnregisterNamedMessageHandler(BoxPrizeStateMessage);
         messaging.UnregisterNamedMessageHandler(PerkStateMessage);
         messaging.UnregisterNamedMessageHandler(PowerupSpawnMessage);
         messaging.UnregisterNamedMessageHandler(PowerupCollectRequestMessage);
@@ -394,6 +401,11 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         RequestPurchase(PurchaseKind.MysteryBox, box != null ? box.NetworkKey : string.Empty, 0);
     }
 
+    public static void RequestMysteryBoxClaim(MysteryBox box)
+    {
+        RequestPurchase(PurchaseKind.MysteryBoxClaim, box != null ? box.NetworkKey : string.Empty, 0);
+    }
+
     public static void RequestWallBuy(WallBuy wallBuy, bool ownsWeapon)
     {
         RequestPurchase(PurchaseKind.WallBuy, wallBuy != null ? wallBuy.NetworkKey : string.Empty, ownsWeapon ? 1 : 0);
@@ -465,14 +477,25 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
             case PurchaseKind.Perk:
                 ServerTryPerk(senderClientId, key);
                 break;
+            case PurchaseKind.MysteryBoxClaim:
+                ServerTryMysteryBoxClaim(senderClientId, key);
+                break;
         }
     }
 
     private void ServerTryMysteryBox(ulong senderClientId, string key)
     {
         if (!InteractableBase.TryFind(key, out MysteryBox box) ||
-            (box.requirePower && !PowerState.IsOn) ||
-            !TrySpend(senderClientId, box.cost))
+            (box.requirePower && !PowerState.IsOn))
+        {
+            return;
+        }
+
+        if (box.ClearPendingPrizeIfExpired())
+        {
+            BroadcastBoxPrizeState(box);
+        }
+        if (box.HasPendingPrize || !TrySpend(senderClientId, box.cost))
         {
             return;
         }
@@ -485,7 +508,30 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
             BroadcastBoxTransform(box);
         }
 
-        SendPurchaseGrant(senderClientId, PurchaseKind.MysteryBox, key, weaponIndex);
+        if (weaponIndex >= 0)
+        {
+            bool localBuyer = senderClientId == NetworkManager.Singleton.LocalClientId;
+            box.BeginPendingPrize(weaponIndex, senderClientId, localBuyer);
+            BroadcastBoxPrizeState(box);
+        }
+    }
+
+    private void ServerTryMysteryBoxClaim(ulong senderClientId, string key)
+    {
+        if (!InteractableBase.TryFind(key, out MysteryBox box))
+        {
+            return;
+        }
+
+        if (box.TryClaimPendingPrize(senderClientId, out int weaponIndex, out bool expired))
+        {
+            BroadcastBoxPrizeState(box);
+            SendPurchaseGrant(senderClientId, PurchaseKind.MysteryBox, key, weaponIndex);
+        }
+        else if (expired)
+        {
+            BroadcastBoxPrizeState(box);
+        }
     }
 
     private void ServerTryWallBuy(ulong senderClientId, string key, bool ownsWeapon)
@@ -617,6 +663,67 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         if (InteractableBase.TryFind(key, out MysteryBox box))
         {
             box.ApplyNetworkTransform(position, rotation);
+        }
+    }
+
+    public static void ExpireMysteryBoxPrize(MysteryBox box)
+    {
+        if (box == null || !NetworkActive || !IsServerRole || !box.ClearPendingPrizeIfExpired())
+        {
+            return;
+        }
+
+        BroadcastBoxPrizeState(box);
+    }
+
+    private static void BroadcastBoxPrizeState(MysteryBox box)
+    {
+        if (box == null || !NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(1024, Allocator.Temp);
+        WriteBoxPrizeState(writer, box);
+        SendToAll(BoxPrizeStateMessage, writer);
+    }
+
+    private static void SendBoxPrizeStateToClient(MysteryBox box, ulong clientId)
+    {
+        using FastBufferWriter writer = new FastBufferWriter(1024, Allocator.Temp);
+        WriteBoxPrizeState(writer, box);
+        SendToClient(BoxPrizeStateMessage, clientId, writer);
+    }
+
+    private static void WriteBoxPrizeState(FastBufferWriter writer, MysteryBox box)
+    {
+        WriteString(writer, box.NetworkKey);
+        writer.WriteValueSafe(box.PendingWeaponIndex);
+        writer.WriteValueSafe(box.PendingBuyerClientId);
+        writer.WriteValueSafe(box.PendingRevealEndsAt);
+        writer.WriteValueSafe(box.PendingOwnerEndsAt);
+        writer.WriteValueSafe(box.PendingExpiresAt);
+    }
+
+    private void ReceiveBoxPrizeState(ulong senderId, FastBufferReader reader)
+    {
+        string key = ReadString(reader);
+        reader.ReadValueSafe(out int weaponIndex);
+        reader.ReadValueSafe(out ulong buyerClientId);
+        reader.ReadValueSafe(out double revealEndsAt);
+        reader.ReadValueSafe(out double ownerEndsAt);
+        reader.ReadValueSafe(out double expiresAt);
+        if (InteractableBase.TryFind(key, out MysteryBox box))
+        {
+            bool localBuyer = NetworkManager.Singleton != null &&
+                buyerClientId == NetworkManager.Singleton.LocalClientId;
+            box.ApplyPendingPrizeState(
+                weaponIndex,
+                buyerClientId,
+                revealEndsAt,
+                ownerEndsAt,
+                expiresAt,
+                localBuyer);
         }
     }
 
@@ -908,6 +1015,10 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
             writer.WriteValueSafe(box.transform.position);
             writer.WriteValueSafe(box.transform.rotation);
             SendToClient(BoxTransformMessage, clientId, writer);
+            if (box.HasPendingPrize)
+            {
+                SendBoxPrizeStateToClient(box, clientId);
+            }
         }
         foreach (Powerup powerup in Powerup.ActiveNetworkedPowerups)
         {
