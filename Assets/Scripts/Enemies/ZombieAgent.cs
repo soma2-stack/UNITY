@@ -101,6 +101,20 @@ public class ZombieAgent : MonoBehaviour
     private bool isClientReplica; // true on non-server peers: no AI, only a death collider watch
     private bool clientDeathHandled; // guard: disable the corpse's colliders at most once on a client
 
+    [Header("Audio")]
+    [Tooltip("Volume of a surviving-hit grunt (0-1). Kept low so it's audible but not in-your-ear.")]
+    [Range(0f, 1f)] public float zombieHitVolume = 0.35f;
+    [Tooltip("Volume of the death sound (0-1).")]
+    [Range(0f, 1f)] public float zombieDeathVolume = 0.45f;
+    [Tooltip("3D min distance: full volume within this radius, then it starts to fall off.")]
+    public float zombieAudioMinDistance = 1.5f;
+    [Tooltip("3D max distance: the sound reaches near-silence by here, so it stays in the world.")]
+    public float zombieAudioMaxDistance = 20f;
+    [Tooltip("3D distance rolloff. Logarithmic gives a natural, quickly-quieting falloff.")]
+    public AudioRolloffMode zombieAudioRolloffMode = AudioRolloffMode.Logarithmic;
+    [Tooltip("Minimum seconds between hit grunts on ONE zombie, so rapid fire can't stack them.")]
+    public float zombieHitSoundCooldown = 0.3f;
+
     // --- Hit / death audio ---
     // Sounds are driven off the REPLICATED animator state (the same NetworkAnimator-synced
     // "Hit"/"Death" states ClientDeathWatch relies on), so every peer near the zombie plays
@@ -110,8 +124,7 @@ public class ZombieAgent : MonoBehaviour
     private int deathStateHash;            // Animator.StringToHash("Death"), cached
     private bool wasInHitState;            // rising-edge guard so a dwelt flinch fires once
     private bool deathSoundPlayed;         // guard: play the death sound at most once on this peer
-    private float nextHitSoundTime;        // small floor so re-entered flinches can't machine-gun
-    private const float HitSoundCooldown = 0.12f; // seconds between hit grunts on one zombie
+    private float nextHitSoundTime;        // floor so re-entered flinches can't machine-gun
 
     // Shared, lazily-loaded clip pools (Resources/ZombieSounds/*), keyed by name like the guns.
     private static readonly string[] HitSoundKeys = { "Zombie_Hit_01", "Zombie_Hit_02", "Zombie_Hit_03" };
@@ -561,7 +574,7 @@ public class ZombieAgent : MonoBehaviour
         bool inHit = !deathSoundPlayed && IsEnteringOrInState(hitStateHash);
         if (inHit && !wasInHitState && Time.time >= nextHitSoundTime)
         {
-            nextHitSoundTime = Time.time + HitSoundCooldown;
+            nextHitSoundTime = Time.time + Mathf.Max(0f, zombieHitSoundCooldown);
             PlayHitSound();
         }
         wasInHitState = inHit;
@@ -587,7 +600,8 @@ public class ZombieAgent : MonoBehaviour
         {
             return;
         }
-        EnsureHitAudioSource().PlayOneShot(clip);
+        // volumeScale keeps the grunt low even if the source volume is later changed.
+        EnsureHitAudioSource().PlayOneShot(clip, Mathf.Clamp01(zombieHitVolume));
     }
 
     // Death plays on a DETACHED temporary 3D source at the zombie's position so it finishes
@@ -599,10 +613,11 @@ public class ZombieAgent : MonoBehaviour
         {
             return;
         }
-        PlayClipDetached3D(clip, transform.position);
+        PlayClipDetached3D(clip, transform.position, Mathf.Clamp01(zombieDeathVolume));
     }
 
-    // Lazily create a 3D one-shot AudioSource on the zombie for hit grunts.
+    // Lazily create a 3D one-shot AudioSource on the zombie for hit grunts, configured from
+    // the zombieAudio* tuning fields (quiet, spatial, quickly-quieting rolloff).
     private AudioSource EnsureHitAudioSource()
     {
         if (hitAudio != null)
@@ -612,25 +627,28 @@ public class ZombieAgent : MonoBehaviour
         hitAudio = gameObject.AddComponent<AudioSource>();
         hitAudio.playOnAwake = false;
         hitAudio.loop = false;
-        hitAudio.spatialBlend = 1f; // 3D
-        hitAudio.rolloffMode = AudioRolloffMode.Linear;
-        hitAudio.minDistance = 3f;
-        hitAudio.maxDistance = 30f;
+        hitAudio.spatialBlend = 1f; // 3D: positioned in the world
+        // Per-shot volume is applied via PlayOneShot's volumeScale (below), so the source
+        // stays at 1 and picks up runtime tweaks to zombieHitVolume without rebuilding.
+        hitAudio.rolloffMode = zombieAudioRolloffMode;
+        hitAudio.minDistance = Mathf.Max(0.01f, zombieAudioMinDistance);
+        hitAudio.maxDistance = Mathf.Max(hitAudio.minDistance + 0.1f, zombieAudioMaxDistance);
         return hitAudio;
     }
 
     // Spawn a self-destroying 3D AudioSource at a world point (like AudioSource.PlayClipAtPoint
-    // but with explicit 3D falloff), so the clip outlives the zombie GameObject.
-    private static void PlayClipDetached3D(AudioClip clip, Vector3 position)
+    // but with explicit 3D falloff + volume), so the clip outlives the zombie GameObject.
+    private void PlayClipDetached3D(AudioClip clip, Vector3 position, float volume)
     {
         var go = new GameObject("ZombieDeathSound");
         go.transform.position = position;
         AudioSource src = go.AddComponent<AudioSource>();
         src.clip = clip;
         src.spatialBlend = 1f; // 3D
-        src.rolloffMode = AudioRolloffMode.Linear;
-        src.minDistance = 3f;
-        src.maxDistance = 40f;
+        src.volume = Mathf.Clamp01(volume);
+        src.rolloffMode = zombieAudioRolloffMode;
+        src.minDistance = Mathf.Max(0.01f, zombieAudioMinDistance);
+        src.maxDistance = Mathf.Max(src.minDistance + 0.1f, zombieAudioMaxDistance);
         src.Play();
         Destroy(go, clip.length + 0.1f);
     }
