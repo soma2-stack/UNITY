@@ -23,6 +23,11 @@ public class Weapon
     [Header("Model")]
     public GameObject weaponModel;     // In-hand model enabled when equipped (may be null)
 
+    [Header("Audio")]
+    // Fire sound played when this weapon actually fires. Optional: if left null the
+    // WeaponController resolves a matching clip from Resources/GunSounds by weapon name.
+    public AudioClip fireSound;
+
     // --- Runtime ammo state (not shown in inspector, set up at runtime) ---
     [System.NonSerialized] public int ammoInMag = -1;     // -1 = not yet initialized
     [System.NonSerialized] public int ammoInReserve = -1;
@@ -49,6 +54,7 @@ public class Weapon
             reserveAmmo = reserveAmmo,
             reloadTime = reloadTime,
             weaponModel = weaponModel,
+            fireSound = fireSound,
             // ammoInMag / ammoInReserve stay at -1 and isUpgraded at false (fresh);
             // InitAmmo() seeds the runtime ammo when the weapon is granted.
         };

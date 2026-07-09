@@ -149,6 +149,24 @@ public class WeaponController : NetworkBehaviour
     private float nextMeleeTime;        // earliest Time.time the next knife is allowed
     private float knifeSwingEndTime;    // IsKnifing stays true until this time after a swing
     private SimpleGunRecoil gunRecoil;  // Optional FPS gun kickback script found on child weapon model
+    private AudioSource _fireAudio;     // dedicated one-shot source for this player's gunfire (lazy-created)
+
+    // Fire-sound clips shipped in Resources/GunSounds, indexed by fire-sound id. The id is what
+    // travels over the network (the weapons list isn't a NetworkVariable, so remote replicas
+    // can't derive the shooter's weapon on their own).
+    private static readonly string[] FireSoundKeys =
+    {
+        "M1911_Fire",      // 0
+        "Uzi_Fire",        // 1
+        "MP5_Fire",        // 2
+        "AK47_Fire",       // 3
+        "M16_Fire",        // 4
+        "PumpShotgun_Fire",// 5
+        "Revolver_Fire",   // 6
+        "BoltAction_Fire", // 7
+    };
+    private static readonly AudioClip[] _fireClipCache = new AudioClip[8];
+    private static readonly bool[] _fireClipTried = new bool[8];
     private int _cameraResolveAttempts;  // capped retries so we stop searching for a missing camera
     private readonly Queue<GameObject> _bloodPool = new Queue<GameObject>(); // pooled blood-effect instances
     private GameObject _spawnedViewModel; // first-person model currently spawned under the holder
@@ -1582,8 +1600,9 @@ public class WeaponController : NetworkBehaviour
         }
 
         PerformShot(origin, forward, baseDamage, range, spread, shooter, false);
-        // Other clients play this gun's muzzle/sound for the shot.
-        FireEffectsClientRpc(shooter);
+        // Other clients play this gun's muzzle for the shot. This legacy path has no
+        // weapon reference, so pass -1 (no fire sound resolved).
+        FireEffectsClientRpc(shooter, -1);
     }
 
     private bool ValidateServerShotRequest(ulong shooterClientId, Vector3 origin, Vector3 forward, int baseDamage, float range)
@@ -1641,14 +1660,24 @@ public class WeaponController : NetworkBehaviour
     }
 
     [ClientRpc]
-    private void FireEffectsClientRpc(ulong shooterClientId)
+    private void FireEffectsClientRpc(ulong shooterClientId, int fireSoundId)
     {
-        // The host (server) and the shooter already played their own effects.
+        bool isShooter = NetworkManager.Singleton != null &&
+                         NetworkManager.Singleton.LocalClientId == shooterClientId;
+
+        // Everyone except the shooter (who already played it locally) hears the shot.
+        // This runs even on the host so it can hear remote clients' guns.
+        if (!isShooter)
+        {
+            PlayFireSound(GetFireClip(fireSoundId));
+        }
+
+        // The host (server) and the shooter already played their own muzzle/recoil.
         if (IsServer)
         {
             return;
         }
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClientId == shooterClientId)
+        if (isShooter)
         {
             return;
         }
@@ -1774,6 +1803,104 @@ public class WeaponController : NetworkBehaviour
         StartCoroutine(ReturnBloodEffectAfterDelay(fx));
     }
 
+    // Map a weapon name to a fire-sound id (index into FireSoundKeys). Tolerant of spacing,
+    // dashes, underscores, case and Pack-a-Punch "+" suffixes, with per-family aliases.
+    // Returns -1 when no family matches (caller then plays no sound).
+    private static int ResolveFireSoundId(string weaponName)
+    {
+        if (string.IsNullOrEmpty(weaponName))
+        {
+            return -1;
+        }
+
+        string n = weaponName.ToLowerInvariant()
+            .Replace(" ", "").Replace("-", "").Replace("_", "").Replace("+", "");
+
+        if (n.Contains("m1911") || n.Contains("1911")) return 0;
+        if (n.Contains("uzi")) return 1;
+        if (n.Contains("mp5")) return 2;
+        if (n.Contains("ak47") || n.Contains("ak74") || n.Contains("ak")) return 3;
+        if (n.Contains("m16")) return 4;
+        if (n.Contains("pump") || n.Contains("shotgun")) return 5;
+        if (n.Contains("revolver") || n.Contains("magnum")) return 6;
+        if (n.Contains("bolt") || n.Contains("sniper")) return 7;
+        return -1;
+    }
+
+    // Load (and cache) the fire clip for an id from Resources/GunSounds. Returns null for an
+    // out-of-range id or a missing asset; the miss is warned once so it never spams per shot.
+    private static AudioClip GetFireClip(int id)
+    {
+        if (id < 0 || id >= FireSoundKeys.Length)
+        {
+            return null;
+        }
+        if (!_fireClipTried[id])
+        {
+            _fireClipTried[id] = true;
+            _fireClipCache[id] = Resources.Load<AudioClip>("GunSounds/" + FireSoundKeys[id]);
+            if (_fireClipCache[id] == null)
+            {
+                Debug.LogWarning("[WeaponController] Missing fire clip Resources/GunSounds/" +
+                    FireSoundKeys[id] + " — that weapon will fire silently.");
+            }
+        }
+        return _fireClipCache[id];
+    }
+
+    // Resolve the clip to play for a weapon: an explicitly-assigned fireSound wins, otherwise
+    // fall back to the name-matched Resources clip.
+    private AudioClip ResolveFireClip(Weapon w)
+    {
+        if (w == null)
+        {
+            return null;
+        }
+        return w.fireSound != null ? w.fireSound : GetFireClip(ResolveFireSoundId(w.weaponName));
+    }
+
+    // Lazily create the dedicated gunfire AudioSource on a child object so it never fights the
+    // player's other audio. 2D for the local shooter (always audible), 3D for remote replicas
+    // so peers hear it positioned at the firing player.
+    private AudioSource EnsureFireAudioSource()
+    {
+        if (_fireAudio != null)
+        {
+            return _fireAudio;
+        }
+
+        var go = new GameObject("GunFireAudio");
+        go.transform.SetParent(transform, false);
+        _fireAudio = go.AddComponent<AudioSource>();
+        _fireAudio.playOnAwake = false;
+        _fireAudio.loop = false;
+
+        bool local = !IsSpawned || IsOwner;
+        if (local)
+        {
+            _fireAudio.spatialBlend = 0f; // 2D: the shooter always hears their own gun.
+        }
+        else
+        {
+            _fireAudio.spatialBlend = 1f; // 3D: positioned at the remote shooter.
+            _fireAudio.rolloffMode = AudioRolloffMode.Linear;
+            _fireAudio.minDistance = 3f;
+            _fireAudio.maxDistance = 60f;
+        }
+        return _fireAudio;
+    }
+
+    // Play a fire clip as a one-shot so rapid fire overlaps naturally. No-op when clip is null
+    // (blocked/dry/unmatched shots), so callers never gate on it.
+    private void PlayFireSound(AudioClip clip)
+    {
+        if (clip == null)
+        {
+            return;
+        }
+        EnsureFireAudioSource().PlayOneShot(clip);
+    }
+
     private void Fire(Weapon w)
     {
         // Infinite Ammo (team power-up): fire freely without draining the magazine. Fire()
@@ -1793,6 +1920,8 @@ public class WeaponController : NetworkBehaviour
         {
             gunRecoil.Kick();
         }
+        // The shooter hears their own gun immediately, no network round-trip.
+        PlayFireSound(ResolveFireClip(w));
 
         // CLIENT-SIDE HIT DETECTION. The shooter raycasts in ITS OWN view, where the
         // zombies are actually rendered, so a hit always matches what the player aimed at.
@@ -1851,7 +1980,7 @@ public class WeaponController : NetworkBehaviour
                 zombie.TakeDamage(ComputeDamage(w.damage, OwnerClientId), isHeadshot, OwnerClientId);
                 SpawnBloodClientRpc(point, normal);
             }
-            FireEffectsClientRpc(OwnerClientId);
+            FireEffectsClientRpc(OwnerClientId, ResolveFireSoundId(w.weaponName));
             return;
         }
 
@@ -1867,7 +1996,7 @@ public class WeaponController : NetworkBehaviour
                 hasTarget = true;
             }
         }
-        FireDamageServerRpc(hasTarget, targetId, isHeadshot, w.damage);
+        FireDamageServerRpc(hasTarget, targetId, isHeadshot, w.damage, ResolveFireSoundId(w.weaponName));
     }
 
     // Reusable buffer so the shot cast never allocates.
@@ -1988,7 +2117,7 @@ public class WeaponController : NetworkBehaviour
     // the shooter owns this player, then applies the authoritative damage to that zombie and
     // broadcasts blood / muzzle effects. Trusting the client's hit is fine for co-op PvE.
     [ServerRpc(RequireOwnership = false)]
-    private void FireDamageServerRpc(bool hasTarget, ulong targetNetworkObjectId, bool isHeadshot, int baseDamage, ServerRpcParams rpcParams = default)
+    private void FireDamageServerRpc(bool hasTarget, ulong targetNetworkObjectId, bool isHeadshot, int baseDamage, int fireSoundId, ServerRpcParams rpcParams = default)
     {
         ulong shooter = rpcParams.Receive.SenderClientId;
         if (shooter != OwnerClientId || baseDamage <= 0)
@@ -2012,7 +2141,7 @@ public class WeaponController : NetworkBehaviour
             }
         }
 
-        FireEffectsClientRpc(shooter);
+        FireEffectsClientRpc(shooter, fireSoundId);
     }
 
     // HUD drawing is handled centrally by GameHud (which reads the public getters above),
