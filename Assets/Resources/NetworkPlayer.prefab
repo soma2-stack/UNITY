@@ -204,6 +204,8 @@ MonoBehaviour:
     reserveAmmo: 80
     reloadTime: 1.3
     weaponModel: {fileID: 5470858397734459158, guid: 0e6f8e3111294634088f35efa65e0ea9, type: 3}
+    fireSound: {fileID: 0}
+    reloadSound: {fileID: 0}
   currentIndex: 0
   maxWeaponSlots: 2
   startWithPistol: 0
@@ -218,6 +220,8 @@ MonoBehaviour:
     reserveAmmo: 48
     reloadTime: 1.8
     weaponModel: {fileID: 0}
+    fireSound: {fileID: 0}
+    reloadSound: {fileID: 0}
   aimCamera: {fileID: 4445824446515009126}
   hitMask:
     serializedVersion: 2
@@ -250,6 +254,8 @@ MonoBehaviour:
   bloodEffectLifetime: 1.5
   fireRateMultiplier: 1
   reloadSpeedMultiplier: 1
+  gunFireVolume: 0.75
+  gunReloadVolume: 0.65
 --- !u!114 &4464677534283072176
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -3219,6 +3219,12 @@ MonoBehaviour:
   hitParam: Hit
   hitReactCooldown: 1.2
   deathDestroyDelay: 3
+  zombieHitVolume: 0.35
+  zombieDeathVolume: 0.45
+  zombieAudioMinDistance: 1.5
+  zombieAudioMaxDistance: 20
+  zombieAudioRolloffMode: 0
+  zombieHitSoundCooldown: 0.3
 --- !u!136 &1934308198247031181
 CapsuleCollider:
   m_ObjectHideFlags: 0
