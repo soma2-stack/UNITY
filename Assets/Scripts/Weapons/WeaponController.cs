@@ -1983,15 +1983,31 @@ public class WeaponController : NetworkBehaviour
         return _reloadAudio;
     }
 
+    // Per-weapon-family reload volume trim. The M16 reload was recorded noticeably quieter than
+    // the other guns, so it gets a small boost to sit at the same perceived level.
+    private static float ReloadVolumeMultiplier(int fireSoundId)
+    {
+        return fireSoundId == 4 ? 1.25f : 1f; // id 4 = M16
+    }
+
     // Play a reload one-shot for the local player. No-op when the clip is null (unmatched weapon).
     private void PlayReloadSound(Weapon w)
     {
+        int id = w != null ? ResolveFireSoundId(w.weaponName) : -1;
         AudioClip clip = ResolveReloadClip(w);
+        float volume = Mathf.Clamp01(gunReloadVolume * ReloadVolumeMultiplier(id));
+
+#if UNITY_EDITOR
+        Debug.Log("[WeaponController] Reload sound weapon='" + (w != null ? w.weaponName : "null") +
+            "' id=" + id + " clip='" + (clip != null ? clip.name : "null") +
+            "' volume=" + volume.ToString("0.00"));
+#endif
+
         if (clip == null)
         {
             return;
         }
-        EnsureReloadAudioSource().PlayOneShot(clip, Mathf.Clamp01(gunReloadVolume));
+        EnsureReloadAudioSource().PlayOneShot(clip, volume);
     }
 
     private void Fire(Weapon w)
