@@ -68,6 +68,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Pump
       objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 836621c3f648d764d9bb6c45467803eb, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects:
