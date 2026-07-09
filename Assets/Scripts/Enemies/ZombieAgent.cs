@@ -101,6 +101,24 @@ public class ZombieAgent : MonoBehaviour
     private bool isClientReplica; // true on non-server peers: no AI, only a death collider watch
     private bool clientDeathHandled; // guard: disable the corpse's colliders at most once on a client
 
+    // --- Hit / death audio ---
+    // Sounds are driven off the REPLICATED animator state (the same NetworkAnimator-synced
+    // "Hit"/"Death" states ClientDeathWatch relies on), so every peer near the zombie plays
+    // its own copy exactly once with no extra networking and no double-play across machines.
+    private AudioSource hitAudio;          // lazily-created 3D source for surviving-hit grunts
+    private int hitStateHash;              // Animator.StringToHash("Hit"), cached
+    private int deathStateHash;            // Animator.StringToHash("Death"), cached
+    private bool wasInHitState;            // rising-edge guard so a dwelt flinch fires once
+    private bool deathSoundPlayed;         // guard: play the death sound at most once on this peer
+    private float nextHitSoundTime;        // small floor so re-entered flinches can't machine-gun
+    private const float HitSoundCooldown = 0.12f; // seconds between hit grunts on one zombie
+
+    // Shared, lazily-loaded clip pools (Resources/ZombieSounds/*), keyed by name like the guns.
+    private static readonly string[] HitSoundKeys = { "Zombie_Hit_01", "Zombie_Hit_02", "Zombie_Hit_03" };
+    private static readonly string[] DeathSoundKeys = { "Zombie_Death_01", "Zombie_Death_02", "Zombie_Death_03" };
+    private static AudioClip[] _hitClips;
+    private static AudioClip[] _deathClips;
+
     private void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
@@ -139,6 +157,10 @@ public class ZombieAgent : MonoBehaviour
 
     private void Update()
     {
+        // Runs on EVERY peer (server + clients) while the body exists: plays hit/death
+        // sounds off the replicated animator state so all nearby players hear them once.
+        UpdateSoundWatch();
+
         // Client replicas run no AI — only a death watch that disables the corpse's colliders
         // once the server-driven death animation ("Death") has replicated here.
         if (isClientReplica)
@@ -214,6 +236,12 @@ public class ZombieAgent : MonoBehaviour
 
     private void CacheAnimatorParams()
     {
+        // Cached once for the sound watch. shortNameHash equals StringToHash(stateName),
+        // so these match the "Hit"/"Death" states on the base layer (same states the
+        // NetworkAnimator replicates to clients).
+        hitStateHash = Animator.StringToHash("Hit");
+        deathStateHash = Animator.StringToHash("Death");
+
         if (animator == null || animator.runtimeAnimatorController == null)
         {
             return;
@@ -507,6 +535,134 @@ public class ZombieAgent : MonoBehaviour
         clientDeathHandled = true;
         DisableDeadColliders();
         enabled = false; // nothing left to watch; the server despawns the body shortly
+    }
+
+    // Play hit/death sounds by watching the animator states the server drives and the
+    // NetworkAnimator replicates. This runs identically on the server (host) and on every
+    // client replica, so each machine plays its own copy exactly once — no RPCs, no
+    // double-play. Purely observational: it never touches health, AI, points, or death logic.
+    private void UpdateSoundWatch()
+    {
+        if (animator == null)
+        {
+            return;
+        }
+
+        // Death: fire once, the first frame this replica enters the "Death" state.
+        if (!deathSoundPlayed && IsEnteringOrInState(deathStateHash))
+        {
+            deathSoundPlayed = true;
+            PlayDeathSound();
+        }
+
+        // Surviving hit: fire on the rising edge of the "Hit" flinch state (the server
+        // rate-limits the flinch itself; the small cooldown guards against a re-entered
+        // flinch machine-gunning). Never overlaps a death.
+        bool inHit = !deathSoundPlayed && IsEnteringOrInState(hitStateHash);
+        if (inHit && !wasInHitState && Time.time >= nextHitSoundTime)
+        {
+            nextHitSoundTime = Time.time + HitSoundCooldown;
+            PlayHitSound();
+        }
+        wasInHitState = inHit;
+    }
+
+    // True if the base-layer animator is in, or transitioning into, the given state.
+    private bool IsEnteringOrInState(int stateHash)
+    {
+        if (animator.GetCurrentAnimatorStateInfo(0).shortNameHash == stateHash)
+        {
+            return true;
+        }
+        return animator.IsInTransition(0) &&
+               animator.GetNextAnimatorStateInfo(0).shortNameHash == stateHash;
+    }
+
+    // A surviving hit plays on the zombie's own 3D source (the body lingers for the death
+    // delay, so it's never cut mid-grunt). PlayOneShot lets a rare overlap layer cleanly.
+    private void PlayHitSound()
+    {
+        AudioClip clip = PickRandom(ref _hitClips, HitSoundKeys);
+        if (clip == null)
+        {
+            return;
+        }
+        EnsureHitAudioSource().PlayOneShot(clip);
+    }
+
+    // Death plays on a DETACHED temporary 3D source at the zombie's position so it finishes
+    // even though the body despawns/destroys shortly after (rule: don't cut the death sound).
+    private void PlayDeathSound()
+    {
+        AudioClip clip = PickRandom(ref _deathClips, DeathSoundKeys);
+        if (clip == null)
+        {
+            return;
+        }
+        PlayClipDetached3D(clip, transform.position);
+    }
+
+    // Lazily create a 3D one-shot AudioSource on the zombie for hit grunts.
+    private AudioSource EnsureHitAudioSource()
+    {
+        if (hitAudio != null)
+        {
+            return hitAudio;
+        }
+        hitAudio = gameObject.AddComponent<AudioSource>();
+        hitAudio.playOnAwake = false;
+        hitAudio.loop = false;
+        hitAudio.spatialBlend = 1f; // 3D
+        hitAudio.rolloffMode = AudioRolloffMode.Linear;
+        hitAudio.minDistance = 3f;
+        hitAudio.maxDistance = 30f;
+        return hitAudio;
+    }
+
+    // Spawn a self-destroying 3D AudioSource at a world point (like AudioSource.PlayClipAtPoint
+    // but with explicit 3D falloff), so the clip outlives the zombie GameObject.
+    private static void PlayClipDetached3D(AudioClip clip, Vector3 position)
+    {
+        var go = new GameObject("ZombieDeathSound");
+        go.transform.position = position;
+        AudioSource src = go.AddComponent<AudioSource>();
+        src.clip = clip;
+        src.spatialBlend = 1f; // 3D
+        src.rolloffMode = AudioRolloffMode.Linear;
+        src.minDistance = 3f;
+        src.maxDistance = 40f;
+        src.Play();
+        Destroy(go, clip.length + 0.1f);
+    }
+
+    // Load (once) and return a random clip from a Resources/ZombieSounds pool. Missing clips
+    // are skipped; returns null only if the whole pool failed to load (then no sound plays).
+    private static AudioClip PickRandom(ref AudioClip[] cache, string[] keys)
+    {
+        if (cache == null)
+        {
+            cache = new AudioClip[keys.Length];
+            for (int i = 0; i < keys.Length; i++)
+            {
+                cache[i] = Resources.Load<AudioClip>("ZombieSounds/" + keys[i]);
+                if (cache[i] == null)
+                {
+                    Debug.LogWarning("[ZombieAgent] Missing clip Resources/ZombieSounds/" + keys[i] + ".");
+                }
+            }
+        }
+
+        // Pick among the clips that actually loaded.
+        int start = Random.Range(0, cache.Length);
+        for (int n = 0; n < cache.Length; n++)
+        {
+            AudioClip c = cache[(start + n) % cache.Length];
+            if (c != null)
+            {
+                return c;
+            }
+        }
+        return null;
     }
 
     private void ApplyAgentSpeed()
