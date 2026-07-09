@@ -141,6 +141,12 @@ public class WeaponController : NetworkBehaviour
     [Tooltip("Reload-speed multiplier (Speed Cola perk). Higher = faster reloads. 1 = normal.")]
     public float reloadSpeedMultiplier = 1f;
 
+    [Header("Audio")]
+    [Tooltip("Volume of gun fire one-shots (0-1). Kept below 1 so guns aren't overpowering.")]
+    [Range(0f, 1f)] public float gunFireVolume = 0.75f;
+    [Tooltip("Volume of the reload one-shot (0-1).")]
+    [Range(0f, 1f)] public float gunReloadVolume = 0.65f;
+
     // --- Runtime state ---
     private Transform cam;          // Resolved aim transform
     private float nextFireTime;     // Time.time when the next shot is allowed
@@ -167,6 +173,24 @@ public class WeaponController : NetworkBehaviour
     };
     private static readonly AudioClip[] _fireClipCache = new AudioClip[8];
     private static readonly bool[] _fireClipTried = new bool[8];
+
+    private AudioSource _reloadAudio;   // dedicated one-shot source for this player's reloads (lazy-created)
+
+    // Reload-sound clips in Resources/ReloadSounds, indexed by the SAME id as FireSoundKeys
+    // (ResolveFireSoundId maps a weapon name to this index for both fire and reload).
+    private static readonly string[] ReloadSoundKeys =
+    {
+        "M1911_Reload",       // 0
+        "Uzi_Reload",         // 1
+        "MP5_Reload",         // 2
+        "AK47_Reload",        // 3
+        "M16_Reload",         // 4
+        "PumpShotgun_Reload", // 5
+        "Revolver_Reload",    // 6
+        "BoltAction_Reload",  // 7
+    };
+    private static readonly AudioClip[] _reloadClipCache = new AudioClip[8];
+    private static readonly bool[] _reloadClipTried = new bool[8];
     private int _cameraResolveAttempts;  // capped retries so we stop searching for a missing camera
     private readonly Queue<GameObject> _bloodPool = new Queue<GameObject>(); // pooled blood-effect instances
     private GameObject _spawnedViewModel; // first-person model currently spawned under the holder
@@ -1162,6 +1186,14 @@ public class WeaponController : NetworkBehaviour
     private IEnumerator ReloadRoutine(Weapon w)
     {
         isReloading = true;
+
+        // Reload just started (HandleReloadInput already gated null weapon / already-reloading /
+        // full-mag / no-reserve). Play the reload one-shot for the local player, but not while
+        // dead/downed — this gates only the SOUND, never the reload itself.
+        if (playerHealth == null || (!playerHealth.IsDead && !playerHealth.IsDowned))
+        {
+            PlayReloadSound(w);
+        }
 #if UNITY_EDITOR
         Debug.Log("[WeaponController] Reloading " + w.weaponName + "...");
 #endif
@@ -1898,7 +1930,68 @@ public class WeaponController : NetworkBehaviour
         {
             return;
         }
-        EnsureFireAudioSource().PlayOneShot(clip);
+        EnsureFireAudioSource().PlayOneShot(clip, Mathf.Clamp01(gunFireVolume));
+    }
+
+    // Load (and cache) the reload clip for an id from Resources/ReloadSounds. Mirrors
+    // GetFireClip: null for an out-of-range id or a missing asset, warned once.
+    private static AudioClip GetReloadClip(int id)
+    {
+        if (id < 0 || id >= ReloadSoundKeys.Length)
+        {
+            return null;
+        }
+        if (!_reloadClipTried[id])
+        {
+            _reloadClipTried[id] = true;
+            _reloadClipCache[id] = Resources.Load<AudioClip>("ReloadSounds/" + ReloadSoundKeys[id]);
+            if (_reloadClipCache[id] == null)
+            {
+                Debug.LogWarning("[WeaponController] Missing reload clip Resources/ReloadSounds/" +
+                    ReloadSoundKeys[id] + " — that weapon will reload silently.");
+            }
+        }
+        return _reloadClipCache[id];
+    }
+
+    // Resolve the reload clip for a weapon: an explicitly-assigned reloadSound wins, else the
+    // name-matched Resources clip (same alias mapping as the fire sounds).
+    private AudioClip ResolveReloadClip(Weapon w)
+    {
+        if (w == null)
+        {
+            return null;
+        }
+        return w.reloadSound != null ? w.reloadSound : GetReloadClip(ResolveFireSoundId(w.weaponName));
+    }
+
+    // Lazily create the dedicated reload AudioSource (2D — the local player always hears their
+    // own reload). Kept separate from the fire source so a reload never cuts a fire one-shot.
+    private AudioSource EnsureReloadAudioSource()
+    {
+        if (_reloadAudio != null)
+        {
+            return _reloadAudio;
+        }
+
+        var go = new GameObject("GunReloadAudio");
+        go.transform.SetParent(transform, false);
+        _reloadAudio = go.AddComponent<AudioSource>();
+        _reloadAudio.playOnAwake = false;
+        _reloadAudio.loop = false;
+        _reloadAudio.spatialBlend = 0f; // 2D: the reloader always hears it clearly.
+        return _reloadAudio;
+    }
+
+    // Play a reload one-shot for the local player. No-op when the clip is null (unmatched weapon).
+    private void PlayReloadSound(Weapon w)
+    {
+        AudioClip clip = ResolveReloadClip(w);
+        if (clip == null)
+        {
+            return;
+        }
+        EnsureReloadAudioSource().PlayOneShot(clip, Mathf.Clamp01(gunReloadVolume));
     }
 
     private void Fire(Weapon w)

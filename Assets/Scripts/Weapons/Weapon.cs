@@ -27,6 +27,9 @@ public class Weapon
     // Fire sound played when this weapon actually fires. Optional: if left null the
     // WeaponController resolves a matching clip from Resources/GunSounds by weapon name.
     public AudioClip fireSound;
+    // Reload sound played when a reload starts. Optional: if left null the WeaponController
+    // resolves a matching clip from Resources/ReloadSounds by weapon name.
+    public AudioClip reloadSound;
 
     // --- Runtime ammo state (not shown in inspector, set up at runtime) ---
     [System.NonSerialized] public int ammoInMag = -1;     // -1 = not yet initialized
@@ -55,6 +58,7 @@ public class Weapon
             reloadTime = reloadTime,
             weaponModel = weaponModel,
             fireSound = fireSound,
+            reloadSound = reloadSound,
             // ammoInMag / ammoInReserve stay at -1 and isUpgraded at false (fresh);
             // InitAmmo() seeds the runtime ammo when the weapon is granted.
         };

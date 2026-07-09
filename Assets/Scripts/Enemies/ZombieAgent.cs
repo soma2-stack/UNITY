@@ -103,9 +103,9 @@ public class ZombieAgent : MonoBehaviour
 
     [Header("Audio")]
     [Tooltip("Volume of a surviving-hit grunt (0-1). Kept low so it's audible but not in-your-ear.")]
-    [Range(0f, 1f)] public float zombieHitVolume = 0.35f;
+    [Range(0f, 1f)] public float zombieHitVolume = 0.28f;
     [Tooltip("Volume of the death sound (0-1).")]
-    [Range(0f, 1f)] public float zombieDeathVolume = 0.45f;
+    [Range(0f, 1f)] public float zombieDeathVolume = 0.36f;
     [Tooltip("3D min distance: full volume within this radius, then it starts to fall off.")]
     public float zombieAudioMinDistance = 1.5f;
     [Tooltip("3D max distance: the sound reaches near-silence by here, so it stays in the world.")]
