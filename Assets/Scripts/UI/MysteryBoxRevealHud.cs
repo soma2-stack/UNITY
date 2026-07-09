@@ -24,8 +24,15 @@ public class MysteryBoxRevealHud : MonoBehaviour
     private const float CycleInterval = 0.07f;
     private const float TotalDuration = RollDuration + LandDuration;
 
+    // Teddy Bear: roll names for the full reveal window, then hold a clear "BOX MOVING" result
+    // (kept in sync with MysteryBox's Teddy timing so the HUD ends as the box relocates).
+    private const float TeddyRollDuration = MysteryBox.RevealDuration;
+    private const float TeddyResultDuration = MysteryBox.TeddyResultDuration;
+    private const float TeddyTotalDuration = TeddyRollDuration + TeddyResultDuration;
+
     private float startTime = -999f;
     private string finalName = "";
+    private bool isTeddy;
     private readonly List<string> rollNames = new List<string>();
     private Texture2D backTex;
 
@@ -42,8 +49,22 @@ public class MysteryBoxRevealHud : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Play the reveal for a Teddy Bear roll: the same rolling names, landing on a clear
+    /// "TEDDY BEAR / BOX MOVING" result. Safe no-op if there is no live instance.
+    /// </summary>
+    public static void ShowTeddy(IReadOnlyList<string> candidateNames)
+    {
+        if (_instance != null)
+        {
+            _instance.Begin("TEDDY BEAR", candidateNames);
+            _instance.isTeddy = true;
+        }
+    }
+
     private void Begin(string prizeName, IReadOnlyList<string> candidateNames)
     {
+        isTeddy = false;
         finalName = string.IsNullOrEmpty(prizeName) ? "???" : prizeName;
 
         rollNames.Clear();
@@ -118,9 +139,16 @@ public class MysteryBoxRevealHud : MonoBehaviour
     private void OnGUI()
     {
         float age = Time.unscaledTime - startTime;
-        if (age < 0f || age > TotalDuration)
+        float total = isTeddy ? TeddyTotalDuration : TotalDuration;
+        if (age < 0f || age > total)
         {
             return; // idle / finished: nothing to draw
+        }
+
+        if (isTeddy)
+        {
+            DrawTeddy(age);
+            return;
         }
 
         bool landed = age >= RollDuration;
@@ -174,6 +202,84 @@ public class MysteryBoxRevealHud : MonoBehaviour
         Color rollColor = new Color(1f, 1f, 1f, 0.9f * alpha);
         GUI.color = landed ? landedColor : rollColor;
         GUI.Label(new Rect(x, y + 30f, w, h - 34f), label, name);
+
+        GUI.color = prev;
+    }
+
+    // Teddy Bear reveal: roll names for the reveal window, then a clear two-line result.
+    private void DrawTeddy(float age)
+    {
+        bool result = age >= TeddyRollDuration;
+
+        // Fade the result out over the last third of its hold so it clears as the box moves.
+        float alpha = 1f;
+        if (result)
+        {
+            float resultAge = age - TeddyRollDuration;
+            float fadeStart = TeddyResultDuration * 0.66f;
+            if (resultAge > fadeStart)
+            {
+                alpha = 1f - Mathf.Clamp01((resultAge - fadeStart) / Mathf.Max(0.01f, TeddyResultDuration - fadeStart));
+            }
+        }
+
+        if (backTex == null)
+        {
+            backTex = Texture2D.whiteTexture;
+        }
+
+        float w = Mathf.Min(Screen.width * 0.6f, 520f);
+        float h = result ? 120f : 96f;
+        float x = (Screen.width - w) * 0.5f;
+        float y = Screen.height * 0.32f;
+
+        Color prev = GUI.color;
+
+        GUI.color = new Color(0f, 0f, 0f, 0.55f * alpha);
+        GUI.DrawTexture(new Rect(x, y, w, h), backTex);
+
+        var caption = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter,
+            fontSize = 16,
+            fontStyle = FontStyle.Bold,
+        };
+        GUI.color = new Color(1f, 1f, 1f, 0.8f * alpha);
+        GUI.Label(new Rect(x, y + 8f, w, 24f), "MYSTERY BOX", caption);
+
+        if (!result)
+        {
+            // Rolling names (same cadence as the weapon reveal), so the prize isn't hinted early.
+            string rollLabel = rollNames.Count > 0 ? rollNames[(int)(age / CycleInterval) % rollNames.Count] : "";
+            var nameStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 28,
+                fontStyle = FontStyle.Bold,
+            };
+            GUI.color = new Color(1f, 1f, 1f, 0.9f * alpha);
+            GUI.Label(new Rect(x, y + 30f, w, h - 34f), rollLabel, nameStyle);
+        }
+        else
+        {
+            var teddyStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 34,
+                fontStyle = FontStyle.Bold,
+            };
+            GUI.color = new Color(0.65f, 0.85f, 1f, alpha); // cool blue for the Teddy result
+            GUI.Label(new Rect(x, y + 30f, w, 44f), "TEDDY BEAR", teddyStyle);
+
+            var moveStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+            };
+            GUI.color = new Color(1f, 1f, 1f, 0.9f * alpha);
+            GUI.Label(new Rect(x, y + 74f, w, 36f), "BOX MOVING", moveStyle);
+        }
 
         GUI.color = prev;
     }

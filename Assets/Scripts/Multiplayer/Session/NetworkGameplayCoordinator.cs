@@ -495,19 +495,22 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         {
             BroadcastBoxPrizeState(box);
         }
-        if (box.HasPendingPrize || !TrySpend(senderClientId, box.cost))
+        // Block a new spin while a weapon prize OR a Teddy result is still resolving (no charge).
+        if (box.IsResolvingPrize || !TrySpend(senderClientId, box.cost))
         {
             return;
         }
 
-        bool teddy = box.RollTeddy();
-        int weaponIndex = teddy ? -1 : box.RollWeaponIndex();
-        if (teddy)
+        if (box.RollTeddy())
         {
-            box.RelocateBox();
-            BroadcastBoxTransform(box);
+            // Teddy: everyone plays the roll + "BOX MOVING" result; the box relocates only AFTER
+            // it finishes, driven server-side in MysteryBox.Update -> RelocateMysteryBoxAndClear.
+            box.BeginPendingTeddy(senderClientId);
+            BroadcastBoxPrizeState(box);
+            return;
         }
 
+        int weaponIndex = box.RollWeaponIndex();
         if (weaponIndex >= 0)
         {
             bool localBuyer = senderClientId == NetworkManager.Singleton.LocalClientId;
@@ -674,6 +677,23 @@ public sealed class NetworkGameplayCoordinator : MonoBehaviour
         }
 
         BroadcastBoxPrizeState(box);
+    }
+
+    // Server-authoritative Teddy resolution: once the "BOX MOVING" result finishes, relocate the
+    // box ONCE and broadcast its new transform + the cleared pending state to all clients.
+    public static void RelocateMysteryBoxAndClear(MysteryBox box)
+    {
+        if (box == null || !NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        box.RelocateBox();
+        BroadcastBoxTransform(box);
+        if (box.ClearPendingPrizeIfExpired())
+        {
+            BroadcastBoxPrizeState(box);
+        }
     }
 
     private static void BroadcastBoxPrizeState(MysteryBox box)
