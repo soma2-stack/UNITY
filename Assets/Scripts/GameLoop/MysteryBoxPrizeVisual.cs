@@ -148,7 +148,7 @@ public sealed class MysteryBoxPrizeVisual : MonoBehaviour
         Transform t = currentModel.transform;
         t.SetParent(transform, false);
         t.localPosition = new Vector3(0f, hoverHeight, 0f);
-        t.localRotation = Quaternion.identity;
+        t.localRotation = src.transform.localRotation;
         t.localScale = src.transform.localScale * Mathf.Max(0.01f, displayScale);
         SetLayerRecursively(currentModel, gameObject.layer); // render like the box (world camera)
         currentModel.SetActive(true);

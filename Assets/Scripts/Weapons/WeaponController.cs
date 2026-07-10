@@ -87,6 +87,8 @@ public class WeaponController : NetworkBehaviour
     public Vector3 muzzleFlashLocalPosition = new Vector3(0.25f, -0.05f, 0.75f);
     [Tooltip("Local euler rotation of the fallback muzzle flash (aim it forward along the barrel).")]
     public Vector3 muzzleFlashLocalEuler = Vector3.zero;
+    [Tooltip("Optional material for runtime-created muzzle flashes. Leave empty to use the simple color fallback.")]
+    public Material muzzleFlashFallbackMaterial;
 
     [Header("Melee / Knife")]
     [Tooltip("Key to perform an instant-kill knife/melee attack.")]
@@ -1140,6 +1142,12 @@ public class WeaponController : NetworkBehaviour
         ParticleSystemRenderer psr = go.GetComponent<ParticleSystemRenderer>();
         if (psr != null)
         {
+            if (muzzleFlashFallbackMaterial != null)
+            {
+                psr.sharedMaterial = muzzleFlashFallbackMaterial;
+                return ps;
+            }
+
             Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
             if (shader == null) { shader = Shader.Find("Sprites/Default"); }
             if (shader == null) { shader = Shader.Find("Unlit/Color"); }

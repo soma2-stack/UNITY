@@ -71,5 +71,40 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: aaf21fd4020f65b4d8b3e13905c48713, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -9212576728154064116}
   m_SourcePrefab: {fileID: 100100000, guid: aaf21fd4020f65b4d8b3e13905c48713, type: 3}
+--- !u!1 &3102398993439791441 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: aaf21fd4020f65b4d8b3e13905c48713, type: 3}
+  m_PrefabInstance: {fileID: 2867815099103388672}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &-9212576728154064116
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3102398993439791441}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 50909cd971535de4281b31de31d6a547, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SimpleGunRecoil
+  cameraKickPitch: 0.6
+  cameraKickYaw: 0.05
+  cameraRecoverySpeed: 8
+  randomYawAmount: 0.25
+  maxCameraRecoil: 4
+  weaponKickBack: 0.05
+  weaponKickUp: 0.015
+  weaponRotationKick: 4
+  weaponRecoverySpeed: 10
+  maxWeaponRecoil: 0.12
+  recoilSmoothing: 20
+  muzzleFlash: {fileID: 0}
+  gunAudio: {fileID: 0}
+  gunshotSound: {fileID: 0}
+  debugRecoil: 0

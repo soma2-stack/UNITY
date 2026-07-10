@@ -126,7 +126,7 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 1560233911591868211, guid: 803c9b3904e15974c8bd28b76f50eb15, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 0.00984
+      value: 0.010073
       objectReference: {fileID: 0}
     - target: {fileID: 1560233911591868211, guid: 803c9b3904e15974c8bd28b76f50eb15, type: 3}
       propertyPath: m_LocalPosition.y
@@ -164,6 +164,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 2960850535280627035, guid: 803c9b3904e15974c8bd28b76f50eb15, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 0ee6bf9b172237549894df83667144bf, type: 2}
     - target: {fileID: 3207483229292808977, guid: 803c9b3904e15974c8bd28b76f50eb15, type: 3}
       propertyPath: m_Name
       value: MuzzleFlash

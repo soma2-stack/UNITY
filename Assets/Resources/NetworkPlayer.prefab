@@ -246,6 +246,7 @@ MonoBehaviour:
   muzzleFlashFallbackPrefab: {fileID: 0}
   muzzleFlashLocalPosition: {x: 0, y: 0, z: 0.5}
   muzzleFlashLocalEuler: {x: 0, y: 0, z: 0}
+  muzzleFlashFallbackMaterial: {fileID: 0}
   meleeKey: 118
   meleeRange: 2
   meleeRadius: 0.65
