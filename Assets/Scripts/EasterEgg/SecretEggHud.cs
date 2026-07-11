@@ -11,6 +11,7 @@ public class SecretEggHud : MonoBehaviour
 
     private string message = string.Empty;
     private float hideAt;
+    private GUIStyle messageStyle;
 
     /// <summary>Returns the live HUD, creating one if it does not exist yet.</summary>
     public static SecretEggHud Ensure()
@@ -61,22 +62,36 @@ public class SecretEggHud : MonoBehaviour
             return;
         }
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 28,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.LowerLeft,
-        };
+        EnsureStyle();
 
         float w = 720f;
         float h = 48f;
         Rect rect = new Rect(28f, Screen.height - h - 28f, w, h);
 
         Color prev = GUI.color;
-        GUI.color = new Color(0f, 0f, 0f, 0.85f);
-        GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), message, style);
-        GUI.color = new Color(0.93f, 0.16f, 0.12f, 1f);
-        GUI.Label(rect, message, style);
+        DrawShadowedMessage(rect);
         GUI.color = prev;
+    }
+
+    private void EnsureStyle()
+    {
+        if (messageStyle == null)
+        {
+            messageStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 28,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.LowerLeft,
+            };
+        }
+    }
+
+    // Black drop shadow offset 2px, then the red message on top.
+    private void DrawShadowedMessage(Rect rect)
+    {
+        GUI.color = new Color(0f, 0f, 0f, 0.85f);
+        GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), message, messageStyle);
+        GUI.color = new Color(0.93f, 0.16f, 0.12f, 1f);
+        GUI.Label(rect, message, messageStyle);
     }
 }

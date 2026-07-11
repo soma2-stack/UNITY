@@ -34,6 +34,12 @@ public class PackAPunchMachine : InteractableBase
 
     protected override void OnInteract()
     {
+        if (NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.RequestPackAPunch(this);
+            return;
+        }
+
         if (requirePower && !PowerState.IsOn)
         {
             Debug.Log("[PackAPunch] Power is off.");
@@ -45,7 +51,7 @@ public class PackAPunchMachine : InteractableBase
             return;
         }
 
-        WeaponController wc = FindFirstObjectByType<WeaponController>();
+        WeaponController wc = LocalPlayer.Weapon;
         if (wc == null || !wc.HasWeapon)
         {
             Debug.LogWarning("[PackAPunch] No equipped weapon to upgrade.");

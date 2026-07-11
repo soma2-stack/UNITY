@@ -111,13 +111,18 @@ public class HitMarkerHud : MonoBehaviour
 
         // Classic four-stroke "X": two diagonals, each with a stroke on either side of
         // a small center gap so it frames (not covers) the crosshair.
-        DrawStroke(cx, cy, 45f, +markerGap);
-        DrawStroke(cx, cy, 45f, -(markerGap + markerSize));
-        DrawStroke(cx, cy, 135f, +markerGap);
-        DrawStroke(cx, cy, 135f, -(markerGap + markerSize));
+        DrawStrokePair(cx, cy, 45f);
+        DrawStrokePair(cx, cy, 135f);
 
         GUI.matrix = prevMatrix;
         GUI.color = prevColor;
+    }
+
+    // One diagonal of the "X": a stroke just outside the center gap on each side.
+    private void DrawStrokePair(float cx, float cy, float angleDeg)
+    {
+        DrawStroke(cx, cy, angleDeg, +markerGap);
+        DrawStroke(cx, cy, angleDeg, -(markerGap + markerSize));
     }
 
     // Draws one short bar of length markerSize starting at `offset` pixels along an

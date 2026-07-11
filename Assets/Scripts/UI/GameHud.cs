@@ -1,3 +1,4 @@
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -24,6 +25,13 @@ using UnityEngine.SceneManagement;
 public class GameHud : MonoBehaviour
 {
     private const int MaxPlayers = 4;
+
+    /// <summary>
+    /// Display-only kill switch. When true this legacy IMGUI HUD draws nothing — set by the
+    /// Canvas-based <see cref="SchoolOfTheDeadHud"/> once it is active so the two HUDs never
+    /// draw at once. Does not affect any gameplay logic or value tracking.
+    /// </summary>
+    public static bool SuppressDrawing;
 
     [Header("Player Point Sources (up to 4)")]
     [Tooltip("Optional explicit point sources per player slot (P1..P4). " +
@@ -65,6 +73,9 @@ public class GameHud : MonoBehaviour
     private GUIStyle smallStyle;
     private GUIStyle smallRightStyle;
     private GUIStyle centerStyle;
+    private GUIStyle centerSmallStyle;
+    private GUIStyle playerLabelStyle;
+    private GUIStyle playerPointsStyle;
     private Texture2D whiteTex;
 
     // Gameplay scene the HUD should appear in.
@@ -209,13 +220,51 @@ public class GameHud : MonoBehaviour
                 alignment = TextAnchor.MiddleCenter,
             };
         }
+
+        if (centerSmallStyle == null)
+        {
+            centerSmallStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = smallFontSize,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
+
+        if (playerLabelStyle == null)
+        {
+            playerLabelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = smallFontSize,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal    = { textColor = Color.white },
+            };
+        }
+
+        if (playerPointsStyle == null)
+        {
+            playerPointsStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = smallFontSize,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleLeft,
+                normal    = { textColor = Color.white },
+            };
+        }
     }
 
     private void ResolveReferences()
     {
-        if (weapon == null)
+        // Always track the LOCAL player's weapon. In multiplayer the local player
+        // registers with LocalPlayer only after it spawns, so we must keep
+        // re-resolving until we have it — otherwise the HUD latches onto a remote
+        // (non-owner) player's weapon, which never had its ammo initialised, and
+        // shows "0 / 0". Re-resolving each frame corrects it the moment the local
+        // player registers (and it's cheap: a cached GetComponentInChildren).
+        WeaponController localWeapon = LocalPlayer.Weapon;
+        if (localWeapon != null && localWeapon != weapon)
         {
-            weapon = FindFirstObjectByType<WeaponController>();
+            weapon = localWeapon;
         }
         if (round == null)
         {
@@ -229,6 +278,11 @@ public class GameHud : MonoBehaviour
 
     private void OnGUI()
     {
+        if (SuppressDrawing)
+        {
+            return;
+        }
+
         EnsureStyles();
         ResolveReferences();
 
@@ -236,6 +290,8 @@ public class GameHud : MonoBehaviour
         DrawRoundAndZombies();
         DrawWeapon();
         DrawPlayerPoints();
+        // NOTE: the owned-perk icon row is drawn by PerkManager (bottom-center). The old
+        // top-left perk strip that used to be drawn here was a duplicate and has been removed.
     }
 
     // --- Crosshair (screen center) -----------------------------------------
@@ -272,12 +328,47 @@ public class GameHud : MonoBehaviour
             top += 30f;
         }
 
-        if (spawner != null)
+        // On the server/solo the spawner knows the full count (alive + still-to-spawn).
+        // On a client the spawner doesn't run, so we count the replicated living zombies
+        // directly (throttled) — otherwise the client always shows "Zombies: 0".
+        int left = CountZombiesForHud();
+        if (left >= 0)
         {
-            int left = Mathf.Max(0, spawner.AliveCount + spawner.RemainingToSpawn);
-            GUIStyle centerSmall = new GUIStyle(smallStyle) { alignment = TextAnchor.MiddleCenter };
-            GUI.Label(new Rect(x, top, width, 24f), "Zombies: " + left, centerSmall);
+            GUI.Label(new Rect(x, top, width, 24f), "Zombies: " + left, centerSmallStyle);
         }
+    }
+
+    private float nextZombieCountRefresh;
+    private int cachedZombieCount;
+
+    private int CountZombiesForHud()
+    {
+        bool networkedClient = NetworkManager.Singleton != null &&
+                               NetworkManager.Singleton.IsListening &&
+                               !NetworkManager.Singleton.IsServer;
+
+        if (!networkedClient)
+        {
+            return spawner != null ? Mathf.Max(0, spawner.AliveCount + spawner.RemainingToSpawn) : -1;
+        }
+
+        // Client: count replicated, still-living zombies. Throttled so we don't scan the
+        // scene on every OnGUI pass.
+        if (Time.unscaledTime >= nextZombieCountRefresh)
+        {
+            nextZombieCountRefresh = Time.unscaledTime + 0.3f;
+            int alive = 0;
+            ZombieAgent[] zombies = FindObjectsByType<ZombieAgent>(FindObjectsSortMode.None);
+            foreach (ZombieAgent z in zombies)
+            {
+                if (z != null && !z.IsDead)
+                {
+                    alive++;
+                }
+            }
+            cachedZombieCount = alive;
+        }
+        return cachedZombieCount;
     }
 
     // --- Weapon (bottom-right) ---------------------------------------------
@@ -301,44 +392,85 @@ public class GameHud : MonoBehaviour
 
     // --- Player point icons (top-left, stacked) ----------------------------
 
-    private void DrawPlayerPoints()
+    private int DrawPlayerPoints()
     {
-        float x = 10f;
-        float y = 10f;
-        const float rowH = 26f;
-        const float boxSize = 18f;
-        const float gap = 6f;
+        float x      = 10f;
+        float y      = 10f;
+        float rowH   = 28f;
+        float boxW   = 28f;
+        float boxH   = 28f;
+        float panelW = 160f;
+        float gap    = 6f;
 
-        // Pack only the rows we actually draw so there are no empty gaps; "drawn"
-        // tracks the on-screen row index while "i" stays the real player slot.
+        GUIStyle pLabelStyle = playerLabelStyle;
+        GUIStyle pointsStyle = playerPointsStyle;
+
+        // Each player has their OWN points. PlayerPoints publishes a per-player table
+        // (one entry per connected client, the local peer included) so this HUD shows
+        // every survivor's individual total — not one shared number. In solo the table
+        // is a single entry. Falls back to the wired slot sources if no table exists.
+        PlayerPoints pp = PlayerPoints.Instance;
+        ulong localId = pp != null ? pp.LocalClientId : 0;
+        // Only call out "which one is you" when there's actually more than one player,
+        // so solo looks exactly as before.
+        bool markLocal = pp != null && pp.Table != null && pp.Table.Count > 1;
+
         int drawn = 0;
         for (int i = 0; i < MaxPlayers; i++)
         {
-            // Resolve this slot's points source. Slot 0 falls back to the live singleton.
-            PlayerPoints source = GetPlayerSource(i);
-
-            // Skip empty slots unless we're forcing the full layout (e.g. MP testing).
-            if (source == null && !alwaysShowAllSlots)
+            int points;
+            bool isLocal;
+            if (pp != null && pp.Table != null && i < pp.Table.Count)
             {
-                continue;
+                PlayerPoints.Entry entry = pp.Table[i];
+                points = entry.Points;
+                isLocal = markLocal && entry.ClientId == localId;
+            }
+            else
+            {
+                // No per-player table available: fall back to the explicitly wired
+                // sources (slot 0 = the live singleton). Skips empty slots unless forced.
+                PlayerPoints source = GetPlayerSource(i);
+                if (source == null && !alwaysShowAllSlots) continue;
+                points = source != null ? source.Points : 0;
+                isLocal = markLocal && i == 0;
             }
 
-            float rowY = y + drawn * (rowH + 4f);
+            float rowY = y + drawn * (rowH + 5f);
 
-            // Colored icon box for the player slot.
-            Color slotColor = (playerColors != null && i < playerColors.Length) ? playerColors[i] : Color.gray;
+            // Dark panel behind the row
             Color prev = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.55f);
+            GUI.DrawTexture(new Rect(x - 2f, rowY - 2f, panelW, rowH + 4f), whiteTex);
+
+            // Dark border behind the color box (brighter for the local player's row).
+            GUI.color = isLocal ? new Color(1f, 1f, 1f, 0.9f) : new Color(0f, 0f, 0f, 0.8f);
+            GUI.DrawTexture(new Rect(x - 1f, rowY - 1f, boxW + 2f, boxH + 2f), whiteTex);
+
+            // Player color box (inset 1px from border)
+            Color slotColor = (playerColors != null && i < playerColors.Length)
+                ? playerColors[i] : Color.gray;
             GUI.color = slotColor;
-            GUI.DrawTexture(new Rect(x, rowY + (rowH - boxSize) * 0.5f, boxSize, boxSize), whiteTex);
+            GUI.DrawTexture(new Rect(x + 1f, rowY + 1f, boxW - 2f, boxH - 2f), whiteTex);
             GUI.color = prev;
 
-            string pointsText = source != null ? source.Points.ToString() : "—";
-            string label = "P" + (i + 1) + "  " + pointsText;
+            // "P1" label inside the box; the local player is marked "YOU".
+            GUI.Label(new Rect(x, rowY, boxW, boxH),
+                isLocal ? "YOU" : "P" + (i + 1), pLabelStyle);
 
-            GUI.Label(new Rect(x + boxSize + gap, rowY, 200f, rowH), label, smallStyle);
+            // Points value to the right of the box
+            GUI.Label(new Rect(x + boxW + gap, rowY, panelW - boxW - gap, rowH),
+                points.ToString("N0"), pointsStyle);
+
             drawn++;
         }
+
+        return drawn;
     }
+
+    // NOTE: the owned-perk icon strip that used to be drawn here (top-left) was a duplicate
+    // of PerkManager's bottom-center perk row and has been removed. Perk UI now lives only in
+    // PerkManager.OnGUI. Perk effects/ownership are unaffected — this was display-only.
 
     private PlayerPoints GetPlayerSource(int slot)
     {

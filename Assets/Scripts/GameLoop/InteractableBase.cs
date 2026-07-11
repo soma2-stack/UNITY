@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -11,6 +12,8 @@ using UnityEngine;
 /// </summary>
 public abstract class InteractableBase : MonoBehaviour
 {
+    private static readonly Dictionary<string, InteractableBase> Registry = new Dictionary<string, InteractableBase>();
+
     [Header("Interaction")]
     [Tooltip("How close the player must be (world units) to interact.")]
     public float interactionRange = 3f;
@@ -20,12 +23,41 @@ public abstract class InteractableBase : MonoBehaviour
     protected Transform player;
     protected bool playerInRange;
     private float nextMessageTime;
+    private GUIStyle promptStyle;
+    private string networkKey;
+
+    public string NetworkKey
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(networkKey))
+            {
+                networkKey = BuildNetworkKey(transform);
+            }
+            return networkKey;
+        }
+    }
 
     /// <summary>Prompt shown when in range. Return null/empty to hide the prompt.</summary>
     protected abstract string GetPromptText();
 
     /// <summary>Called when the player presses the interact key while in range.</summary>
     protected abstract void OnInteract();
+
+    protected virtual void OnEnable()
+    {
+        Registry[NetworkKey] = this;
+    }
+
+    protected virtual void OnDisable()
+    {
+        if (!string.IsNullOrEmpty(networkKey) &&
+            Registry.TryGetValue(networkKey, out InteractableBase registered) &&
+            registered == this)
+        {
+            Registry.Remove(networkKey);
+        }
+    }
 
     protected virtual void Start()
     {
@@ -34,17 +66,18 @@ public abstract class InteractableBase : MonoBehaviour
 
     protected virtual void Update()
     {
+        // Always track the LOCAL player. In multiplayer the local player spawns/registers
+        // AFTER this scene object's first Update, so we must keep re-resolving — otherwise
+        // we latch onto a stale/remote transform (or Camera.main) and the in-range check
+        // never matches the real player, so the prompt never shows and E does nothing.
+        FindPlayer();
         if (player == null)
         {
-            FindPlayer();
-            if (player == null)
-            {
-                playerInRange = false;
-                return;
-            }
+            playerInRange = false;
+            return;
         }
 
-        playerInRange = Vector3.Distance(transform.position, player.position) <= interactionRange;
+        playerInRange = InRange(transform.position, player.position, interactionRange);
         if (!playerInRange)
         {
             return;
@@ -90,12 +123,17 @@ public abstract class InteractableBase : MonoBehaviour
             return;
         }
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
+        // Cache the style once instead of allocating a GUIStyle every OnGUI frame.
+        if (promptStyle == null)
         {
-            fontSize = 22,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-        };
+            promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
+        GUIStyle style = promptStyle;
 
         float w = 520f;
         float h = 34f;
@@ -109,18 +147,76 @@ public abstract class InteractableBase : MonoBehaviour
         GUI.color = prev;
     }
 
+    /// <summary>
+    /// Interaction proximity that tolerates the interactable's pivot being at a very
+    /// different height than the floor-standing player. Door / machine pivots sit 1.5-6m
+    /// up (or even below the floor), while the player stands at ~y=0, so a plain 3D
+    /// distance blows past the small interaction range even when you're right next to it.
+    /// This uses HORIZONTAL (XZ) distance against the range, plus a vertical tolerance so
+    /// you still can't reach an interactable a whole floor above/below you.
+    /// </summary>
+    public static bool InRange(Vector3 selfPos, Vector3 playerPos, float range, float verticalTolerance = 4f)
+    {
+        float dx = selfPos.x - playerPos.x;
+        float dz = selfPos.z - playerPos.z;
+        float horizontal = Mathf.Sqrt(dx * dx + dz * dz);
+        return horizontal <= range && Mathf.Abs(selfPos.y - playerPos.y) <= verticalTolerance;
+    }
+
     protected void FindPlayer()
     {
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller != null)
+        Transform local = LocalPlayer.Transform;
+        if (local != null)
         {
-            player = controller.transform;
+            player = local;
             return;
         }
         if (Camera.main != null)
         {
             player = Camera.main.transform;
         }
+    }
+
+    public static bool TryFind<T>(string key, out T interactable) where T : InteractableBase
+    {
+        if (!string.IsNullOrEmpty(key) &&
+            Registry.TryGetValue(key, out InteractableBase found) &&
+            found is T typed)
+        {
+            interactable = typed;
+            return true;
+        }
+
+        interactable = null;
+        return false;
+    }
+
+    public static IEnumerable<T> FindAll<T>() where T : InteractableBase
+    {
+        foreach (InteractableBase interactable in Registry.Values)
+        {
+            if (interactable is T typed)
+            {
+                yield return typed;
+            }
+        }
+    }
+
+    public static string BuildNetworkKey(Transform target)
+    {
+        if (target == null)
+        {
+            return string.Empty;
+        }
+
+        string key = target.name;
+        Transform parent = target.parent;
+        while (parent != null)
+        {
+            key = parent.name + "/" + key;
+            parent = parent.parent;
+        }
+        return key;
     }
 
     protected virtual void OnDrawGizmosSelected()

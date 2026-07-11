@@ -48,6 +48,25 @@ public class PlayerMovement : MonoBehaviour
     private bool isCrouching;
     private bool isDowned;
     private PlayerHealth playerHealth;
+    private NetworkPlayerAvatar networkAvatar; // cached for the multiplayer ownership check
+
+    // Solo / not network-spawned: this peer always controls the player. In a session:
+    // only the OWNING client drives movement (others are server/owner-replicated).
+    private bool IsLocalOwner
+    {
+        get
+        {
+            if (networkAvatar == null)
+            {
+                networkAvatar = GetComponent<NetworkPlayerAvatar>();
+            }
+            if (networkAvatar == null || !networkAvatar.IsSpawned)
+            {
+                return true;
+            }
+            return networkAvatar.IsOwner;
+        }
+    }
 
     public bool IsGrounded => isGrounded;
     public bool IsCrouching => isCrouching;
@@ -68,6 +87,16 @@ public class PlayerMovement : MonoBehaviour
         controller = GetComponent<CharacterController>();
         standingHeight = controller.height;
         originalControllerCenter = controller.center;
+
+        // Stairs: measured world step rises are ~0.275-0.30m for most staircases, but one
+        // irregular stairwell has steps up to ~0.45m. stepOffset must EXCEED the tallest step
+        // for the CharacterController to auto-climb it, so raise it to 0.6 (the prefab default
+        // 0.3 and the earlier 0.4 were both below that 0.45 step, and 0.6 leaves comfortable
+        // margin). Must stay below the controller height. NOTE: the real cause of "having to
+        // jump" was the movement code applying horizontal and vertical motion in two separate
+        // Move() calls (see HandleMovement) — that is fixed there; this just guarantees the
+        // step height is covered.
+        controller.stepOffset = Mathf.Min(Mathf.Max(controller.stepOffset, 0.6f), standingHeight - 0.05f);
 
         if (animator == null)
             animator = GetComponentInChildren<Animator>();
@@ -111,6 +140,12 @@ public class PlayerMovement : MonoBehaviour
 
     void Update()
     {
+        // Multiplayer: only the owning client controls this player. Solo is unaffected.
+        if (!IsLocalOwner)
+        {
+            return;
+        }
+
         if (codCamera == null || !codCamera.enabled)
             HandleMouseLook();
 
@@ -160,8 +195,6 @@ public class PlayerMovement : MonoBehaviour
         if (!isGrounded)
             move *= airControl;
 
-        controller.Move(move * CurrentSpeed * Time.deltaTime);
-
         bool jumpedThisFrame = false;
 
         if (Input.GetButtonDown("Jump") && isGrounded && !isCrouching && !isDowned)
@@ -171,7 +204,16 @@ public class PlayerMovement : MonoBehaviour
         }
 
         velocity.y += gravity * Time.deltaTime;
-        controller.Move(velocity * Time.deltaTime);
+
+        // Apply horizontal + vertical motion in a SINGLE CharacterController.Move so the
+        // controller resolves the step-up and grounding together. Previously these were two
+        // separate Move() calls: the vertical (gravity) move made isGrounded flicker off at a
+        // step edge, which then triggered the airControl 35% speed cut on the next horizontal
+        // move and stalled the step-up — so the player had to jump up stairs even though the
+        // steps were well within stepOffset. `velocity` only carries the vertical (y) component;
+        // horizontal speed is in `move * CurrentSpeed`.
+        Vector3 horizontalVelocity = move * CurrentSpeed;
+        controller.Move((horizontalVelocity + velocity) * Time.deltaTime);
 
         UpdateAnimator(isMoving, wantsToSprint, jumpedThisFrame);
     }
@@ -193,6 +235,22 @@ public class PlayerMovement : MonoBehaviour
     private void HandleCrouch()
     {
         bool wantsToCrouch = Input.GetKey(crouchKey) || Input.GetKey(KeyCode.C);
+
+        // Releasing crouch: don't stand up if there's something directly above.
+        if (!wantsToCrouch && isCrouching)
+        {
+            bool ceilingBlocked = Physics.SphereCast(
+                transform.position + controller.center,
+                controller.radius * 0.9f,
+                Vector3.up,
+                out _,
+                (standingHeight - crouchHeight) * 0.5f + 0.05f,
+                ~0,
+                QueryTriggerInteraction.Ignore);
+
+            if (ceilingBlocked) wantsToCrouch = true;
+        }
+
         isCrouching = wantsToCrouch;
 
         float targetHeight = isCrouching ? crouchHeight : standingHeight;

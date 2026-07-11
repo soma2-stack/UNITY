@@ -16,13 +16,17 @@ public class GameOverController : MonoBehaviour
 {
     private const string GameplayScene = "SchoolOfTheDead";
     private const string MainMenuScene = "MainMenu";
+    private const string DeathCinematicScene = "DeathCinematic";
     private static GameOverController _runtimeInstance;
+    private static GameOverController Instance => _runtimeInstance != null
+        ? _runtimeInstance
+        : FindFirstObjectByType<GameOverController>();
 
     // All players in the scene (co-op aware). The game ends only when EVERY one is dead.
     private readonly List<PlayerHealth> trackedPlayers = new List<PlayerHealth>();
     private readonly HashSet<PlayerHealth> deadPlayers = new HashSet<PlayerHealth>();
-    private bool subscribed;
     private bool showScreen;
+    private bool suppressOverlay; // true when the DeathCinematic scene handles game over (no IMGUI)
     private int finalRound;
     private int finalScore;
     private int finalKills;
@@ -84,23 +88,23 @@ public class GameOverController : MonoBehaviour
 
     private void Update()
     {
-        // Resolve and subscribe to EVERY player once they exist (co-op aware).
-        if (!subscribed)
+        // ✅ CHECKPOINT 1 — late-spawning player tracking fixed
+        // Scan EVERY frame and subscribe to any PlayerHealth we aren't already
+        // tracking. The old code set a one-shot `subscribed` flag on the first
+        // frame players were found, so any co-op player that spawned later was
+        // never tracked and couldn't contribute to game over. Tracking is now
+        // idempotent (trackedPlayers.Contains guards against double-subscribing),
+        // so late joiners are always picked up.
+        PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        foreach (PlayerHealth ph in players)
         {
-            PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
-            if (players.Length > 0)
+            if (ph == null || trackedPlayers.Contains(ph))
             {
-                foreach (PlayerHealth ph in players)
-                {
-                    if (ph == null || trackedPlayers.Contains(ph))
-                    {
-                        continue;
-                    }
-                    trackedPlayers.Add(ph);
-                    ph.OnPlayerDied += HandlePlayerDied;
-                }
-                subscribed = true;
+                continue;
             }
+            trackedPlayers.Add(ph);
+            ph.OnPlayerDied += HandlePlayerDied;
+            ph.OnPlayerDowned += HandlePlayerDied;
         }
     }
 
@@ -112,11 +116,11 @@ public class GameOverController : MonoBehaviour
             if (ph != null)
             {
                 ph.OnPlayerDied -= HandlePlayerDied;
+                ph.OnPlayerDowned -= HandlePlayerDied;
             }
         }
         trackedPlayers.Clear();
         deadPlayers.Clear();
-        subscribed = false;
     }
 
     private void HandlePlayerDied()
@@ -126,10 +130,18 @@ public class GameOverController : MonoBehaviour
             return;
         }
 
-        // Co-op: one player going down must NOT end the game. Record dead players
-        // and only show GAME OVER once EVERY tracked player has finally died.
+        if (NetworkGameplayCoordinator.IsNetworkActive && !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
+
+        // A player is only "out" when TRULY DEAD (bled out). A downed-but-not-dead player is
+        // still in the game: they can be revived by a teammate (co-op), self-revive with Quick
+        // Revive, or are simply bleeding out (solo). Counting a merely-downed player as game
+        // over caused a premature GAME OVER the instant a player went down (esp. with Quick
+        // Revive). Game over now only shows once EVERY tracked player is finally dead.
         int trackedTotal = 0;
-        int aliveCount = 0;
+        int inPlayCount = 0;
         foreach (PlayerHealth ph in trackedPlayers)
         {
             if (ph == null)
@@ -143,13 +155,13 @@ public class GameOverController : MonoBehaviour
             }
             else
             {
-                aliveCount++;
+                inPlayCount++; // alive OR downed-but-not-dead
             }
         }
 
-        if (trackedTotal == 0 || aliveCount > 0)
+        if (trackedTotal == 0 || inPlayCount > 0)
         {
-            return; // at least one player is still alive
+            return; // at least one player is still in the game (alive or recoverable)
         }
 
         RoundManager rm = FindFirstObjectByType<RoundManager>();
@@ -173,12 +185,86 @@ public class GameOverController : MonoBehaviour
         }
         PlayerPrefs.Save();
 
-        showScreen = true;
-        Time.timeScale = 0f;
+        if (NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.BroadcastGameOver(finalRound, finalScore, finalKills);
+        }
+        else
+        {
+            ShowLocalGameOver(finalRound, finalScore, finalKills, false);
+        }
+    }
 
-        // Free the cursor so the buttons are clickable.
+    public static void ShowLocalGameOver(int round, int score, int kills, bool networked)
+    {
+        // This peer's PERSONAL best records (per-player; may differ between players).
+        int localBestRound = PlayerPrefs.GetInt("BestRound", 0);
+        int localBestScore = PlayerPrefs.GetInt("BestScore", 0);
+
+        bool cinematic = Application.CanStreamedLevelBeLoaded(DeathCinematicScene);
+
+        // Store the stats UP FRONT — before any GameOverController lookup — so DeathCinematic
+        // shows them whether this call or the NGO scene load arrives first (SetRunStats also
+        // late-applies to an already-loaded cinematic, covering a client whose scene swapped
+        // before this message). No live controller is needed for this.
+        if (cinematic)
+        {
+            DeathCinematicSceneController.SetRunStats(round, kills, score, localBestRound, localBestScore, networked);
+        }
+
+        // Overlay/re-entry bookkeeping needs the live controller. It exists on the server/solo
+        // peer (still in the gameplay scene here); on a client whose scene already swapped it may
+        // be gone — that's fine, the stats above are already stored.
+        GameOverController controller = Instance;
+        if (controller != null)
+        {
+            if (controller.showScreen)
+            {
+                return; // game over already handled this run
+            }
+            controller.finalRound = round;
+            controller.finalScore = score;
+            controller.finalKills = kills;
+            controller.bestRound = localBestRound;
+            controller.bestScore = localBestScore;
+            controller.showScreen = true;          // re-entry guard (stops repeat game-over handling)
+            controller.suppressOverlay = cinematic; // cinematic path draws no IMGUI overlay
+        }
+
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
+
+        if (cinematic)
+        {
+            Time.timeScale = 1f;
+
+            if (!networked)
+            {
+                // SOLO: load the cinematic directly (unchanged Phase 2 path).
+                SceneManager.LoadScene(DeathCinematicScene);
+                return;
+            }
+
+            // MULTIPLAYER: only the SERVER/host initiates the NGO scene load; every client follows
+            // automatically and must NOT raw-load (that would desync). If the server's load can't
+            // start, fall back to the old overlay for this peer.
+            if (NetworkGameplayCoordinator.IsServer)
+            {
+                bool started = MultiplayerSessionController.Instance != null &&
+                               MultiplayerSessionController.Instance.LoadDeathCinematic();
+                if (!started && controller != null)
+                {
+                    controller.suppressOverlay = false;
+                }
+            }
+            return;
+        }
+
+        // FALLBACK (DeathCinematic not in build): keep the old IMGUI overlay. Solo also pauses.
+        if (!networked)
+        {
+            Time.timeScale = 0f;
+        }
     }
 
     private void Restart()
@@ -186,6 +272,17 @@ public class GameOverController : MonoBehaviour
         Time.timeScale = 1f;
         showScreen = false;
         ZombieAgent.ResetKillCount(); // fresh run starts at zero kills
+
+        // In a networked session the match must restart through NGO: the server reloads
+        // the gameplay scene and every client follows (raw SceneManager.LoadScene would
+        // desync the host and do nothing on a client). The local overlay is hidden now;
+        // the scene reload will rebuild a fresh GameOverController for everyone.
+        if (NetworkGameplayCoordinator.IsNetworkActive)
+        {
+            NetworkGameplayCoordinator.RequestRestartMatch();
+            return;
+        }
+
         SceneManager.LoadScene(GameplayScene);
     }
 
@@ -194,12 +291,23 @@ public class GameOverController : MonoBehaviour
         Time.timeScale = 1f;
         showScreen = false;
         ZombieAgent.ResetKillCount(); // clear the run kill count when leaving to the menu
+
+        // In a networked session, leave the session cleanly (shuts down NGO and returns
+        // to the menu) instead of a raw scene load that strands the NetworkManager.
+        if (NetworkGameplayCoordinator.IsNetworkActive && MultiplayerSessionController.Instance != null)
+        {
+            _ = MultiplayerSessionController.Instance.LeaveAsync();
+            return;
+        }
+
         SceneManager.LoadScene(MainMenuScene);
     }
 
     private void OnGUI()
     {
-        if (!showScreen)
+        // suppressOverlay is set when the DeathCinematic scene owns the game-over presentation, so
+        // the legacy IMGUI overlay never flashes during the transition.
+        if (!showScreen || suppressOverlay)
         {
             return;
         }
