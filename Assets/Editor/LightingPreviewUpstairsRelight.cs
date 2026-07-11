@@ -16,12 +16,13 @@ using UnityEngine.SceneManagement;
 ///    moonlight, downstairs, and basement lights are untouched.
 ///  - CREATES an "Upstairs Relight (Preview)" group with:
 ///      * large dim cool ceiling spotlights per upstairs room (1-3 by size, per-room variation),
-///      * evenly spaced red emergency ceiling spotlights along every upper hallway with dim
-///        neutral/cool fills between the red pools,
-///      * red + cool fills at each stairwell's upper landing.
+///      * evenly spaced red spotlights named "Hallway Red Coverage - ..." along every upper
+///        hallway, with dim neutral/cool fills between the red pools (local accents, not a flood),
+///      * "Stairwell Red Coverage - ..." red + cool fills at each stairwell's upper landing.
 ///  - Saves ONLY this scene. Tools > Lighting Preview > Revert Upstairs Relight undoes it.
 ///
-/// Positions are anchored to the old preview lights' exact coordinates.
+/// Re-running is idempotent: it removes its own previous group first, so it never stacks a second
+/// batch. Positions are anchored to the old preview lights' exact coordinates.
 /// </summary>
 public static class LightingPreviewUpstairsRelight
 {
@@ -161,7 +162,7 @@ public static class LightingPreviewUpstairsRelight
             for (int i = 0; i < reds; i++)
             {
                 redPositions[i] = Vector3.Lerp(from, to, reds == 1 ? 0.5f : (float)i / (reds - 1));
-                MakeSpot(holder, hall.name + " - Red Emergency " + (i + 1),
+                MakeSpot(holder, "Hallway Red Coverage - " + hall.name + " " + (i + 1),
                     redPositions[i], EmergencyRed, RedIntensity, hall.redRange, RedSpotAngle);
                 redCount++;
             }
@@ -180,7 +181,7 @@ public static class LightingPreviewUpstairsRelight
         foreach (StairDef stair in StairLandings)
         {
             Transform holder = NewChild(stairsGroup, stair.name).transform;
-            MakePoint(holder, stair.name + " - Red Emergency",
+            MakePoint(holder, "Stairwell Red Coverage - " + stair.name,
                 stair.pos + new Vector3(0.8f, 0.3f, 0f), EmergencyRed, 16f, stair.redRange);
             MakePoint(holder, stair.name + " - Cool Fill",
                 stair.pos + new Vector3(-0.8f, 0f, 0f), HallFill, 8f, stair.redRange * 0.85f);
