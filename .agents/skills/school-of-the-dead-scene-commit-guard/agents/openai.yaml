@@ -1,0 +1,4 @@
+interface:
+  display_name: "Scene Commit Guard"
+  short_description: "Review Unity scene changes before commits"
+  default_prompt: "Review my Unity scene changes and stage only the safe intended files."

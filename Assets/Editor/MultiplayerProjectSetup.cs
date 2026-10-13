@@ -27,7 +27,8 @@ using UnityEngine;
 public static class MultiplayerProjectSetup
 {
     private const string PrefabPath = "Assets/Resources/NetworkPlayer.prefab";
-    private const string ControllerPath = "Assets/Animations/PlayerLocomotion.controller";
+    // The project ships PlayerAnimator.controller (not the older "PlayerLocomotion" name).
+    private const string ControllerPath = "Assets/Animations/PlayerAnimator.controller";
 
     private const string WeaponPackPrefabFolder = "Assets/Low Poly Weapons VOL.1/Prefabs";
     private const string WeaponHolderName = "WeaponHolder";
@@ -110,6 +111,8 @@ public static class MultiplayerProjectSetup
         root.AddComponent<PlayerHealth>();
         WeaponController weaponController = root.AddComponent<WeaponController>();
         root.AddComponent<PlayerAnimator>();
+        // Co-op revive: hold-to-revive a downed teammate. Owner-gated inside the component.
+        root.AddComponent<ReviveInteraction>();
 
         root.AddComponent<NetworkObject>();
         root.AddComponent<OwnerNetworkTransform>();

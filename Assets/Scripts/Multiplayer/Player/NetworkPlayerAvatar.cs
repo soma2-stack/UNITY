@@ -8,11 +8,14 @@ using UnityEngine.SceneManagement;
 [RequireComponent(typeof(NetworkObject))]
 public sealed class NetworkPlayerAvatar : NetworkBehaviour
 {
-    // Animator parameters - MUST match Assets/Animations/PlayerLocomotion.controller
-    // (built by the "Set Up Player" tool): Speed (float), Sprint (bool), Crouch (bool).
-    private const string SpeedParam = "Speed";
-    private const string SprintParam = "Sprint";
-    private const string CrouchParam = "Crouch";
+    // Animator parameters - MUST match the real player controller
+    // (Assets/Animations/PlayerAnimator.controller), which PlayerMovement drives:
+    // MoveX / MoveZ (float), IsMoving / IsSprinting (bool). Jump is a one-shot local
+    // trigger and is not replicated to remote bodies.
+    private static readonly int MoveXHash = Animator.StringToHash("MoveX");
+    private static readonly int MoveZHash = Animator.StringToHash("MoveZ");
+    private static readonly int IsMovingHash = Animator.StringToHash("IsMoving");
+    private static readonly int IsSprintingHash = Animator.StringToHash("IsSprinting");
 
     private static readonly Color[] SurvivorColors =
     {
@@ -41,15 +44,19 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     [SerializeField] private GameObject[] modelVariants;
 
     private readonly NetworkVariable<FixedString64Bytes> displayName = new NetworkVariable<FixedString64Bytes>();
-    private readonly NetworkVariable<float> movementSpeed = new NetworkVariable<float>(
+    private readonly NetworkVariable<float> moveX = new NetworkVariable<float>(
         0f,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
-    private readonly NetworkVariable<bool> sprinting = new NetworkVariable<bool>(
+    private readonly NetworkVariable<float> moveZ = new NetworkVariable<float>(
+        0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Owner);
+    private readonly NetworkVariable<bool> isMoving = new NetworkVariable<bool>(
         false,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
-    private readonly NetworkVariable<bool> crouching = new NetworkVariable<bool>(
+    private readonly NetworkVariable<bool> isSprinting = new NetworkVariable<bool>(
         false,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
@@ -57,7 +64,24 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     private PlayerAnimator playerAnimator;
     private TMP_Text worldName;
 
+    // --- Spectator (Checkpoint 2) ---
+    // When a player FINALLY dies (bled out, not merely downed) they soft-despawn: the body
+    // is hidden and its collider disabled on every peer, and the LOCAL owner switches to a
+    // spectator camera following a living teammate.
+    private PlayerHealth health;
+    private CharacterController characterController;
+    private bool deathHandled;
+    private bool spectating;
+    private PlayerHealth spectateTarget;
+    private float nextTeammateScanTime;
+
     public string DisplayName => displayName.Value.ToString();
+
+    private void Awake()
+    {
+        ResolveReferences();
+        SetOwnerOnlyComponents(false);
+    }
 
     public override void OnNetworkSpawn()
     {
@@ -70,8 +94,24 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
         if (IsOwner)
         {
+            // Make THIS peer's player the one HUD / interactables / grants resolve.
+            LocalPlayer.Register(gameObject);
+
             string preferredName = PlayerPrefs.GetString("MultiplayerDisplayName", "Survivor");
             SetDisplayNameServerRpc(MultiplayerSessionController.SanitizeDisplayName(preferredName));
+        }
+
+        // Soft-despawn / spectate hook: every copy reacts to this player's FINAL death.
+        health = GetComponent<PlayerHealth>();
+        characterController = GetComponent<CharacterController>();
+        if (health != null)
+        {
+            health.OnPlayerDied += HandleDeath;
+            // Late-join safety: if we spawned into an already-dead player, reflect it now.
+            if (health.IsDead)
+            {
+                HandleDeath();
+            }
         }
 
         RefreshForScene(SceneManager.GetActiveScene());
@@ -81,6 +121,14 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
         displayName.OnValueChanged -= OnDisplayNameChanged;
+        if (health != null)
+        {
+            health.OnPlayerDied -= HandleDeath;
+        }
+        if (IsOwner)
+        {
+            LocalPlayer.Unregister(gameObject);
+        }
     }
 
     private void Update()
@@ -88,9 +136,10 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         // The owner replicates its real locomotion state for everyone else to read.
         if (IsOwner && movement != null && movement.enabled)
         {
-            movementSpeed.Value = movement.MoveInput.magnitude * movement.CurrentSpeed;
-            sprinting.Value = movement.CurrentSpeed > (movement.sprintSpeed - 0.5f);
-            crouching.Value = movement.IsCrouching;
+            moveX.Value = movement.MoveInput.x;
+            moveZ.Value = movement.MoveInput.y;
+            isMoving.Value = movement.MoveInput.sqrMagnitude > 0.01f;
+            isSprinting.Value = movement.CurrentSpeed > (movement.sprintSpeed - 0.5f);
         }
 
         // Remote bodies are animated from the replicated NetworkVariables. The owner's
@@ -98,9 +147,10 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         // so the avatar does NOT touch the animator for the owner to avoid double-driving.
         if (!IsOwner && animator != null && animator.runtimeAnimatorController != null)
         {
-            animator.SetFloat(SpeedParam, movementSpeed.Value, 0.1f, Time.deltaTime);
-            animator.SetBool(SprintParam, sprinting.Value);
-            animator.SetBool(CrouchParam, crouching.Value);
+            animator.SetFloat(MoveXHash, moveX.Value, 0.1f, Time.deltaTime);
+            animator.SetFloat(MoveZHash, moveZ.Value, 0.1f, Time.deltaTime);
+            animator.SetBool(IsMovingHash, isMoving.Value);
+            animator.SetBool(IsSprintingHash, isSprinting.Value);
         }
 
         if (worldName != null && Camera.main != null)
@@ -109,10 +159,144 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         }
     }
 
+    // Drive the spectator camera AFTER everything else has moved this frame, so the view
+    // tracks the living teammate's final position instead of lagging a frame behind.
+    private void LateUpdate()
+    {
+        if (spectating)
+        {
+            UpdateSpectate();
+        }
+    }
+
     [ServerRpc]
     private void SetDisplayNameServerRpc(FixedString64Bytes value)
     {
         displayName.Value = value;
+    }
+
+    /// <summary>
+    /// A player who has FINALLY died (not merely downed) soft-despawns. Runs on EVERY copy:
+    /// the body's collider is disabled and its renderers/nameplate hidden so the corpse stops
+    /// blocking zombies, teammates and shots. The LOCAL owner additionally enters spectator
+    /// mode (see <see cref="EnterSpectate"/>). Downed players never reach here — this is wired
+    /// to OnPlayerDied only, so a revivable teammate keeps their normal body and view.
+    /// </summary>
+    private void HandleDeath()
+    {
+        if (deathHandled)
+        {
+            return;
+        }
+        deathHandled = true;
+
+        // Remove the dead body from the world on every peer.
+        if (characterController != null)
+        {
+            characterController.enabled = false;
+        }
+        if (survivorRenderers != null)
+        {
+            foreach (Renderer survivorRenderer in survivorRenderers)
+            {
+                if (survivorRenderer != null)
+                {
+                    survivorRenderer.enabled = false;
+                }
+            }
+        }
+        if (worldName != null)
+        {
+            worldName.gameObject.SetActive(false);
+        }
+
+        if (IsOwner)
+        {
+            EnterSpectate();
+        }
+    }
+
+    // Switch the LOCAL dead player into spectator mode: stop movement and first-person
+    // camera control, but keep the Camera + AudioListener enabled so they can keep watching
+    // and hearing the match. Weapon firing/melee is already blocked by PlayerHealth.IsDead
+    // inside WeaponController, so no weapon handling is needed here.
+    private void EnterSpectate()
+    {
+        spectating = true;
+
+        if (movement != null)
+        {
+            movement.enabled = false;
+        }
+        if (playerCamera != null)
+        {
+            CoDCamera cameraController = playerCamera.GetComponent<CoDCamera>();
+            if (cameraController != null)
+            {
+                cameraController.enabled = false;
+            }
+        }
+    }
+
+    // Follow a living teammate with an over-the-shoulder view. If none are left the method
+    // does nothing and the (all-dead) game-over screen takes over.
+    private void UpdateSpectate()
+    {
+        if (playerCamera == null)
+        {
+            return;
+        }
+
+        // Keep the current target while it lives; re-pick when it dies or leaves. The scan is
+        // throttled so that if nobody is alive (the brief window before the game-over screen)
+        // we don't run FindObjectsByType every frame.
+        if (spectateTarget == null || spectateTarget.IsDead)
+        {
+            if (Time.time >= nextTeammateScanTime)
+            {
+                nextTeammateScanTime = Time.time + 0.5f;
+                spectateTarget = FindLivingTeammate();
+            }
+        }
+        if (spectateTarget == null || spectateTarget.IsDead)
+        {
+            return;
+        }
+
+        Transform targetRoot = spectateTarget.transform;
+        Camera targetCam = spectateTarget.GetComponentInChildren<Camera>(true);
+        Vector3 eye = targetCam != null
+            ? targetCam.transform.position
+            : targetRoot.position + Vector3.up * 1.6f;
+        Vector3 forward = targetRoot.forward;
+
+        Vector3 camPos = eye - forward * 3f + Vector3.up * 1.1f;
+        Vector3 lookAt = eye + forward * 2f;
+        playerCamera.transform.SetPositionAndRotation(camPos, Quaternion.LookRotation(lookAt - camPos));
+    }
+
+    // Nearest still-living player that isn't this (dead) one.
+    private PlayerHealth FindLivingTeammate()
+    {
+        PlayerHealth best = null;
+        float bestSqr = float.MaxValue;
+        Vector3 here = transform.position;
+
+        PlayerHealth[] all = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        foreach (PlayerHealth ph in all)
+        {
+            if (ph == null || ph == health || ph.IsDead)
+            {
+                continue;
+            }
+            float sqr = (ph.transform.position - here).sqrMagnitude;
+            if (sqr < bestSqr)
+            {
+                bestSqr = sqr;
+                best = ph;
+            }
+        }
+        return best;
     }
 
     // Per-player model variety: pick one body based on OwnerClientId and disable the
@@ -150,46 +334,50 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
     private void ConfigureOwnership()
     {
-        if (movement != null)
-        {
-            movement.enabled = IsOwner;
-        }
+        SetOwnerOnlyComponents(IsOwner);
 
-        if (playerCamera != null)
-        {
-            playerCamera.enabled = IsOwner;
-            CoDCamera cameraController = playerCamera.GetComponent<CoDCamera>();
-            if (cameraController != null)
-            {
-                cameraController.enabled = IsOwner;
-            }
-        }
-
-        if (audioListener != null)
-        {
-            audioListener.enabled = IsOwner;
-        }
-
-        // The owner uses PlayerAnimator to drive their own body; remote players are
-        // driven by this avatar from the replicated NetworkVariables. Disable
-        // PlayerAnimator on non-owners so the two systems never fight.
-        if (playerAnimator != null)
-        {
-            playerAnimator.enabled = IsOwner;
-        }
-
-        // Weapons (firing / switching / first-person model) belong to the owner only.
-        WeaponController weaponController = GetComponent<WeaponController>();
-        if (weaponController != null)
-        {
-            weaponController.enabled = IsOwner;
-        }
-
+        // Owner sees their own body as shadows-only; every remote copy stays visible.
         ApplyBodyVisibility();
 
         if (!IsOwner)
         {
             BuildWorldName();
+        }
+    }
+
+    private void SetOwnerOnlyComponents(bool enabledForOwner)
+    {
+        if (movement != null)
+        {
+            movement.enabled = enabledForOwner;
+        }
+
+        if (playerCamera != null)
+        {
+            playerCamera.enabled = enabledForOwner;
+            CoDCamera cameraController = playerCamera.GetComponent<CoDCamera>();
+            if (cameraController != null)
+            {
+                cameraController.enabled = enabledForOwner;
+            }
+        }
+
+        if (audioListener != null)
+        {
+            audioListener.enabled = enabledForOwner;
+        }
+
+        if (playerAnimator != null)
+        {
+            playerAnimator.enabled = enabledForOwner;
+        }
+
+        // Weapons are owner-only for input and first-person view setup. Weapon behavior
+        // itself is left unchanged for the later weapons checkpoint.
+        WeaponController weaponController = GetComponent<WeaponController>();
+        if (weaponController != null)
+        {
+            weaponController.enabled = enabledForOwner || IsServer;
         }
     }
 
@@ -223,10 +411,23 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
         playerCamera ??= GetComponentInChildren<Camera>(true);
         audioListener ??= GetComponentInChildren<AudioListener>(true);
         animator ??= GetComponentInChildren<Animator>(true);
-        if (survivorRenderers == null || survivorRenderers.Length == 0)
+        // Auto-fill renderers if unset, empty, or only null entries (stale prefab wiring).
+        if (survivorRenderers == null || survivorRenderers.Length == 0 || AllNull(survivorRenderers))
         {
             survivorRenderers = GetComponentsInChildren<Renderer>(true);
         }
+    }
+
+    private static bool AllNull(Renderer[] renderers)
+    {
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer != null)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void ApplySurvivorColor()
@@ -273,7 +474,29 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
 
         if (playerCamera != null)
         {
+            playerCamera.enabled = gameplay && IsOwner;
+            CoDCamera cameraController = playerCamera.GetComponent<CoDCamera>();
+            if (cameraController != null)
+            {
+                cameraController.enabled = gameplay && IsOwner;
+            }
             playerCamera.gameObject.SetActive(gameplay && IsOwner);
+        }
+
+        if (audioListener != null)
+        {
+            audioListener.enabled = gameplay && IsOwner;
+        }
+
+        if (playerAnimator != null)
+        {
+            playerAnimator.enabled = gameplay && IsOwner;
+        }
+
+        WeaponController weaponController = GetComponent<WeaponController>();
+        if (weaponController != null)
+        {
+            weaponController.enabled = gameplay && (IsOwner || IsServer);
         }
 
         if (survivorRenderers != null)
@@ -285,6 +508,10 @@ public sealed class NetworkPlayerAvatar : NetworkBehaviour
                     // Owner keeps a shadow-only body in gameplay; remote shows full body.
                     survivorRenderer.enabled = gameplay;
                 }
+            }
+            if (gameplay)
+            {
+                ApplyBodyVisibility();
             }
         }
 

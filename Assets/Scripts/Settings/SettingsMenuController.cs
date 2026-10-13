@@ -40,10 +40,6 @@ public class SettingsMenuController : MonoBehaviour
     // Control references (rebuilt once, refreshed on enable).
     private Slider _masterSlider;
     private TMP_Text _masterValue;
-    private Slider _musicSlider;
-    private TMP_Text _musicValue;
-    private Slider _sfxSlider;
-    private TMP_Text _sfxValue;
     private Slider _sensSlider;
     private TMP_Text _sensValue;
     private Slider _fovSlider;
@@ -56,6 +52,13 @@ public class SettingsMenuController : MonoBehaviour
     private TMP_Text _qualityValue;
     private int _qualityIndex;
     private string[] _qualityNames;
+
+    private TMP_Text _resolutionValue;
+    private int _resolutionIndex;
+    private Resolution[] _resolutions;
+
+    private TMP_Text _fpsValue;
+    private int _fpsIndex; // index into SettingsManager.FPS_OPTIONS
 
     // ---------------------------------------------------------------------
     // Public contract
@@ -106,7 +109,7 @@ public class SettingsMenuController : MonoBehaviour
         panelRect.anchorMin = new Vector2(0.5f, 0.5f);
         panelRect.anchorMax = new Vector2(0.5f, 0.5f);
         panelRect.pivot = new Vector2(0.5f, 0.5f);
-        panelRect.sizeDelta = new Vector2(760f, 820f);
+        panelRect.sizeDelta = new Vector2(820f, 900f);
 
         // Title.
         var title = CreateText("Title", panel.transform, "SETTINGS", HeaderFontSize, ColorTextOffWhite, TextAlignmentOptions.Center);
@@ -127,40 +130,84 @@ public class SettingsMenuController : MonoBehaviour
         accentRect.anchoredPosition = new Vector2(0f, -100f);
         accentRect.sizeDelta = new Vector2(120f, 4f);
 
-        // Scrollable content area (rows live in a vertical layout).
+        // Scrollable middle region (between the title/accent and the footer) so every section
+        // fits and the screen stays usable at 16:9.
+        var scrollGo = new GameObject("Scroll", typeof(RectTransform));
+        scrollGo.transform.SetParent(panel.transform, false);
+        var scrollRect = scrollGo.GetComponent<RectTransform>();
+        scrollRect.anchorMin = new Vector2(0f, 0f);
+        scrollRect.anchorMax = new Vector2(1f, 1f);
+        scrollRect.offsetMin = new Vector2(24f, 96f);   // above footer
+        scrollRect.offsetMax = new Vector2(-24f, -122f); // below title/accent
+        var sr = scrollGo.AddComponent<ScrollRect>();
+        sr.horizontal = false;
+        sr.vertical = true;
+        sr.movementType = ScrollRect.MovementType.Clamped;
+        sr.scrollSensitivity = 28f;
+
+        var viewport = new GameObject("Viewport", typeof(RectTransform));
+        viewport.transform.SetParent(scrollGo.transform, false);
+        var viewportRect = viewport.GetComponent<RectTransform>();
+        Stretch(viewportRect);
+        var viewportImg = viewport.AddComponent<Image>();
+        viewportImg.color = new Color(0f, 0f, 0f, 0.0035f); // needs a graphic to mask
+        viewport.AddComponent<RectMask2D>();
+        sr.viewport = viewportRect;
+
         var content = new GameObject("Content", typeof(RectTransform));
-        content.transform.SetParent(panel.transform, false);
+        content.transform.SetParent(viewport.transform, false);
         var contentRect = content.GetComponent<RectTransform>();
-        contentRect.anchorMin = new Vector2(0f, 0f);
+        contentRect.anchorMin = new Vector2(0f, 1f);
         contentRect.anchorMax = new Vector2(1f, 1f);
-        contentRect.offsetMin = new Vector2(40f, 110f);
-        contentRect.offsetMax = new Vector2(-40f, -130f);
+        contentRect.pivot = new Vector2(0.5f, 1f);
+        contentRect.offsetMin = Vector2.zero;
+        contentRect.offsetMax = Vector2.zero;
+        sr.content = contentRect;
 
         var layout = content.AddComponent<VerticalLayoutGroup>();
-        layout.spacing = 14f;
+        layout.spacing = 12f;
+        layout.padding = new RectOffset(16, 16, 8, 12);
         layout.childAlignment = TextAnchor.UpperCenter;
         layout.childControlWidth = true;
         layout.childControlHeight = true;
         layout.childForceExpandWidth = true;
         layout.childForceExpandHeight = false;
 
+        var fitter = content.AddComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
         // ---- AUDIO ----
         CreateSectionLabel(content.transform, "AUDIO");
         (_masterSlider, _masterValue) = CreateSliderRow(content.transform, "Master Volume", 0f, 1f, false);
-        (_musicSlider, _musicValue) = CreateSliderRow(content.transform, "Music Volume", 0f, 1f, false);
-        (_sfxSlider, _sfxValue) = CreateSliderRow(content.transform, "SFX Volume", 0f, 1f, false);
+        // Music / SFX have no AudioMixer yet, so they'd do nothing — shown as disabled COMING SOON.
+        CreateComingSoonRow(content.transform, "Music Volume");
+        CreateComingSoonRow(content.transform, "SFX Volume");
+
+        // ---- VIDEO ----
+        CreateSectionLabel(content.transform, "VIDEO");
+        _resolutionValue = CreateStepperRow(content.transform, "Resolution", () => StepResolution(-1), () => StepResolution(1));
+        _fullscreenToggle = CreateToggleRow(content.transform, "Fullscreen");
+        _vsyncToggle = CreateToggleRow(content.transform, "VSync");
+        _fpsValue = CreateStepperRow(content.transform, "FPS Cap", () => StepFps(-1), () => StepFps(1));
+
+        // ---- GRAPHICS ----
+        CreateSectionLabel(content.transform, "GRAPHICS");
+        _qualityValue = CreateStepperRow(content.transform, "Quality", () => StepQuality(-1), () => StepQuality(1));
+
+        // ---- GAMEPLAY ----
+        CreateSectionLabel(content.transform, "GAMEPLAY");
+        (_fovSlider, _fovValue) = CreateSliderRow(content.transform, "Field of View", SettingsManager.FOV_MIN, SettingsManager.FOV_MAX, true);
 
         // ---- CONTROLS ----
         CreateSectionLabel(content.transform, "CONTROLS");
         (_sensSlider, _sensValue) = CreateSliderRow(content.transform, "Mouse Sensitivity", SettingsManager.SENS_MIN, SettingsManager.SENS_MAX, true);
-        (_fovSlider, _fovValue) = CreateSliderRow(content.transform, "Field of View", SettingsManager.FOV_MIN, SettingsManager.FOV_MAX, true);
         _invertToggle = CreateToggleRow(content.transform, "Invert Mouse Y");
 
-        // ---- VIDEO ----
-        CreateSectionLabel(content.transform, "VIDEO");
-        _qualityValue = CreateQualityRow(content.transform, "Quality");
-        _fullscreenToggle = CreateToggleRow(content.transform, "Fullscreen");
-        _vsyncToggle = CreateToggleRow(content.transform, "VSync");
+        // ---- ACCESSIBILITY (no safe systems yet; shown as disabled COMING SOON) ----
+        CreateSectionLabel(content.transform, "ACCESSIBILITY");
+        CreateComingSoonRow(content.transform, "Subtitles");
+        CreateComingSoonRow(content.transform, "Screen Shake");
+        CreateComingSoonRow(content.transform, "Colorblind Mode");
 
         // ---- Footer buttons ----
         var footer = new GameObject("Footer", typeof(RectTransform));
@@ -169,18 +216,19 @@ public class SettingsMenuController : MonoBehaviour
         footerRect.anchorMin = new Vector2(0f, 0f);
         footerRect.anchorMax = new Vector2(1f, 0f);
         footerRect.pivot = new Vector2(0.5f, 0f);
-        footerRect.anchoredPosition = new Vector2(0f, 28f);
-        footerRect.sizeDelta = new Vector2(-80f, 56f);
+        footerRect.anchoredPosition = new Vector2(0f, 24f);
+        footerRect.sizeDelta = new Vector2(-64f, 56f);
 
         var footerLayout = footer.AddComponent<HorizontalLayoutGroup>();
-        footerLayout.spacing = 24f;
+        footerLayout.spacing = 18f;
         footerLayout.childAlignment = TextAnchor.MiddleCenter;
         footerLayout.childControlWidth = true;
         footerLayout.childControlHeight = true;
         footerLayout.childForceExpandWidth = true;
         footerLayout.childForceExpandHeight = true;
 
-        CreateButton(footer.transform, "RESET TO DEFAULTS", OnResetClicked, ColorAmber);
+        CreateButton(footer.transform, "APPLY", OnApplyClicked, ColorAccentRed);
+        CreateButton(footer.transform, "RESET", OnResetClicked, ColorAmber);
         CreateButton(footer.transform, "BACK", OnBackClicked, ColorAccentRed);
     }
 
@@ -286,12 +334,14 @@ public class SettingsMenuController : MonoBehaviour
         return toggle;
     }
 
-    private TMP_Text CreateQualityRow(Transform parent, string label)
+    // A generic "< value >" stepper row (used by Resolution, FPS Cap and Quality). Returns the
+    // centre value text so the caller can update it.
+    private TMP_Text CreateStepperRow(Transform parent, string label, Action onLeft, Action onRight)
     {
         var row = CreateRow(parent, out var labelText, label);
 
         // Right arrow.
-        var rightBtn = CreateArrowButton(row.transform, ">", () => StepQuality(1));
+        var rightBtn = CreateArrowButton(row.transform, ">", onRight);
         var rightRect = rightBtn.GetComponent<RectTransform>();
         rightRect.anchorMin = new Vector2(1f, 0.5f);
         rightRect.anchorMax = new Vector2(1f, 0.5f);
@@ -306,19 +356,38 @@ public class SettingsMenuController : MonoBehaviour
         valueRect.anchorMax = new Vector2(1f, 0.5f);
         valueRect.pivot = new Vector2(1f, 0.5f);
         valueRect.anchoredPosition = new Vector2(-48f, 0f);
-        valueRect.sizeDelta = new Vector2(180f, 36f);
+        valueRect.sizeDelta = new Vector2(220f, 36f);
 
         // Left arrow.
-        var leftBtn = CreateArrowButton(row.transform, "<", () => StepQuality(-1));
+        var leftBtn = CreateArrowButton(row.transform, "<", onLeft);
         var leftRect = leftBtn.GetComponent<RectTransform>();
         leftRect.anchorMin = new Vector2(1f, 0.5f);
         leftRect.anchorMax = new Vector2(1f, 0.5f);
         leftRect.pivot = new Vector2(1f, 0.5f);
-        leftRect.anchoredPosition = new Vector2(-236f, 0f);
+        leftRect.anchoredPosition = new Vector2(-276f, 0f);
         leftRect.sizeDelta = new Vector2(40f, 36f);
 
         AddRowLayout(row, 44f);
         return value;
+    }
+
+    // A disabled, clearly-marked "COMING SOON" row for settings whose backing system does not
+    // safely exist yet (so nothing here pretends to work). The row is inert (no control).
+    private void CreateComingSoonRow(Transform parent, string label)
+    {
+        var row = CreateRow(parent, out var labelText, label);
+        labelText.color = ColorTextDim;
+
+        var tag = CreateText("ComingSoon", row.transform, "COMING SOON", 18, ColorTextDim, TextAlignmentOptions.Right);
+        tag.fontStyle = FontStyles.Italic;
+        var tagRect = tag.rectTransform;
+        tagRect.anchorMin = new Vector2(1f, 0f);
+        tagRect.anchorMax = new Vector2(1f, 1f);
+        tagRect.pivot = new Vector2(1f, 0.5f);
+        tagRect.sizeDelta = new Vector2(200f, 0f);
+        tagRect.anchoredPosition = new Vector2(0f, 0f);
+
+        AddRowLayout(row, 40f);
     }
 
     private GameObject CreateRow(Transform parent, out TMP_Text labelText, string label)
@@ -363,8 +432,6 @@ public class SettingsMenuController : MonoBehaviour
         _suppressCallbacks = true;
 
         BindSlider(_masterSlider, settings.MasterVolume, OnMasterChanged);
-        BindSlider(_musicSlider, settings.MusicVolume, OnMusicChanged);
-        BindSlider(_sfxSlider, settings.SfxVolume, OnSfxChanged);
         BindSlider(_sensSlider, settings.MouseSensitivity, OnSensChanged);
         BindSlider(_fovSlider, settings.FieldOfView, OnFovChanged);
 
@@ -379,12 +446,25 @@ public class SettingsMenuController : MonoBehaviour
             _qualityIndex = Mathf.Clamp(_qualityIndex, 0, _qualityNames.Length - 1);
         }
 
+        _resolutions = settings.AvailableResolutions ?? Array.Empty<Resolution>();
+        _resolutionIndex = settings.ResolutionIndex;
+        if (_resolutions.Length > 0)
+        {
+            _resolutionIndex = Mathf.Clamp(_resolutionIndex, 0, _resolutions.Length - 1);
+        }
+
+        _fpsIndex = Array.IndexOf(SettingsManager.FPS_OPTIONS, settings.FpsCap);
+        if (_fpsIndex < 0)
+        {
+            _fpsIndex = 0;
+        }
+
         UpdateMasterLabel();
-        UpdateMusicLabel();
-        UpdateSfxLabel();
         UpdateSensLabel();
         UpdateFovLabel();
         UpdateQualityLabel();
+        UpdateResolutionLabel();
+        UpdateFpsLabel();
 
         _suppressCallbacks = false;
     }
@@ -420,20 +500,6 @@ public class SettingsMenuController : MonoBehaviour
         if (_suppressCallbacks) return;
         SettingsManager.Instance?.SetMasterVolume(v);
         UpdateMasterLabel();
-    }
-
-    private void OnMusicChanged(float v)
-    {
-        if (_suppressCallbacks) return;
-        SettingsManager.Instance?.SetMusicVolume(v);
-        UpdateMusicLabel();
-    }
-
-    private void OnSfxChanged(float v)
-    {
-        if (_suppressCallbacks) return;
-        SettingsManager.Instance?.SetSfxVolume(v);
-        UpdateSfxLabel();
     }
 
     private void OnSensChanged(float v)
@@ -480,6 +546,34 @@ public class SettingsMenuController : MonoBehaviour
         UpdateQualityLabel();
     }
 
+    private void StepResolution(int delta)
+    {
+        if (_resolutions == null || _resolutions.Length == 0)
+        {
+            return;
+        }
+
+        _resolutionIndex = Mathf.Clamp(_resolutionIndex + delta, 0, _resolutions.Length - 1);
+        SettingsManager.Instance?.SetResolutionIndex(_resolutionIndex);
+        UpdateResolutionLabel();
+    }
+
+    private void StepFps(int delta)
+    {
+        int count = SettingsManager.FPS_OPTIONS.Length;
+        _fpsIndex = Mathf.Clamp(_fpsIndex + delta, 0, count - 1);
+        SettingsManager.Instance?.SetFpsCap(SettingsManager.FPS_OPTIONS[_fpsIndex]);
+        UpdateFpsLabel();
+    }
+
+    private void OnApplyClicked()
+    {
+        // Everything applies live already; Apply re-applies + saves so it also confirms display
+        // settings (resolution/fullscreen) and gives the expected button.
+        SettingsManager.Instance?.ApplyAndSave();
+        RefreshFromSettings();
+    }
+
     private void OnResetClicked()
     {
         SettingsManager.Instance?.ResetToDefaults();
@@ -503,20 +597,34 @@ public class SettingsMenuController : MonoBehaviour
         }
     }
 
-    private void UpdateMusicLabel()
+    private void UpdateResolutionLabel()
     {
-        if (_musicValue != null && _musicSlider != null)
+        if (_resolutionValue == null)
         {
-            _musicValue.text = Mathf.RoundToInt(_musicSlider.value * 100f) + "%";
+            return;
+        }
+
+        if (_resolutions != null && _resolutions.Length > 0)
+        {
+            int idx = Mathf.Clamp(_resolutionIndex, 0, _resolutions.Length - 1);
+            Resolution r = _resolutions[idx];
+            _resolutionValue.text = r.width + " x " + r.height;
+        }
+        else
+        {
+            _resolutionValue.text = "-";
         }
     }
 
-    private void UpdateSfxLabel()
+    private void UpdateFpsLabel()
     {
-        if (_sfxValue != null && _sfxSlider != null)
+        if (_fpsValue == null)
         {
-            _sfxValue.text = Mathf.RoundToInt(_sfxSlider.value * 100f) + "%";
+            return;
         }
+
+        int cap = SettingsManager.FPS_OPTIONS[Mathf.Clamp(_fpsIndex, 0, SettingsManager.FPS_OPTIONS.Length - 1)];
+        _fpsValue.text = cap <= 0 ? "UNLIMITED" : cap.ToString();
     }
 
     private void UpdateSensLabel()

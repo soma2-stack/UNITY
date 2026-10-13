@@ -40,6 +40,8 @@ public class SettingsManager : MonoBehaviour
     private const string KEY_QUALITY = "sotd_quality_level";
     private const string KEY_FULLSCREEN = "sotd_fullscreen";
     private const string KEY_VSYNC = "sotd_vsync";
+    private const string KEY_FPS = "sotd_fps_cap";
+    private const string KEY_RES = "sotd_resolution_index";
 
     // ---- Ranges / defaults ----
     public const float MASTER_DEFAULT = 1f;
@@ -58,6 +60,11 @@ public class SettingsManager : MonoBehaviour
     public const bool FULLSCREEN_DEFAULT = true;
     public const bool VSYNC_DEFAULT = true;
 
+    // FPS cap options for the UI. 0 == Unlimited. Note: a cap only takes effect when VSync is
+    // OFF (Unity ignores Application.targetFrameRate while vSyncCount > 0).
+    public static readonly int[] FPS_OPTIONS = { 0, 30, 60, 120, 144 };
+    public const int FPS_DEFAULT = 0; // Unlimited
+
     /// <summary>Multiplier converting the stored sensitivity (~2) to CoDCamera's scale (~200).</summary>
     private const float CODCAMERA_SENS_SCALE = 100f;
 
@@ -71,6 +78,8 @@ public class SettingsManager : MonoBehaviour
     private int _qualityLevel = 0;
     private bool _fullscreen = FULLSCREEN_DEFAULT;
     private bool _vSync = VSYNC_DEFAULT;
+    private int _fpsCap = FPS_DEFAULT;
+    private int _resolutionIndex = -1; // resolved on load against Screen.resolutions
 
     // ---- Public getters ----
     public float MasterVolume => _masterVolume;
@@ -82,6 +91,10 @@ public class SettingsManager : MonoBehaviour
     public int QualityLevel => _qualityLevel;
     public bool Fullscreen => _fullscreen;
     public bool VSync => _vSync;
+    public int FpsCap => _fpsCap;
+    public int ResolutionIndex => _resolutionIndex;
+    /// <summary>Available fullscreen resolutions (may be empty on some platforms).</summary>
+    public Resolution[] AvailableResolutions => Screen.resolutions;
 
     // ---------------------------------------------------------------------
     // Bootstrap
@@ -150,6 +163,8 @@ public class SettingsManager : MonoBehaviour
         _qualityLevel = PlayerPrefs.GetInt(KEY_QUALITY, GetDefaultQualityLevel());
         _fullscreen = PlayerPrefs.GetInt(KEY_FULLSCREEN, FULLSCREEN_DEFAULT ? 1 : 0) == 1;
         _vSync = PlayerPrefs.GetInt(KEY_VSYNC, VSYNC_DEFAULT ? 1 : 0) == 1;
+        _fpsCap = PlayerPrefs.GetInt(KEY_FPS, FPS_DEFAULT);
+        _resolutionIndex = PlayerPrefs.GetInt(KEY_RES, GetDefaultResolutionIndex());
 
         Clamp();
     }
@@ -165,6 +180,8 @@ public class SettingsManager : MonoBehaviour
         PlayerPrefs.SetInt(KEY_QUALITY, _qualityLevel);
         PlayerPrefs.SetInt(KEY_FULLSCREEN, _fullscreen ? 1 : 0);
         PlayerPrefs.SetInt(KEY_VSYNC, _vSync ? 1 : 0);
+        PlayerPrefs.SetInt(KEY_FPS, _fpsCap);
+        PlayerPrefs.SetInt(KEY_RES, _resolutionIndex);
         PlayerPrefs.Save();
     }
 
@@ -185,11 +202,50 @@ public class SettingsManager : MonoBehaviour
         {
             _qualityLevel = 0;
         }
+
+        if (_fpsCap < 0)
+        {
+            _fpsCap = 0;
+        }
+
+        Resolution[] resolutions = Screen.resolutions;
+        if (resolutions != null && resolutions.Length > 0)
+        {
+            if (_resolutionIndex < 0 || _resolutionIndex >= resolutions.Length)
+            {
+                _resolutionIndex = GetDefaultResolutionIndex();
+            }
+        }
+        else
+        {
+            _resolutionIndex = -1;
+        }
     }
 
     private static int GetDefaultQualityLevel()
     {
         return QualitySettings.GetQualityLevel();
+    }
+
+    // Index of the current display resolution within Screen.resolutions (or the largest, or -1
+    // when the platform reports no resolution list).
+    private static int GetDefaultResolutionIndex()
+    {
+        Resolution[] resolutions = Screen.resolutions;
+        if (resolutions == null || resolutions.Length == 0)
+        {
+            return -1;
+        }
+
+        Resolution current = Screen.currentResolution;
+        for (int i = 0; i < resolutions.Length; i++)
+        {
+            if (resolutions[i].width == current.width && resolutions[i].height == current.height)
+            {
+                return i;
+            }
+        }
+        return resolutions.Length - 1;
     }
 
     // ---------------------------------------------------------------------
@@ -277,9 +333,37 @@ public class SettingsManager : MonoBehaviour
         NotifyChanged();
     }
 
+    public void SetFpsCap(int value)
+    {
+        _fpsCap = Mathf.Max(0, value);
+        ApplyDisplay();
+        Save();
+        NotifyChanged();
+    }
+
+    public void SetResolutionIndex(int index)
+    {
+        Resolution[] resolutions = Screen.resolutions;
+        if (resolutions != null && resolutions.Length > 0)
+        {
+            _resolutionIndex = Mathf.Clamp(index, 0, resolutions.Length - 1);
+        }
+        ApplyDisplay();
+        Save();
+        NotifyChanged();
+    }
+
     // ---------------------------------------------------------------------
     // Reset
     // ---------------------------------------------------------------------
+
+    /// <summary>Re-apply and persist all settings (used by the menu's APPLY button).</summary>
+    public void ApplyAndSave()
+    {
+        ApplyAll();
+        Save();
+        NotifyChanged();
+    }
 
     public void ResetToDefaults()
     {
@@ -292,6 +376,8 @@ public class SettingsManager : MonoBehaviour
         _qualityLevel = GetDefaultQualityLevel();
         _fullscreen = FULLSCREEN_DEFAULT;
         _vSync = VSYNC_DEFAULT;
+        _fpsCap = FPS_DEFAULT;
+        _resolutionIndex = GetDefaultResolutionIndex();
 
         Clamp();
         ApplyAll();
@@ -322,14 +408,14 @@ public class SettingsManager : MonoBehaviour
     private void ApplyCamera()
     {
         // PlayerMovement: native small-scale sensitivity. Null-safe (no player in menu).
-        var movement = FindFirstObjectByType<PlayerMovement>();
+        var movement = LocalPlayer.Movement;
         if (movement != null)
         {
             movement.mouseSensitivity = _mouseSensitivity;
         }
 
         // CoDCamera: large-scale sensitivity + invert + FOV (via defaultFOV).
-        var codCamera = FindFirstObjectByType<CoDCamera>();
+        var codCamera = LocalPlayer.Camera;
         if (codCamera != null)
         {
             codCamera.mouseSensitivity = _mouseSensitivity * CODCAMERA_SENS_SCALE;
@@ -358,8 +444,28 @@ public class SettingsManager : MonoBehaviour
 
     private void ApplyDisplay()
     {
-        Screen.fullScreen = _fullscreen;
+        // Apply the chosen resolution + fullscreen mode when the platform exposes a resolution
+        // list; otherwise just set the fullscreen flag. The bool overload of SetResolution keeps
+        // the current refresh rate and is version-safe across Unity releases.
+        Resolution[] resolutions = Screen.resolutions;
+        if (resolutions != null && resolutions.Length > 0 &&
+            _resolutionIndex >= 0 && _resolutionIndex < resolutions.Length)
+        {
+            Resolution resolution = resolutions[_resolutionIndex];
+            if (Screen.width != resolution.width || Screen.height != resolution.height ||
+                Screen.fullScreen != _fullscreen)
+            {
+                Screen.SetResolution(resolution.width, resolution.height, _fullscreen);
+            }
+        }
+        else
+        {
+            Screen.fullScreen = _fullscreen;
+        }
+
         QualitySettings.vSyncCount = _vSync ? 1 : 0;
+        // Only meaningful when VSync is off; Unity ignores the cap while vSyncCount > 0.
+        Application.targetFrameRate = _fpsCap <= 0 ? -1 : _fpsCap;
     }
 
     private static void NotifyChanged()

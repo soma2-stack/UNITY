@@ -12,6 +12,11 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     private static readonly Color WarmColor = new Color(0.95f, 0.73f, 0.27f, 1f);
     private static readonly Color TextColor = new Color(0.93f, 0.92f, 0.88f, 1f);
     private static readonly Color ErrorColor = new Color(1f, 0.38f, 0.28f, 1f);
+    // Idle (unselected) character button colour — matches the LEAVE/BACK slate so the black
+    // button label stays readable; the selected character uses AccentColor.
+    private static readonly Color CharacterIdleColor = new Color(0.35f, 0.37f, 0.38f, 1f);
+    // Character reserved by ANOTHER connected player — greyed out and non-clickable.
+    private static readonly Color CharacterLockedColor = new Color(0.14f, 0.14f, 0.15f, 1f);
 
     private TMP_InputField displayNameInput;
     private TMP_InputField joinCodeInput;
@@ -25,8 +30,59 @@ public sealed class MultiplayerMenuController : MonoBehaviour
     private Button leaveButton;
     private Button reconnectButton;
     private Button backButton;
+    private Button[] characterButtons;
+    private GameObject characterDropdownList;
+    private GameObject dropdownBlocker;
+    private RectTransform cardRect;
+    private RectTransform previewRect;
+    private Image previewPortrait;
+    private TMP_Text previewName;
+    private TMP_Text characterChangeHint;
     private Action backAction;
     private MultiplayerSessionController session;
+
+    // Minimum connected players required before the host can start the match.
+    private const int MinimumPlayersToStart = 2;
+    private const string WaitingMessage = "WAITING FOR 1 MORE SURVIVOR";
+
+#if UNITY_EDITOR
+    // Editor-only manual override for solo testing. Leave false; it is compiled out of
+    // real builds entirely, so a shipped game can never start a one-player match.
+    private bool editorAllowSoloStart = false;
+#endif
+
+    // Count of connected survivors currently in the roster.
+    private int ConnectedPlayerCount()
+    {
+        if (session == null)
+        {
+            return 0;
+        }
+
+        int connected = 0;
+        foreach (RosterEntry entry in session.Roster)
+        {
+            if (entry.connected)
+            {
+                connected++;
+            }
+        }
+        return connected;
+    }
+
+    // True only when enough connected players are present to start (>= 2),
+    // with an editor-only solo override for local testing.
+    private bool HasEnoughPlayersToStart()
+    {
+        int connected = ConnectedPlayerCount();
+#if UNITY_EDITOR
+        if (editorAllowSoloStart && connected >= 1)
+        {
+            return true;
+        }
+#endif
+        return connected >= MinimumPlayersToStart;
+    }
 
     public static GameObject Create(Transform parent, Action onBack)
     {
@@ -93,6 +149,19 @@ public sealed class MultiplayerMenuController : MonoBehaviour
 
     private async void StartMatch()
     {
+        // Safety net: never let the host start a match without enough survivors,
+        // even if the button somehow gets clicked while it should be disabled.
+        if (!HasEnoughPlayersToStart())
+        {
+            Debug.Log("Match start blocked: not enough players");
+            if (statusText != null)
+            {
+                statusText.text = WaitingMessage;
+                statusText.color = WarmColor;
+            }
+            return;
+        }
+
         await session.StartMatchAsync();
     }
 
@@ -131,11 +200,16 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         shadeImg.color = new Color(0.01f, 0.012f, 0.015f, 0.6f);
         shadeImg.raycastTarget = true;
 
-        // Card fills the whole screen (transparent so the hallway background shows).
+        // One centered dark translucent panel (the hallway + shade show around it). The dropdown
+        // overlay is later parented HERE (last sibling) so it renders in front of every control.
         GameObject card = CreateUiObject("Card", transform);
-        RectTransform cardRect = card.GetComponent<RectTransform>();
-        Stretch(cardRect);
-        card.AddComponent<Image>().color = new Color(0.04f, 0.045f, 0.05f, 0.35f);
+        cardRect = card.GetComponent<RectTransform>();
+        cardRect.anchorMin = new Vector2(0.5f, 0.5f);
+        cardRect.anchorMax = new Vector2(0.5f, 0.5f);
+        cardRect.pivot = new Vector2(0.5f, 0.5f);
+        cardRect.sizeDelta = new Vector2(880f, 980f); // centered card; fits within 1080 at 16:9
+        cardRect.anchoredPosition = Vector2.zero;
+        card.AddComponent<Image>().color = new Color(0.055f, 0.062f, 0.078f, 0.95f);
 
         // Red header bar with the title (pinned to the top of the card).
         GameObject header = CreateUiObject("Header", card.transform);
@@ -198,7 +272,7 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         sr.content = contentRect;
 
         VerticalLayoutGroup layout = content.AddComponent<VerticalLayoutGroup>();
-        layout.spacing = 10f;
+        layout.spacing = 14f; // roomier, more consistent spacing between sections
         layout.padding = new RectOffset(34, 34, 22, 22);
         layout.childAlignment = TextAnchor.UpperCenter;
         layout.childControlWidth = true;
@@ -225,6 +299,11 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         displayNameInput = CreateInput(content.transform, "DISPLAY NAME", false);
         displayNameInput.characterLimit = 16;
         displayNameInput.text = PlayerPrefs.GetString("MultiplayerDisplayName", "Survivor");
+
+        // Character picker: a dropdown-style selector (selected preview + expandable list). Stored
+        // locally per player (PlayerPrefs via CharacterSelection) so host and client can pick
+        // independently, and it drives the in-game HUD portrait (fallback: OwnerClientId-based).
+        BuildCharacterSelector(content.transform);
 
         joinCodeInput = CreateInput(content.transform, "JOIN CODE", true);
         joinCodeInput.characterLimit = 8;
@@ -256,9 +335,10 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         Stretch(codeText.rectTransform);
         copyButton = CreateButton(codeRow.transform, "COPY", CopyJoinCode, WarmColor);
 
-        TMP_Text rosterHeading = CreateText(content.transform, "SURVIVORS", 20f, FontStyles.Bold, TextColor);
-        rosterHeading.alignment = TextAlignmentOptions.Center;
-        SetHeight(rosterHeading.gameObject, 34f);
+        TMP_Text rosterHeading = CreateText(content.transform, "SURVIVORS", 18f, FontStyles.Bold, WarmColor);
+        rosterHeading.alignment = TextAlignmentOptions.Left;
+        rosterHeading.margin = new Vector4(6f, 0f, 0f, 0f);
+        SetHeight(rosterHeading.gameObject, 26f);
 
         rosterTexts = new TMP_Text[MultiplayerSessionController.MaximumPlayers];
         for (int index = 0; index < rosterTexts.Length; index++)
@@ -281,6 +361,10 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         SetHeight(leaveButton.gameObject, 50f);
         SetHeight(reconnectButton.gameObject, 50f);
         // NOTE: BACK lives in the pinned footer (built above) so it is always visible.
+
+        // Character dropdown overlay: built LAST and parented to the card (outside the scroll's
+        // mask) so it renders in FRONT of every control and can overlay the ones below the preview.
+        BuildCharacterDropdownOverlay(card.transform);
     }
 
     private void HandleStateChanged(MultiplayerSessionState state)
@@ -296,13 +380,30 @@ public sealed class MultiplayerMenuController : MonoBehaviour
         bool inLobby = state == MultiplayerSessionState.Lobby;
         bool offline = state == MultiplayerSessionState.Offline || state == MultiplayerSessionState.Failed;
 
-        statusText.text = state.ToString().ToUpperInvariant();
         statusText.color = state == MultiplayerSessionState.Failed ? ErrorColor : WarmColor;
         hostButton.interactable = offline && !busy;
         joinButton.interactable = offline && !busy;
         displayNameInput.interactable = offline && !busy;
         joinCodeInput.interactable = offline && !busy;
-        startButton.gameObject.SetActive(inLobby && session != null && session.IsHost);
+
+        // START MATCH: visible to the host in the lobby, but only clickable once there
+        // are at least MinimumPlayersToStart connected survivors. While the host waits
+        // alone, surface the "WAITING FOR 1 MORE SURVIVOR" hint in the status line.
+        bool hostInLobby = inLobby && session != null && session.IsHost;
+        bool enoughPlayers = HasEnoughPlayersToStart();
+        startButton.gameObject.SetActive(hostInLobby);
+        startButton.interactable = hostInLobby && enoughPlayers;
+
+        if (hostInLobby && !enoughPlayers)
+        {
+            statusText.text = WaitingMessage;
+            statusText.color = WarmColor;
+        }
+        else
+        {
+            statusText.text = state.ToString().ToUpperInvariant();
+        }
+
         copyButton.gameObject.SetActive(inLobby && session != null && session.IsHost);
         leaveButton.gameObject.SetActive(inLobby);
         reconnectButton.gameObject.SetActive(state == MultiplayerSessionState.Failed && session != null && session.CanReconnect);
@@ -311,6 +412,19 @@ public sealed class MultiplayerMenuController : MonoBehaviour
 
     private void HandleRosterChanged(System.Collections.Generic.IReadOnlyList<RosterEntry> entries)
     {
+        int connected = 0;
+        if (entries != null)
+        {
+            foreach (RosterEntry entry in entries)
+            {
+                if (entry.connected)
+                {
+                    connected++;
+                }
+            }
+        }
+        Debug.Log("Roster count changed: " + connected + " connected players");
+
         for (int index = 0; index < rosterTexts.Length; index++)
         {
             if (index < entries.Count)
@@ -326,6 +440,16 @@ public sealed class MultiplayerMenuController : MonoBehaviour
                 rosterTexts[index].color = new Color(TextColor.r, TextColor.g, TextColor.b, 0.45f);
             }
         }
+
+        // Re-evaluate the START MATCH gate now that the connected count may have changed
+        // (e.g. enable it the moment a second survivor joins).
+        if (session != null)
+        {
+            Refresh(session.State);
+        }
+
+        // Reservations may have changed (join/leave/select) — update character locks + local pick.
+        RefreshCharacterLocks();
     }
 
     private void HandleJoinCodeChanged(string code)
@@ -347,6 +471,362 @@ public sealed class MultiplayerMenuController : MonoBehaviour
             statusText.text = "JOIN CODE COPIED";
             statusText.color = WarmColor;
         }
+    }
+
+    // Build the selected-character PREVIEW row (a gold "CHARACTER" label + a clickable panel that
+    // shows the chosen portrait, name and a CHANGE hint). The expandable list itself is a separate
+    // overlay (see BuildCharacterDropdownOverlay) so it can render in front of the controls below.
+    private void BuildCharacterSelector(Transform parent)
+    {
+        TMP_Text heading = CreateText(parent, "CHARACTER", 16f, FontStyles.Bold, WarmColor);
+        heading.alignment = TextAlignmentOptions.Left;
+        heading.margin = new Vector4(6f, 0f, 0f, 0f);
+        SetHeight(heading.gameObject, 22f);
+
+        GameObject previewGo = CreateUiObject("Selected Preview", parent);
+        Image previewBg = previewGo.AddComponent<Image>();
+        previewBg.color = RowColor;
+        Button previewButton = previewGo.AddComponent<Button>();
+        previewButton.targetGraphic = previewBg;
+        previewButton.onClick.AddListener(ToggleCharacterDropdown);
+        ApplyButtonColors(previewButton);
+        SetHeight(previewGo, 84f);
+        previewRect = previewGo.GetComponent<RectTransform>();
+
+        previewPortrait = BuildOptionPortrait(previewGo.transform, 64f, 12f);
+
+        previewName = CreateText(previewGo.transform, string.Empty, 24f, FontStyles.Bold, TextColor);
+        previewName.alignment = TextAlignmentOptions.MidlineLeft;
+        RectTransform previewNameRect = previewName.rectTransform;
+        previewNameRect.anchorMin = new Vector2(0f, 0f);
+        previewNameRect.anchorMax = new Vector2(1f, 1f);
+        previewNameRect.pivot = new Vector2(0f, 0.5f);
+        previewNameRect.offsetMin = new Vector2(92f, 0f);
+        previewNameRect.offsetMax = new Vector2(-130f, 0f);
+
+        characterChangeHint = CreateText(previewGo.transform, "CHANGE", 16f, FontStyles.Bold, WarmColor);
+        characterChangeHint.alignment = TextAlignmentOptions.MidlineRight;
+        RectTransform hintRect = characterChangeHint.rectTransform;
+        hintRect.anchorMin = new Vector2(1f, 0f);
+        hintRect.anchorMax = new Vector2(1f, 1f);
+        hintRect.pivot = new Vector2(1f, 0.5f);
+        hintRect.sizeDelta = new Vector2(116f, 0f);
+        hintRect.anchoredPosition = new Vector2(-16f, 0f);
+    }
+
+    // Build the floating dropdown (a full-card click blocker + the option list), parented to the
+    // card so it draws in FRONT of every control. Hidden until the preview is clicked; positioned
+    // under the preview on open (see OpenCharacterDropdown). Options come from the character table.
+    private void BuildCharacterDropdownOverlay(Transform cardParent)
+    {
+        // Click blocker: dims the card and closes the dropdown when clicked outside the list.
+        dropdownBlocker = CreateUiObject("Dropdown Blocker", cardParent);
+        Stretch(dropdownBlocker.GetComponent<RectTransform>());
+        dropdownBlocker.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.4f);
+        Button blockerButton = dropdownBlocker.AddComponent<Button>();
+        blockerButton.transition = Selectable.Transition.None;
+        blockerButton.onClick.AddListener(CloseCharacterDropdown);
+
+        // The floating list panel (own ContentSizeFitter sizes its height from the options).
+        characterDropdownList = CreateUiObject("Character Dropdown", cardParent);
+        characterDropdownList.AddComponent<Image>().color = new Color(0.09f, 0.1f, 0.12f, 1f);
+        VerticalLayoutGroup listLayout = characterDropdownList.AddComponent<VerticalLayoutGroup>();
+        listLayout.spacing = 6f;
+        listLayout.padding = new RectOffset(8, 8, 8, 8);
+        listLayout.childControlWidth = true;
+        listLayout.childControlHeight = true;
+        listLayout.childForceExpandWidth = true;
+        listLayout.childForceExpandHeight = false;
+        ContentSizeFitter listFitter = characterDropdownList.AddComponent<ContentSizeFitter>();
+        listFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained; // width set on open
+        listFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        characterButtons = new Button[CharacterSelection.Count];
+        for (int i = 0; i < CharacterSelection.Count; i++)
+        {
+            characterButtons[i] = BuildCharacterOption(characterDropdownList.transform, i);
+        }
+
+        dropdownBlocker.SetActive(false);
+        characterDropdownList.SetActive(false);
+        RefreshCharacterPreview();
+        RefreshCharacterButtons();
+    }
+
+    // One row in the dropdown list: portrait (left) + name. Driven by the character table so the
+    // name and portrait always match; the background tint marks the selected survivor.
+    private Button BuildCharacterOption(Transform parent, int displayOrder)
+    {
+        CharacterSelection.Character character = CharacterSelection.Characters[displayOrder];
+
+        GameObject optionGo = CreateUiObject(character.DisplayName + " Option", parent);
+        Image background = optionGo.AddComponent<Image>();
+        background.color = CharacterIdleColor;
+        Button button = optionGo.AddComponent<Button>();
+        button.targetGraphic = background;
+        button.onClick.AddListener(() => SelectCharacter(character.PortraitIndex));
+        ApplyButtonColors(button);
+        SetHeight(optionGo, 60f);
+
+        BuildOptionPortrait(optionGo.transform, 48f, 8f, character.PortraitIndex);
+
+        TMP_Text name = CreateText(optionGo.transform, character.DisplayName.ToUpperInvariant(),
+            18f, FontStyles.Bold, TextColor);
+        name.alignment = TextAlignmentOptions.MidlineLeft;
+        RectTransform nameRect = name.rectTransform;
+        nameRect.anchorMin = new Vector2(0f, 0f);
+        nameRect.anchorMax = new Vector2(1f, 1f);
+        nameRect.pivot = new Vector2(0f, 0.5f);
+        nameRect.offsetMin = new Vector2(66f, 0f);
+        nameRect.offsetMax = new Vector2(-12f, 0f);
+
+        return button;
+    }
+
+    // A left-anchored square portrait image. Returns the Image so the preview can re-point it.
+    // Pass an index to load that portrait now; pass -1 to leave it blank for the caller to fill.
+    private static Image BuildOptionPortrait(Transform parent, float size, float leftInset, int index = -1)
+    {
+        GameObject portraitGo = CreateUiObject("Portrait", parent);
+        RectTransform rect = portraitGo.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0f, 0.5f);
+        rect.anchorMax = new Vector2(0f, 0.5f);
+        rect.pivot = new Vector2(0f, 0.5f);
+        rect.sizeDelta = new Vector2(size, size);
+        rect.anchoredPosition = new Vector2(leftInset, 0f);
+        Image image = portraitGo.AddComponent<Image>();
+        image.raycastTarget = false;
+        image.preserveAspect = true;
+        if (index >= 0)
+        {
+            ApplyPortrait(image, index);
+        }
+        return image;
+    }
+
+    // Load Resources/HUD/player_portrait_{index} onto an Image; a missing PNG falls back to a
+    // plain swatch so the menu/HUD never crash.
+    private static void ApplyPortrait(Image image, int index)
+    {
+        Sprite sprite = Resources.Load<Sprite>("HUD/player_portrait_" + index);
+        if (sprite != null)
+        {
+            image.sprite = sprite;
+            image.color = Color.white;
+        }
+        else
+        {
+            image.sprite = null;
+            image.color = new Color(0.18f, 0.2f, 0.22f, 1f);
+        }
+    }
+
+    // Open or close the dropdown depending on its current state.
+    private void ToggleCharacterDropdown()
+    {
+        if (characterDropdownList != null && characterDropdownList.activeSelf)
+        {
+            CloseCharacterDropdown();
+        }
+        else
+        {
+            OpenCharacterDropdown();
+        }
+    }
+
+    // Show the dropdown in FRONT of everything: activate the blocker + list, raise them to the top
+    // sibling, size the list to the preview width and hang it just below the preview.
+    private void OpenCharacterDropdown()
+    {
+        if (characterDropdownList == null || previewRect == null || cardRect == null)
+        {
+            return;
+        }
+
+        dropdownBlocker.SetActive(true);
+        characterDropdownList.SetActive(true);
+        dropdownBlocker.transform.SetAsLastSibling();
+        characterDropdownList.transform.SetAsLastSibling();
+
+        RectTransform listRect = (RectTransform)characterDropdownList.transform;
+        listRect.anchorMin = new Vector2(0.5f, 0.5f);
+        listRect.anchorMax = new Vector2(0.5f, 0.5f);
+        listRect.pivot = new Vector2(0.5f, 1f); // top-centre pivot so it hangs downward
+        listRect.sizeDelta = new Vector2(previewRect.rect.width, listRect.sizeDelta.y);
+
+        // Convert the preview's bottom-centre (world/screen for an overlay canvas) into the card's
+        // local space so the list sits right under the preview regardless of scroll position.
+        Vector3[] corners = new Vector3[4];
+        previewRect.GetWorldCorners(corners); // 0=BL, 1=TL, 2=TR, 3=BR
+        Vector3 bottomCentreWorld = (corners[0] + corners[3]) * 0.5f;
+        Vector2 screenPoint = RectTransformUtility.WorldToScreenPoint(null, bottomCentreWorld);
+        RectTransformUtility.ScreenPointToLocalPointInRectangle(cardRect, screenPoint, null, out Vector2 local);
+        listRect.anchoredPosition = new Vector2(local.x, local.y - 6f);
+
+        if (characterChangeHint != null)
+        {
+            characterChangeHint.text = "CLOSE";
+        }
+    }
+
+    // Hide the dropdown + blocker and restore the CHANGE hint.
+    private void CloseCharacterDropdown()
+    {
+        if (dropdownBlocker != null)
+        {
+            dropdownBlocker.SetActive(false);
+        }
+        if (characterDropdownList != null)
+        {
+            characterDropdownList.SetActive(false);
+        }
+        if (characterChangeHint != null)
+        {
+            characterChangeHint.text = "CHANGE";
+        }
+    }
+
+    // Store the chosen portrait index locally, update the preview + list highlight, close the list.
+    // True once connected to a lobby, where character reservations are host-authoritative.
+    private bool InNetworkedLobby => session != null && session.State == MultiplayerSessionState.Lobby;
+
+    private void SelectCharacter(int portraitIndex)
+    {
+        // Never allow picking a character another connected player already holds.
+        if (IsLockedByOther(portraitIndex))
+        {
+            CloseCharacterDropdown();
+            return;
+        }
+
+        if (InNetworkedLobby)
+        {
+            // Host-authoritative: request the reservation. CharacterSelection + the UI update when
+            // the host's roster broadcast returns (RefreshCharacterLocks), so nothing is set locally
+            // until the host accepts.
+            session.RequestCharacterSelect(portraitIndex);
+        }
+        else
+        {
+            // Offline lobby / not connected: purely local.
+            CharacterSelection.Select(portraitIndex);
+            RefreshCharacterPreview();
+            RefreshCharacterButtons();
+        }
+        CloseCharacterDropdown();
+    }
+
+    // True when a DIFFERENT connected player currently reserves this character.
+    private bool IsLockedByOther(int portraitIndex)
+    {
+        if (session == null || portraitIndex < 0)
+        {
+            return false;
+        }
+        var roster = session.Roster;
+        if (roster == null)
+        {
+            return false;
+        }
+        ulong me = session.LocalClientId;
+        foreach (RosterEntry entry in roster)
+        {
+            if (entry.connected && entry.clientId != me && entry.characterIndex == portraitIndex)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Mirror the host-accepted reservation for THIS player into CharacterSelection (source of truth
+    // in a lobby), then refresh the preview + lock states. Called whenever the roster changes.
+    private void RefreshCharacterLocks()
+    {
+        if (InNetworkedLobby)
+        {
+            ulong me = session.LocalClientId;
+            var roster = session.Roster;
+            if (roster != null)
+            {
+                foreach (RosterEntry entry in roster)
+                {
+                    if (entry.clientId == me && entry.characterIndex >= 0)
+                    {
+                        CharacterSelection.Select(entry.characterIndex);
+                        break;
+                    }
+                }
+            }
+        }
+        RefreshCharacterPreview();
+        RefreshCharacterButtons();
+    }
+
+    // Update the selected preview panel from the stored selection (or a neutral prompt if none).
+    private void RefreshCharacterPreview()
+    {
+        if (previewName == null || previewPortrait == null)
+        {
+            return;
+        }
+
+        int selected = CharacterSelection.SelectedIndex; // stored value is the portrait index
+        if (selected >= 0)
+        {
+            previewName.text = CharacterSelection.NameOf(selected).ToUpperInvariant();
+            ApplyPortrait(previewPortrait, selected);
+        }
+        else
+        {
+            previewName.text = "SELECT SURVIVOR";
+            previewPortrait.sprite = null;
+            previewPortrait.color = new Color(0.18f, 0.2f, 0.22f, 1f);
+        }
+    }
+
+    // Highlight the selected option (AccentColor) and leave the rest idle, matching each option's
+    // portrait index against the stored selection. Safe before the list exists / when none chosen.
+    private void RefreshCharacterButtons()
+    {
+        if (characterButtons == null)
+        {
+            return;
+        }
+
+        int selected = CharacterSelection.SelectedIndex;
+        for (int i = 0; i < characterButtons.Length; i++)
+        {
+            Button button = characterButtons[i];
+            if (button == null)
+            {
+                continue;
+            }
+            int portraitIndex = CharacterSelection.Characters[i].PortraitIndex;
+            bool lockedByOther = IsLockedByOther(portraitIndex);
+            bool isSelected = portraitIndex == selected;
+
+            // Reserved-by-another options are greyed out and non-clickable; the local player's own
+            // selection stays highlighted and clickable.
+            button.interactable = !lockedByOther;
+            if (button.targetGraphic is Image image)
+            {
+                image.color = lockedByOther ? CharacterLockedColor
+                    : (isSelected ? AccentColor : CharacterIdleColor);
+            }
+        }
+    }
+
+    // Shared button hover/press feel so the background colour we set stays visible.
+    private static void ApplyButtonColors(Button button)
+    {
+        ColorBlock colors = button.colors;
+        colors.normalColor = Color.white;
+        colors.highlightedColor = new Color(1.12f, 1.12f, 1.12f, 1f);
+        colors.selectedColor = colors.highlightedColor;
+        colors.pressedColor = new Color(0.78f, 0.78f, 0.78f, 1f);
+        colors.fadeDuration = 0.08f;
+        button.colors = colors;
     }
 
     private void SaveDisplayName()

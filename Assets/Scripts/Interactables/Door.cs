@@ -1,3 +1,5 @@
+// ✅ INTERACTABLES AUDIT FIXES
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -13,6 +15,9 @@ using UnityEngine.AI;
 [RequireComponent(typeof(Collider))]
 public class Door : MonoBehaviour
 {
+    private static readonly Dictionary<string, Door> Registry = new Dictionary<string, Door>();
+    private static readonly List<Door> Doors = new List<Door>();
+
     [Header("Buy Cost")]
     [Tooltip("Points required to open this door. 0 = opens for free. Buying spends this " +
              "many points (via PlayerPoints) and rewards +10 points per 100 spent.")]
@@ -37,9 +42,32 @@ public class Door : MonoBehaviour
              "Opening this door opens all of these too. Set automatically by the door placer.")]
     public Door[] linkedDoors;
 
-    public bool IsOpen { get; private set; }
+    [Header("Audio")]
+    // TODO: assign openSound and audioSource in Inspector
+    [Tooltip("Sound played once when the door opens. Leave empty for no sound.")]
+    public AudioClip openSound;
+    [Tooltip("Source used to play openSound. Leave empty for no sound.")]
+    public AudioSource audioSource;
 
-    private Transform player;
+    public bool IsOpen { get; private set; }
+    public int Cost => cost;
+    public string NetworkKey
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(networkKey))
+            {
+                networkKey = BuildNetworkKey(transform);
+            }
+            return networkKey;
+        }
+    }
+
+    public static IEnumerable<Door> AllDoors => Doors;
+
+    private Transform[] players;
+    private Transform nearestPlayer;
+    private float nextPlayerRefresh;
     private Collider doorCollider;
     private NavMeshObstacle navObstacle;
     private Vector3 closedLocalPosition;
@@ -47,6 +75,28 @@ public class Door : MonoBehaviour
     private bool isMoving;
     private float nextPromptTime;
     private bool playerInRange;
+    private GUIStyle promptStyle;
+    private string networkKey;
+
+    private void OnEnable()
+    {
+        Registry[NetworkKey] = this;
+        if (!Doors.Contains(this))
+        {
+            Doors.Add(this);
+        }
+    }
+
+    private void OnDisable()
+    {
+        Doors.Remove(this);
+        if (!string.IsNullOrEmpty(networkKey) &&
+            Registry.TryGetValue(networkKey, out Door registered) &&
+            registered == this)
+        {
+            Registry.Remove(networkKey);
+        }
+    }
 
     private void Awake()
     {
@@ -92,7 +142,7 @@ public class Door : MonoBehaviour
 
     private void Start()
     {
-        FindPlayer();
+        FindPlayers();
     }
 
     private void Update()
@@ -106,18 +156,49 @@ public class Door : MonoBehaviour
             return;
         }
 
-        if (player == null)
+        // Re-scan for players periodically (not just once): in multiplayer the player
+        // avatars spawn AFTER this door's first Update, and more can join later. Without
+        // this, the door can latch onto an empty set or Camera.main and never detect the
+        // real players, so its prompt never appears and it can't be opened.
+        if (players == null || players.Length == 0 || Time.time >= nextPlayerRefresh)
         {
-            FindPlayer();
-            if (player == null)
+            nextPlayerRefresh = Time.time + 0.5f;
+            FindPlayers();
+            if (players == null || players.Length == 0)
             {
                 playerInRange = false;
+                nearestPlayer = null;
                 return;
             }
         }
 
-        float distance = Vector3.Distance(transform.position, player.position);
-        playerInRange = distance <= interactionRange;
+        // Co-op aware: keep the closest player that is within range. Uses horizontal
+        // distance + a vertical tolerance (InteractableBase.InRange) because the door's
+        // pivot sits well above the floor-standing player, which a plain 3D distance would
+        // wrongly treat as out of range even when the player is right at the door.
+        nearestPlayer = null;
+        float bestHorizontal = float.MaxValue;
+        foreach (Transform p in players)
+        {
+            if (p == null)
+            {
+                continue;
+            }
+            if (!InteractableBase.InRange(transform.position, p.position, interactionRange))
+            {
+                continue;
+            }
+            float dx = transform.position.x - p.position.x;
+            float dz = transform.position.z - p.position.z;
+            float horizontal = dx * dx + dz * dz;
+            if (horizontal < bestHorizontal)
+            {
+                bestHorizontal = horizontal;
+                nearestPlayer = p;
+            }
+        }
+
+        playerInRange = nearestPlayer != null;
         if (!playerInRange)
         {
             return;
@@ -125,7 +206,22 @@ public class Door : MonoBehaviour
 
         if (Input.GetKeyDown(interactKey))
         {
-            TryOpen();
+            NetworkGameplayCoordinator.RequestDoorOpen(this);
+        }
+    }
+
+    // Lazily build the prompt style once (mirrors GameOverController.EnsureStyles)
+    // so OnGUI doesn't allocate a new GUIStyle every frame the player is in range.
+    private void EnsureStyles()
+    {
+        if (promptStyle == null)
+        {
+            promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
         }
     }
 
@@ -136,14 +232,10 @@ public class Door : MonoBehaviour
             return;
         }
 
-        string label = cost > 0 ? $"Press E   Buy Door   [{cost}]" : "Press E   Open Door";
+        EnsureStyles();
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 22,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-        };
+        string label = cost > 0 ? $"Press E   Buy Door   [{cost}]" : "Press E   Open Door";
+        GUIStyle style = promptStyle;
 
         float w = 360f;
         float h = 34f;
@@ -174,16 +266,19 @@ public class Door : MonoBehaviour
     /// spends the points, then opens and rewards +10 points per 100 spent. Free
     /// doors (cost &lt;= 0) just open. Opens for free when no economy is present.
     /// </summary>
-    private void TryOpen()
+    public void TryOpenOffline()
     {
         // Free door: open immediately, no charge or reward.
         if (cost <= 0)
         {
-            Open();
+            OpenFromNetwork();
             return;
         }
 
         // Paid door: must be able to afford it (when an economy exists).
+        // TODO: per-player economy — charge nearestPlayer's own PlayerPoints once
+        // co-op gives each player a separate economy. For now there is a single
+        // shared economy, so we spend from the PlayerPoints singleton.
         if (PlayerPoints.Instance != null)
         {
             if (!PlayerPoints.Instance.TrySpend(cost))
@@ -197,7 +292,7 @@ public class Door : MonoBehaviour
             }
         }
 
-        Open();
+        OpenFromNetwork();
 
         // Classic CoD door-buy reward: +10 points per 100 spent (e.g. 750 -> 75).
         int reward = Mathf.RoundToInt(cost / 10f);
@@ -213,6 +308,11 @@ public class Door : MonoBehaviour
     /// </summary>
     public void Open()
     {
+        NetworkGameplayCoordinator.RequestDoorOpen(this);
+    }
+
+    public void OpenFromNetwork()
+    {
         if (IsOpen)
         {
             return;
@@ -221,6 +321,12 @@ public class Door : MonoBehaviour
         IsOpen = true;
         isMoving = true;
         playerInRange = false;
+
+        // Door open SFX (no-op until both fields are wired in the Inspector).
+        if (audioSource != null && openSound != null)
+        {
+            audioSource.PlayOneShot(openSound);
+        }
 
         // Stop blocking the player immediately.
         if (doorCollider != null)
@@ -247,17 +353,40 @@ public class Door : MonoBehaviour
         }
 
         // Open every linked door too (e.g. both ends of a stairwell). The IsOpen
-        // guard at the top of Open() prevents mutual links from looping forever.
+        // guard at the top of OpenFromNetwork() prevents mutual links from looping forever.
         if (linkedDoors != null)
         {
             foreach (Door linked in linkedDoors)
             {
                 if (linked != null && !linked.IsOpen)
                 {
-                    linked.Open();
+                    linked.OpenFromNetwork();
+                    NetworkGameplayCoordinator.BroadcastDoorOpen(linked.NetworkKey);
                 }
             }
         }
+    }
+
+    public static bool TryFind(string key, out Door door)
+    {
+        return Registry.TryGetValue(key, out door);
+    }
+
+    private static string BuildNetworkKey(Transform target)
+    {
+        if (target == null)
+        {
+            return string.Empty;
+        }
+
+        string key = target.name;
+        Transform parent = target.parent;
+        while (parent != null)
+        {
+            key = parent.name + "/" + key;
+            parent = parent.parent;
+        }
+        return key;
     }
 
     private void AnimateOpen()
@@ -270,19 +399,25 @@ public class Door : MonoBehaviour
         }
     }
 
-    private void FindPlayer()
+    private void FindPlayers()
     {
-        // Prefer the CharacterController player (CoDMovement / PlayerMovement use one).
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller != null)
+        // Co-op aware: gather EVERY CharacterController player (CoDMovement /
+        // PlayerMovement use one) so any player can interact with the door.
+        CharacterController[] controllers = FindObjectsByType<CharacterController>(FindObjectsSortMode.None);
+        if (controllers != null && controllers.Length > 0)
         {
-            player = controller.transform;
+            players = new Transform[controllers.Length];
+            for (int i = 0; i < controllers.Length; i++)
+            {
+                players[i] = controllers[i] != null ? controllers[i].transform : null;
+            }
             return;
         }
 
+        // Fallback so the door still works if no CharacterController is present.
         if (Camera.main != null)
         {
-            player = Camera.main.transform;
+            players = new[] { Camera.main.transform };
         }
     }
 

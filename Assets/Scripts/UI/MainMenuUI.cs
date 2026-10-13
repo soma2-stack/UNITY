@@ -282,6 +282,18 @@ public class MainMenuUI : MonoBehaviour
     // ------------------------------------------------------------------
     private void OnPlaySolo()
     {
+        // Solo starts a single-player LOCAL host session (reuses the working networked spawn path,
+        // so exactly one configured player spawns). This replaces the old direct scene load, which
+        // no longer spawns a player now that the scene-placed solo player object was removed.
+        var session = MultiplayerSessionController.Instance;
+        if (session != null)
+        {
+            session.StartSolo();
+            return;
+        }
+
+        // Fallback only if the session controller is somehow missing (should not happen — it
+        // self-bootstraps). This legacy path just loads the scene and will NOT spawn a player.
         var manager = FindFirstObjectByType<MainMenuManager>();
         if (manager != null)
         {
@@ -295,7 +307,49 @@ public class MainMenuUI : MonoBehaviour
 
     private void OnPlayOnline()
     {
-        OpenOverlay(ref _multiplayerOverlay, MultiplayerMenuController.Create);
+        // Route through MainMenuManager so OpenMultiplayerMenu() (and its log) is the
+        // single entry point for ONLINE CO-OP. Falls back to opening directly if no
+        // MainMenuManager is present in the scene.
+        var manager = FindFirstObjectByType<MainMenuManager>();
+        if (manager != null)
+        {
+            manager.OpenMultiplayerMenu();
+        }
+        else
+        {
+            ShowMultiplayerMenu();
+        }
+    }
+
+    /// <summary>
+    /// Opens the real online co-op overlay (MultiplayerMenuController). Public so
+    /// <see cref="MainMenuManager.OpenMultiplayerMenu"/> can drive it. Never loads the
+    /// single-player scene.
+    /// </summary>
+    public void ShowMultiplayerMenu()
+    {
+        OpenOverlay(ref _multiplayerOverlay, MultiplayerMenuController.Create, OnMultiplayerBack);
+    }
+
+    /// <summary>Closes the online co-op overlay and returns to the main menu.</summary>
+    public void HideMultiplayerMenu()
+    {
+        ReturnToMainMenu();
+    }
+
+    // BACK from the multiplayer overlay routes through MainMenuManager so the
+    // "Returned to main menu from ONLINE CO-OP" log fires from one place.
+    private void OnMultiplayerBack()
+    {
+        var manager = FindFirstObjectByType<MainMenuManager>();
+        if (manager != null)
+        {
+            manager.CloseMultiplayerMenu();
+        }
+        else
+        {
+            ReturnToMainMenu();
+        }
     }
 
     private void OnSettings()
@@ -322,8 +376,10 @@ public class MainMenuUI : MonoBehaviour
     // ------------------------------------------------------------------
     // Overlay visibility
     // ------------------------------------------------------------------
-    private void OpenOverlay(ref GameObject overlay, Func<Transform, Action, GameObject> factory)
+    private void OpenOverlay(ref GameObject overlay, Func<Transform, Action, GameObject> factory, Action backAction = null)
     {
+        Action back = backAction ?? ReturnToMainMenu;
+
         if (_scrim != null)
         {
             _scrim.SetActive(true);
@@ -331,7 +387,7 @@ public class MainMenuUI : MonoBehaviour
 
         if (overlay == null && factory != null)
         {
-            overlay = factory(_overlayHost.transform, ReturnToMainMenu);
+            overlay = factory(_overlayHost.transform, back);
         }
 
         if (overlay != null)

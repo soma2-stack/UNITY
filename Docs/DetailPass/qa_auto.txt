@@ -1,0 +1,1 @@
+props checked 3174, floating 0, sunk 0, bad materials 0

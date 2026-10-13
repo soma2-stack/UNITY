@@ -11,7 +11,9 @@ public enum PowerupType
     InstaKill,
     DoublePoints,
     Nuke,
-    Carpenter,
+    // Team-wide Infinite Ammo (replaces the old, unused Carpenter drop). Kept at the
+    // same enum position (4) so drop weights and network serialization stay compatible.
+    InfiniteAmmo,
 }
 
 /// <summary>
@@ -40,6 +42,8 @@ public class PowerupManager : MonoBehaviour
     public float instaKillDuration = 30f;
     [Tooltip("Seconds Double Points stays active.")]
     public float doublePointsDuration = 30f;
+    [Tooltip("Seconds team-wide Infinite Ammo stays active.")]
+    public float infiniteAmmoDuration = 15f;
 
     [Header("Nuke")]
     [Tooltip("Bonus points awarded to the player when a Nuke is collected.")]
@@ -47,13 +51,30 @@ public class PowerupManager : MonoBehaviour
     [Tooltip("Flash the screen white when a Nuke fires (CoD-style). Disable to skip the flash.")]
     public bool nukeFlashEnabled = true;
 
-    [Header("Carpenter")]
-    [Tooltip("Bonus points awarded when a Carpenter is collected (boards up barricades in classic CoD).")]
+    [Header("Legacy (unused)")]
+    [Tooltip("Legacy Carpenter bonus points. Unused since the Carpenter slot became the " +
+             "Infinite Ammo power-up; kept only so any scene-serialized PowerupManager " +
+             "retains its stored value.")]
     public int carpenterBonusPoints = 200;
 
     [Header("Pickup")]
     [Tooltip("Seconds a dropped pickup stays in the world before despawning.")]
     public float pickupLifetime = 15f;
+    [Tooltip("Metres the visual pickup is lifted above the drop/death position so the 3D model " +
+             "floats at eye-catching height instead of sinking into the floor. Applied centrally " +
+             "in SpawnPickup, so random drops and SpawnPowerupAt share the same height.")]
+    public float pickupSpawnHeight = 1.25f;
+
+    [Header("Pickup Prefabs (optional 3D models)")]
+    [Tooltip("Optional 3D pickup model for each power-up type. When assigned, that prefab is " +
+             "spawned instead of the generated coloured cube; leave one empty to keep the cube " +
+             "fallback for that type. Purely visual — effects, timers, drop rates and networking " +
+             "are unchanged. Assign these on the scene PowerupManager in the Inspector.")]
+    public GameObject maxAmmoPrefab;
+    public GameObject instaKillPrefab;
+    public GameObject doublePointsPrefab;
+    public GameObject nukePrefab;
+    public GameObject infiniteAmmoPrefab;
 
     // --- Active timed-effect state (static so anything can read it) ---
 
@@ -63,8 +84,12 @@ public class PowerupManager : MonoBehaviour
     /// <summary>True while Double Points is active.</summary>
     public static bool DoublePointsActive { get; private set; }
 
+    /// <summary>True while team-wide Infinite Ammo is active (read by WeaponController).</summary>
+    public static bool InfiniteAmmoActive { get; private set; }
+
     private static float instaKillEndTime;
     private static float doublePointsEndTime;
+    private static float infiniteAmmoEndTime;
 
     private bool nukeFlashActive;   // true while the nuke white flash is on screen
     private float nukeFlashEndTime;
@@ -77,8 +102,8 @@ public class PowerupManager : MonoBehaviour
 
     // Weighted drop table (CoD-style: common drops far more frequent than rare ones).
     // Index order MUST match the PowerupType enum: MaxAmmo=0, InstaKill=1,
-    // DoublePoints=2, Nuke=3, Carpenter=4. Total is 100 so each weight is ~its %:
-    //   MaxAmmo 35%, InstaKill 20%, DoublePoints 30%, Nuke 10%, Carpenter 5%.
+    // DoublePoints=2, Nuke=3, InfiniteAmmo=4. Total is 100 so each weight is ~its %:
+    //   MaxAmmo 35%, InstaKill 20%, DoublePoints 30%, Nuke 10%, InfiniteAmmo 5%.
     private static readonly float[] DropWeights = { 35f, 20f, 30f, 10f, 5f };
 
     private GUIStyle hudStyle;
@@ -124,8 +149,10 @@ public class PowerupManager : MonoBehaviour
     {
         InstaKillActive = false;
         DoublePointsActive = false;
+        InfiniteAmmoActive = false;
         instaKillEndTime = 0f;
         doublePointsEndTime = 0f;
+        infiniteAmmoEndTime = 0f;
         PlayerPoints.PointsMultiplier = 1; // clear any DoublePointsMultiplier back to normal
     }
 
@@ -177,6 +204,10 @@ public class PowerupManager : MonoBehaviour
             DoublePointsActive = false;
             PlayerPoints.PointsMultiplier = 1;
         }
+        if (InfiniteAmmoActive && Time.time >= infiniteAmmoEndTime)
+        {
+            InfiniteAmmoActive = false;
+        }
         if (nukeFlashActive && Time.time >= nukeFlashEndTime)
         {
             nukeFlashActive = false;
@@ -208,19 +239,25 @@ public class PowerupManager : MonoBehaviour
 
         if (PlayerPoints.Instance != null && nukeBonusPoints > 0)
         {
-            PlayerPoints.Instance.Add(nukeBonusPoints);
+            // Classic Nuke bonus goes to every player (per-player economy).
+            PlayerPoints.Instance.AddPointsToAll(nukeBonusPoints);
         }
     }
 
     private void HandleZombieKilled(Vector3 position)
     {
+        if (NetworkGameplayCoordinator.IsNetworkActive && !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
+
         if (Random.value > Mathf.Clamp01(dropChance))
         {
             return;
         }
 
         PowerupType type = PickWeightedRandom();
-        SpawnPickup(type, position + Vector3.up * 0.5f);
+        SpawnPickup(type, position); // SpawnPickup applies the shared pickupSpawnHeight lift
     }
 
     /// <summary>
@@ -251,7 +288,20 @@ public class PowerupManager : MonoBehaviour
 
     private void SpawnPickup(PowerupType type, Vector3 position)
     {
-        Powerup.Spawn(type, position, pickupLifetime);
+        // Lift the visual pickup above the drop/death position centrally, so every spawn path
+        // (random drops + SpawnPowerupAt) floats at the same height. The already-lifted transform
+        // position is what the server broadcasts, so clients match without any payload change.
+        Vector3 spawnPosition = position + Vector3.up * pickupSpawnHeight;
+
+        bool networked = NetworkGameplayCoordinator.IsNetworkActive;
+        int id = networked && NetworkGameplayCoordinator.IsServer
+            ? NetworkGameplayCoordinator.AllocatePowerupId()
+            : 0;
+        Powerup powerup = Powerup.Spawn(type, spawnPosition, pickupLifetime, id, networked);
+        if (networked && NetworkGameplayCoordinator.IsServer)
+        {
+            NetworkGameplayCoordinator.BroadcastPowerupSpawn(powerup);
+        }
     }
 
     /// <summary>
@@ -261,27 +311,43 @@ public class PowerupManager : MonoBehaviour
     /// </summary>
     public void SpawnPowerupAt(PowerupType type, Vector3 position)
     {
+        if (NetworkGameplayCoordinator.IsNetworkActive && !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
         SpawnPickup(type, position);
     }
 
     /// <summary>Apply a power-up's effect. Called by a <see cref="Powerup"/> on collect.</summary>
     public void Apply(PowerupType type)
     {
+        Apply(type, ulong.MaxValue);
+    }
+
+    public void Apply(PowerupType type, ulong collectorClientId)
+    {
+        if (NetworkGameplayCoordinator.IsNetworkActive && !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
+
         switch (type)
         {
             case PowerupType.MaxAmmo:
             {
-                WeaponController wc = FindFirstObjectByType<WeaponController>();
+                WeaponController wc = LocalPlayer.Weapon;
                 if (wc != null)
                 {
                     wc.RefillAllAmmo();
                 }
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, 0f);
                 break;
             }
 
             case PowerupType.InstaKill:
                 InstaKillActive = true;
                 instaKillEndTime = Time.time + Mathf.Max(0f, instaKillDuration);
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, instaKillDuration);
                 break;
 
             case PowerupType.DoublePoints:
@@ -289,34 +355,90 @@ public class PowerupManager : MonoBehaviour
                 {
                     // Already active: just refresh the timer, never re-stack the multiplier.
                     doublePointsEndTime = Time.time + Mathf.Max(0f, doublePointsDuration);
+                    NetworkGameplayCoordinator.BroadcastPowerupEffect(type, doublePointsDuration);
                     Debug.Log("[PowerupManager] Double Points timer refreshed.");
                     return;
                 }
                 DoublePointsActive = true;
                 doublePointsEndTime = Time.time + Mathf.Max(0f, doublePointsDuration);
                 PlayerPoints.PointsMultiplier = DoublePointsMultiplier;
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, doublePointsDuration);
                 Debug.Log("[PowerupManager] Double Points activated.");
                 break;
 
             case PowerupType.Nuke:
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, 0.3f);
                 // Flash the screen, then kill all zombies staggered over ~1s, then
                 // award the bonus (handled in the coroutine).
                 StartCoroutine(NukeRoutine());
                 break;
 
-            case PowerupType.Carpenter:
-            {
-                // No boardable-window system in this project, so Carpenter awards its
-                // classic flat points bonus to the player.
-                if (PlayerPoints.Instance != null && carpenterBonusPoints > 0)
-                {
-                    PlayerPoints.Instance.Add(carpenterBonusPoints);
-                }
+            case PowerupType.InfiniteAmmo:
+                // Team-wide Infinite Ammo: activate (or refresh) the timer and broadcast it so
+                // every player — host and clients — fires without spending ammo for its duration.
+                // Setting the end time unconditionally refreshes to a fresh window when picked up
+                // again while already active (mirrors the Double Points refresh behaviour), so
+                // repeated pickups never stack into duplicate timers.
+                InfiniteAmmoActive = true;
+                infiniteAmmoEndTime = Time.time + Mathf.Max(0f, infiniteAmmoDuration);
+                NetworkGameplayCoordinator.BroadcastPowerupEffect(type, infiniteAmmoDuration);
+                Debug.Log("[PowerupManager] Infinite Ammo activated/refreshed (" +
+                          Mathf.Max(0f, infiniteAmmoDuration) + "s).");
                 break;
-            }
         }
 
         Debug.Log("[PowerupManager] Collected power-up: " + type);
+    }
+
+    public static void ApplyNetworkEffect(PowerupType type, float remaining)
+    {
+        switch (type)
+        {
+            case PowerupType.MaxAmmo:
+                LocalPlayer.Weapon?.RefillAllAmmo();
+                break;
+            case PowerupType.InstaKill:
+                InstaKillActive = true;
+                instaKillEndTime = Time.time + Mathf.Max(0f, remaining);
+                break;
+            case PowerupType.DoublePoints:
+                DoublePointsActive = true;
+                doublePointsEndTime = Time.time + Mathf.Max(0f, remaining);
+                PlayerPoints.PointsMultiplier = DoublePointsMultiplier;
+                break;
+            case PowerupType.Nuke:
+                if (Instance != null && Instance.nukeFlashEnabled)
+                {
+                    Instance.nukeFlashActive = true;
+                    Instance.nukeFlashEndTime = Time.time + 0.3f;
+                }
+                break;
+            case PowerupType.InfiniteAmmo:
+                InfiniteAmmoActive = true;
+                infiniteAmmoEndTime = Time.time + Mathf.Max(0f, remaining);
+                break;
+        }
+    }
+
+    public static void SendActiveEffectsToClient(ulong clientId)
+    {
+        if (!NetworkGameplayCoordinator.IsNetworkActive || !NetworkGameplayCoordinator.IsServer)
+        {
+            return;
+        }
+
+        if (InstaKillActive)
+        {
+            NetworkGameplayCoordinator.SendPowerupEffectToClient(clientId, PowerupType.InstaKill, Mathf.Max(0f, instaKillEndTime - Time.time));
+        }
+        if (DoublePointsActive)
+        {
+            NetworkGameplayCoordinator.SendPowerupEffectToClient(clientId, PowerupType.DoublePoints, Mathf.Max(0f, doublePointsEndTime - Time.time));
+        }
+        if (InfiniteAmmoActive)
+        {
+            NetworkGameplayCoordinator.SendPowerupEffectToClient(clientId, PowerupType.InfiniteAmmo, Mathf.Max(0f, infiniteAmmoEndTime - Time.time));
+        }
     }
 
     /// <summary>Display name + base colour for a power-up type (shared by pickups + HUD).</summary>
@@ -328,7 +450,7 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InstaKill: return "INSTA-KILL";
             case PowerupType.DoublePoints: return "DOUBLE POINTS";
             case PowerupType.Nuke: return "NUKE";
-            case PowerupType.Carpenter: return "CARPENTER";
+            case PowerupType.InfiniteAmmo: return "INFINITE AMMO";
             default: return type.ToString();
         }
     }
@@ -341,9 +463,37 @@ public class PowerupManager : MonoBehaviour
             case PowerupType.InstaKill: return new Color(1f, 0.85f, 0.2f);   // gold
             case PowerupType.DoublePoints: return new Color(1f, 0.3f, 0.3f); // red
             case PowerupType.Nuke: return new Color(0.4f, 1f, 0.4f);         // green
-            case PowerupType.Carpenter: return new Color(0.7f, 0.45f, 0.2f); // wood brown
+            case PowerupType.InfiniteAmmo: return new Color(0.7f, 0.45f, 0.2f); // placeholder (inherited Carpenter brown) — recolor later
             default: return Color.white;
         }
+    }
+
+    /// <summary>
+    /// The assigned 3D pickup prefab for a power-up type, or null when none is set (the caller
+    /// then uses the generated-cube fallback). Purely a visual model lookup.
+    /// </summary>
+    public GameObject GetPickupPrefab(PowerupType type)
+    {
+        switch (type)
+        {
+            case PowerupType.MaxAmmo: return maxAmmoPrefab;
+            case PowerupType.InstaKill: return instaKillPrefab;
+            case PowerupType.DoublePoints: return doublePointsPrefab;
+            case PowerupType.Nuke: return nukePrefab;
+            case PowerupType.InfiniteAmmo: return infiniteAmmoPrefab;
+            default: return null;
+        }
+    }
+
+    /// <summary>
+    /// Null-safe resolver so <see cref="Powerup.Spawn"/> — which runs on every peer, including
+    /// clients — can look up the LOCAL pickup prefab without a hard dependency on a live manager.
+    /// Returns null when there is no manager or no prefab assigned, so the caller falls back to
+    /// the generated cube. Never affects effects/timers/networking.
+    /// </summary>
+    public static GameObject ResolvePickupPrefab(PowerupType type)
+    {
+        return Instance != null ? Instance.GetPickupPrefab(type) : null;
     }
 
     private void OnGUI()
@@ -358,7 +508,7 @@ public class PowerupManager : MonoBehaviour
             GUI.color = prevC;
         }
 
-        if (!InstaKillActive && !DoublePointsActive)
+        if (!InstaKillActive && !DoublePointsActive && !InfiniteAmmoActive)
         {
             return;
         }
@@ -384,6 +534,11 @@ public class PowerupManager : MonoBehaviour
         {
             DrawEffect("DOUBLE POINTS  " + Mathf.CeilToInt(doublePointsEndTime - Time.time) + "s",
                 ColorOf(PowerupType.DoublePoints), ref y);
+        }
+        if (InfiniteAmmoActive)
+        {
+            DrawEffect("INFINITE AMMO  " + Mathf.CeilToInt(infiniteAmmoEndTime - Time.time) + "s",
+                ColorOf(PowerupType.InfiniteAmmo), ref y);
         }
     }
 

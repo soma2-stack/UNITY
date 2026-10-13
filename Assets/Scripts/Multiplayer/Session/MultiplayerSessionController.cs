@@ -23,8 +23,10 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
     private const string RosterMessage = "SOTD_ROSTER";
     private const string MatchStartMessage = "SOTD_MATCH_START";
+    private const string CharacterSelectMessage = "SOTD_CHARACTER_SELECT";
     private const string GameplayScene = "SchoolOfTheDead";
     private const string MenuScene = "MainMenu";
+    private const string DeathCinematicScene = "DeathCinematic";
 
     private readonly List<RosterEntry> roster = new List<RosterEntry>(MaximumPlayers);
     private readonly Dictionary<ulong, ConnectionPayload> pendingPayloads = new Dictionary<ulong, ConnectionPayload>();
@@ -47,6 +49,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
     public bool IsHost => networkManager != null && networkManager.IsHost;
     public bool CanReconnect => !string.IsNullOrWhiteSpace(lastJoinCode);
     public IReadOnlyList<RosterEntry> Roster => roster;
+    /// <summary>This peer's own network client id (0 when not connected).</summary>
+    public ulong LocalClientId => networkManager != null ? networkManager.LocalClientId : 0;
 
     public event Action<MultiplayerSessionState> StateChanged;
     public event Action<IReadOnlyList<RosterEntry>> RosterChanged;
@@ -92,6 +96,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
             return;
         }
 
+        SoloModeState.IsSolo = false; // a real online session is never solo
+
         try
         {
             SetState(MultiplayerSessionState.Authenticating);
@@ -106,6 +112,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
             Allocation allocation = await RelayService.Instance.CreateAllocationAsync(MaximumPlayers - 1);
             JoinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
             lastJoinCode = JoinCode;
+            Debug.Log("[MP] Join code created: " + JoinCode);
             JoinCodeChanged?.Invoke(JoinCode);
             transport.SetRelayServerData(allocation.ToRelayServerData("dtls"));
 
@@ -114,10 +121,13 @@ public sealed class MultiplayerSessionController : MonoBehaviour
             {
                 throw new InvalidOperationException("Netcode could not start the host.");
             }
+            Debug.Log("[MP] Host started");
             RegisterMessageHandlers();
 
             roster.Clear();
             roster.Add(new RosterEntry(NetworkManager.ServerClientId, localPlayerId, localDisplayName, true));
+            // The host is first, so its own local pick (if any) is always free to reserve.
+            ServerSetCharacter(NetworkManager.ServerClientId, CharacterSelection.HasSelection ? CharacterSelection.SelectedIndex : -1, false);
             NotifyRosterChanged();
             SetState(MultiplayerSessionState.Lobby);
             LoadingScreenController.Instance?.SetProgress(1f);
@@ -129,12 +139,74 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Start a SINGLE-PLAYER solo match as a LOCAL (offline) Netcode host — no Relay and no
+    /// authentication. This reuses the exact working co-op spawn path: loading the gameplay scene
+    /// through NGO triggers <see cref="HandleNetworkSceneLoadComplete"/> → <see cref="SpawnPlayerObject"/>,
+    /// which spawns ONE NetworkPlayer that configures its own camera/movement/weapon/AudioListener in
+    /// OnNetworkSpawn (owner-only). There is no lobby and no minimum-player gate. The session is marked
+    /// via <see cref="SoloModeState"/> so the pause menu treats it as solo, not multiplayer.
+    /// </summary>
+    public void StartSolo()
+    {
+        if (State != MultiplayerSessionState.Offline && State != MultiplayerSessionState.Failed)
+        {
+            return;
+        }
+
+        try
+        {
+            SoloModeState.IsSolo = true;
+
+            // Local, direct endpoint. This overrides any Relay data left by a prior online session
+            // and needs no internet/auth; SetConnectionData also resets the transport to the direct
+            // UnityTransport protocol (non-relay).
+            transport.SetConnectionData("127.0.0.1", (ushort)7777);
+
+            // A valid local identity so connection approval passes for the host's own client.
+            localDisplayName = SanitizeDisplayName(PlayerPrefs.GetString("MultiplayerDisplayName", "Player"));
+            localPlayerId = "solo-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            ConfigureConnectionData();
+
+            SetState(MultiplayerSessionState.Loading);
+            LoadingScreenController.Instance?.Show("SCHOOL OF THE DEAD", "STARTING SOLO...");
+            LoadingScreenController.Instance?.SetProgress(0.35f);
+
+            RegisterNetworkCallbacks();
+            if (!networkManager.StartHost())
+            {
+                throw new InvalidOperationException("Netcode could not start the solo host.");
+            }
+            RegisterMessageHandlers();
+
+            roster.Clear();
+            roster.Add(new RosterEntry(NetworkManager.ServerClientId, localPlayerId, localDisplayName, true));
+            NotifyRosterChanged();
+
+            // No lobby for solo: load the gameplay scene through NGO so the existing per-client spawn
+            // path runs and exactly one configured player is created.
+            SceneEventProgressStatus result = networkManager.SceneManager.LoadScene(GameplayScene, LoadSceneMode.Single);
+            if (result != SceneEventProgressStatus.Started)
+            {
+                throw new InvalidOperationException("The solo scene load could not start (" + result + ").");
+            }
+            Debug.Log("[MP] Solo session started; loading " + GameplayScene);
+        }
+        catch (Exception exception)
+        {
+            SoloModeState.IsSolo = false;
+            Fail("Unable to start solo: " + exception.Message);
+        }
+    }
+
     public async Task JoinAsync(string joinCode, string displayName)
     {
         if (State != MultiplayerSessionState.Offline && State != MultiplayerSessionState.Failed)
         {
             return;
         }
+
+        SoloModeState.IsSolo = false; // a real online session is never solo
 
         string normalizedCode = NormalizeJoinCode(joinCode);
         if (normalizedCode.Length < 4)
@@ -227,8 +299,65 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         {
             Fail("The network scene load could not start.");
         }
+        else
+        {
+            Debug.Log("[MP] Network scene load started: " + GameplayScene);
+        }
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Server-only: restart the current match by reloading the gameplay scene through
+    /// NGO so every client follows and all players respawn fresh (full health, not
+    /// downed). Clears the spawned-player set so HandleNetworkSceneLoadComplete
+    /// re-spawns everyone after the reload.
+    /// </summary>
+    public void RestartMatch()
+    {
+        if (networkManager == null || !networkManager.IsServer)
+        {
+            return;
+        }
+
+        // The Single load despawns the existing dynamically-spawned player objects;
+        // clearing this set lets us re-spawn each connected client after the reload.
+        spawnedPlayers.Clear();
+
+        SceneEventProgressStatus result = networkManager.SceneManager.LoadScene(GameplayScene, LoadSceneMode.Single);
+        if (result != SceneEventProgressStatus.Started)
+        {
+            Debug.LogWarning("[MP] Restart scene load could not start: " + result);
+        }
+        else
+        {
+            Debug.Log("[MP] Restart: reloading " + GameplayScene);
+        }
+    }
+
+    /// <summary>
+    /// Server-only: transition every connected player to the DeathCinematic game-over scene
+    /// through NGO so all peers load it in sync (clients follow automatically and must not
+    /// raw-load). This is purely a synchronized scene change — no gameplay state is altered and
+    /// no players are (re)spawned (the scene isn't the gameplay scene). Returns true only if the
+    /// network scene load actually started, so the caller can fall back to the old overlay.
+    /// </summary>
+    public bool LoadDeathCinematic()
+    {
+        if (networkManager == null || !networkManager.IsServer || networkManager.SceneManager == null)
+        {
+            return false;
+        }
+
+        SceneEventProgressStatus result = networkManager.SceneManager.LoadScene(DeathCinematicScene, LoadSceneMode.Single);
+        if (result != SceneEventProgressStatus.Started)
+        {
+            Debug.LogWarning("[MP] DeathCinematic scene load could not start: " + result);
+            return false;
+        }
+
+        Debug.Log("[MP] Game over: loading " + DeathCinematicScene + " for all players.");
+        return true;
     }
 
     public Task LeaveAsync()
@@ -315,6 +444,30 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         config.ConnectionApproval = true;
         config.EnableSceneManagement = true;
         config.PlayerPrefab = Resources.Load<GameObject>("NetworkPlayer");
+        if (config.PlayerPrefab == null)
+        {
+            Debug.LogError("[MP] Resources/NetworkPlayer.prefab is missing — players cannot spawn. " +
+                "Let the editor rebuild it (Tools > School of the Dead > Refresh Network Player Prefab).");
+        }
+
+        // Register the networked zombie so the server can spawn it and clients replicate it.
+        // NetworkZombieSetup auto-creates Assets/Resources/NetworkZombie.prefab in the editor.
+        GameObject networkZombie = Resources.Load<GameObject>("NetworkZombie");
+        if (networkZombie == null)
+        {
+            Debug.LogWarning("[MP] Resources/NetworkZombie.prefab not found — zombies will not replicate " +
+                "in multiplayer. Use Tools > School of the Dead > Refresh Network Zombie Prefab.");
+        }
+        else if (networkZombie.GetComponent<NetworkObject>() == null)
+        {
+            Debug.LogWarning("[MP] Resources/NetworkZombie.prefab has no NetworkObject — it cannot be a " +
+                "network prefab. Add NetworkObject + NetworkTransform to the source zombie prefab.");
+        }
+        else
+        {
+            networkManager.AddNetworkPrefab(networkZombie);
+        }
+
         networkManager.ConnectionApprovalCallback = ApproveConnection;
     }
 
@@ -338,8 +491,10 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
         messaging.UnregisterNamedMessageHandler(RosterMessage);
         messaging.UnregisterNamedMessageHandler(MatchStartMessage);
+        messaging.UnregisterNamedMessageHandler(CharacterSelectMessage);
         messaging.RegisterNamedMessageHandler(RosterMessage, ReceiveRosterMessage);
         messaging.RegisterNamedMessageHandler(MatchStartMessage, ReceiveMatchStartMessage);
+        messaging.RegisterNamedMessageHandler(CharacterSelectMessage, ReceiveCharacterSelectRequest);
 
         // Spawn each client's player body only after the gameplay scene finishes
         // loading for them (so no player exists while in the menu/lobby).
@@ -358,10 +513,23 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         }
 
         SpawnPlayerObject(clientId);
+
+        // Catch this just-loaded client up to the authoritative round + team points.
+        RoundManager.Instance?.SendRoundToClient(clientId);
+        PlayerPoints.Instance?.SendPointsToClient(clientId);
+        NetworkGameplayCoordinator.SendGameplaySnapshotToClient(clientId);
     }
 
     private void SpawnPlayerObject(ulong clientId)
     {
+        if (networkManager.ConnectedClients.TryGetValue(clientId, out NetworkClient client) &&
+            client.PlayerObject != null && client.PlayerObject.IsSpawned)
+        {
+            spawnedPlayers.Add(clientId);
+            Debug.Log("[MP] Player already exists for clientId=" + clientId + "; skipping duplicate spawn.");
+            return;
+        }
+
         if (spawnedPlayers.Contains(clientId))
         {
             return;
@@ -374,6 +542,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         }
 
         GameObject instance = Instantiate(prefab);
+        instance.name = "NetworkPlayer (" + clientId + ")";
         NetworkObject netObj = instance.GetComponent<NetworkObject>();
         if (netObj == null)
         {
@@ -383,6 +552,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
         netObj.SpawnAsPlayerObject(clientId, true);
         spawnedPlayers.Add(clientId);
+        Debug.Log("[MP] Player spawned for clientId=" + clientId);
     }
 
     private void ConfigureConnectionData()
@@ -390,7 +560,8 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         ConnectionPayload payload = new ConnectionPayload
         {
             playerId = localPlayerId,
-            displayName = localDisplayName
+            displayName = localDisplayName,
+            characterIndex = CharacterSelection.HasSelection ? CharacterSelection.SelectedIndex : -1
         };
         networkManager.NetworkConfig.ConnectionData = Encoding.UTF8.GetBytes(JsonUtility.ToJson(payload));
     }
@@ -440,11 +611,15 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
             disconnectedAt.Remove(payload.playerId);
             pendingPayloads.Remove(clientId);
+            // Reserve the joiner's locally-chosen character if it is still free (host-authoritative).
+            ServerSetCharacter(clientId, payload.characterIndex, false);
+            Debug.Log("[MP] Client joined: clientId=" + clientId + " name=" + payload.displayName);
             BroadcastRoster();
         }
 
         if (!networkManager.IsServer && clientId == networkManager.LocalClientId)
         {
+            Debug.Log("[MP] Connected to host (local clientId=" + clientId + ")");
             connectionCompletion?.TrySetResult(true);
             LoadingScreenController.Instance?.SetStatus("CONNECTED. SYNCING LOBBY...");
             LoadingScreenController.Instance?.SetProgress(0.75f);
@@ -528,6 +703,93 @@ public sealed class MultiplayerSessionController : MonoBehaviour
         NotifyRosterChanged();
     }
 
+    // --- Character reservation (host-authoritative locking) --------------
+
+    /// <summary>
+    /// Request to reserve a character (portrait index). Host applies it directly; a client sends the
+    /// request to the host. Offline (not connected) it just stores locally via CharacterSelection.
+    /// The accepted result comes back through the roster broadcast; the UI updates from there.
+    /// </summary>
+    public void RequestCharacterSelect(int portraitIndex)
+    {
+        if (networkManager == null || !networkManager.IsListening)
+        {
+            // Not in a session yet (offline lobby / solo menu): keep it purely local.
+            if (portraitIndex >= 0)
+            {
+                CharacterSelection.Select(portraitIndex);
+            }
+            return;
+        }
+
+        if (networkManager.IsServer)
+        {
+            ServerSetCharacter(NetworkManager.ServerClientId, portraitIndex, true);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int), Allocator.Temp);
+        writer.WriteValueSafe(portraitIndex);
+        networkManager.CustomMessagingManager.SendNamedMessage(CharacterSelectMessage, NetworkManager.ServerClientId, writer, NetworkDelivery.ReliableSequenced);
+    }
+
+    private void ReceiveCharacterSelectRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (networkManager == null || !networkManager.IsServer)
+        {
+            return;
+        }
+        reader.ReadValueSafe(out int portraitIndex);
+        ServerSetCharacter(senderId, portraitIndex, true);
+    }
+
+    /// <summary>
+    /// Server-only: reserve <paramref name="portraitIndex"/> for <paramref name="clientId"/> if it is
+    /// not already held by ANOTHER connected player. A negative index clears the reservation.
+    /// Rejected requests leave the existing reservation untouched. Broadcasts the roster on change.
+    /// </summary>
+    private void ServerSetCharacter(ulong clientId, int portraitIndex, bool broadcast)
+    {
+        if (networkManager == null || !networkManager.IsServer)
+        {
+            return;
+        }
+
+        int index = roster.FindIndex(entry => entry.clientId == clientId);
+        if (index < 0)
+        {
+            return;
+        }
+
+        int desired = portraitIndex < 0 ? -1 : portraitIndex;
+
+        // Reject if another connected player already holds this character.
+        if (desired >= 0)
+        {
+            foreach (RosterEntry other in roster)
+            {
+                if (other.connected && other.clientId != clientId && other.characterIndex == desired)
+                {
+                    return; // taken — keep the requester's existing reservation
+                }
+            }
+        }
+
+        if (roster[index].characterIndex == desired)
+        {
+            return; // no change
+        }
+
+        RosterEntry entry = roster[index];
+        entry.characterIndex = desired;
+        roster[index] = entry;
+
+        if (broadcast)
+        {
+            BroadcastRoster();
+        }
+    }
+
     private void SendMatchStartMessage()
     {
         using FastBufferWriter writer = new FastBufferWriter(1, Allocator.Temp);
@@ -549,15 +811,48 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
+        // There must be exactly ONE NetworkManager. We create the runtime one
+        // (DontDestroyOnLoad), so destroy any extra NetworkManager placed in a loaded
+        // scene (solo and multiplayer alike) to avoid the "multiple NetworkManager" conflict.
+        if (NetworkManager.Singleton != null)
+        {
+            NetworkManager[] managers = FindObjectsByType<NetworkManager>(FindObjectsSortMode.None);
+            foreach (NetworkManager manager in managers)
+            {
+                if (manager != null && manager != NetworkManager.Singleton)
+                {
+                    Debug.LogWarning("[MP] Destroying a duplicate NetworkManager found in scene '" + scene.name + "'.");
+                    Destroy(manager.gameObject);
+                }
+            }
+        }
+
         if (scene.name != GameplayScene || networkManager == null || !networkManager.IsListening)
         {
             return;
         }
 
-        GameObject localScenePlayer = GameObject.Find("Capsule");
-        if (localScenePlayer != null && localScenePlayer.GetComponent<NetworkObject>() == null)
+        // Disable any pre-placed player left in the scene so it doesn't fight the
+        // network-spawned players. Plain (non-networked) scene players are safe to hide;
+        // a pre-placed NETWORK player can't be cleanly handled here, so warn to remove it.
+        PlayerMovement[] scenePlayers = FindObjectsByType<PlayerMovement>(FindObjectsSortMode.None);
+        foreach (PlayerMovement scenePlayer in scenePlayers)
         {
-            localScenePlayer.SetActive(false);
+            if (scenePlayer == null)
+            {
+                continue;
+            }
+            NetworkObject netObj = scenePlayer.GetComponent<NetworkObject>();
+            if (netObj == null)
+            {
+                scenePlayer.gameObject.SetActive(false); // solo/scene player, not for MP
+            }
+            else if (netObj.IsSceneObject == true)
+            {
+                Debug.LogWarning("[MP] A network player is pre-placed in the scene ('" + scenePlayer.name +
+                    "'). Remove it from SchoolOfTheDead — pre-placed network players conflict with " +
+                    "the players spawned for each connected client.");
+            }
         }
 
         LoadingScreenController.Instance?.SetStatus("SURVIVORS READY");
@@ -568,6 +863,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
     private void NotifyRosterChanged()
     {
+        Debug.Log("[MP] Roster updated: " + roster.Count + " entries");
         RosterChanged?.Invoke(roster.ToArray());
     }
 
@@ -587,6 +883,7 @@ public sealed class MultiplayerSessionController : MonoBehaviour
 
     private void ResetTransientState(bool clearReconnectData)
     {
+        SoloModeState.IsSolo = false;
         roster.Clear();
         pendingPayloads.Clear();
         lockedRoster.Clear();

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -45,9 +46,9 @@ public class ZombieSpawner : MonoBehaviour
 
     // Scratch buffers reused every spawn attempt (no per-frame allocations).
     private readonly List<int> reachableCandidates = new List<int>();
+    private readonly List<Vector3> reachablePlayerPositions = new List<Vector3>();
     private NavMeshPath pathScratch;
 
-    private Transform player;            // cached player (CharacterController) transform
     private float nextPlayerRecheckTime;
 
     private int remainingToSpawn;       // how many still need to be spawned this round
@@ -60,6 +61,15 @@ public class ZombieSpawner : MonoBehaviour
     private void Awake()
     {
         baseSpawnInterval = spawnInterval;
+
+        // Prefer the registered network zombie so the SPAWNED prefab matches the one
+        // MultiplayerSessionController registers as a network prefab (NGO requires the
+        // exact same prefab on all peers). No-op in projects without Resources/NetworkZombie.
+        GameObject networkZombie = Resources.Load<GameObject>("NetworkZombie");
+        if (networkZombie != null)
+        {
+            zombiePrefab = networkZombie;
+        }
     }
 
     /// <summary>Number of zombies currently alive.</summary>
@@ -73,6 +83,14 @@ public class ZombieSpawner : MonoBehaviour
 
     private void Update()
     {
+        // Server-authoritative spawning: clients never spawn zombies locally
+        // (the replicated NetworkObjects arrive from the server instead).
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening &&
+            !NetworkManager.Singleton.IsServer)
+        {
+            return;
+        }
+
         if (!roundActive)
         {
             return;
@@ -111,6 +129,13 @@ public class ZombieSpawner : MonoBehaviour
     /// </summary>
     public void BeginRound(int totalToSpawn, int zombieHealth, float zombieSpeed)
     {
+        // Server-authoritative: only the server (or solo) starts a spawn wave.
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening &&
+            !NetworkManager.Singleton.IsServer)
+        {
+            return;
+        }
+
         // Drop any stale references left over from the previous round. Without this,
         // a lingering/destroyed entry could keep AliveCount above zero and either end
         // the new round prematurely (miscount) or leave it never-ending. Unsubscribe
@@ -171,6 +196,18 @@ public class ZombieSpawner : MonoBehaviour
         zombie.OnDeath += HandleZombieDeath;
         aliveZombies.Add(zombie);
 
+        // Networked session: replicate the zombie to all clients (only the server
+        // reaches here). The prefab must have a NetworkObject + be a registered
+        // network prefab. No-op in solo.
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            NetworkObject netObj = obj.GetComponent<NetworkObject>();
+            if (netObj != null && !netObj.IsSpawned)
+            {
+                netObj.Spawn(true);
+            }
+        }
+
         remainingToSpawn--;
     }
 
@@ -189,23 +226,17 @@ public class ZombieSpawner : MonoBehaviour
             return RandomValidPoint();
         }
 
-        EnsurePlayer();
-        if (player == null)
+        EnsureReachablePlayers();
+        if (reachablePlayerPositions.Count == 0)
         {
-            // No player to path to yet - fall back so the round still gets going.
-            return RandomValidPoint();
-        }
-
-        // Sample the player onto the NavMesh once for all candidate tests.
-        if (!NavMesh.SamplePosition(player.position, out NavMeshHit playerHit, navSampleRadius, NavMesh.AllAreas))
-        {
+            // No living player to path to yet - fall back so the round still gets going.
             return RandomValidPoint();
         }
 
         reachableCandidates.Clear();
         for (int i = 0; i < spawnPoints.Length; i++)
         {
-            if (spawnPoints[i] != null && IsReachable(spawnPoints[i].position, playerHit.position))
+            if (spawnPoints[i] != null && IsReachableToAnyPlayer(spawnPoints[i].position))
             {
                 reachableCandidates.Add(i);
             }
@@ -241,6 +272,19 @@ public class ZombieSpawner : MonoBehaviour
         return pathScratch.status == NavMeshPathStatus.PathComplete;
     }
 
+    private bool IsReachableToAnyPlayer(Vector3 spawnPos)
+    {
+        foreach (Vector3 playerPosition in reachablePlayerPositions)
+        {
+            if (IsReachable(spawnPos, playerPosition))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private Transform RandomValidPoint()
     {
         // A couple of quick tries to skip any null entries in the array.
@@ -256,23 +300,31 @@ public class ZombieSpawner : MonoBehaviour
     }
 
     /// <summary>
-    /// Caches the player transform (found via its CharacterController, the project
-    /// convention) and refreshes it periodically so a respawned/late player is picked
-    /// up without searching every frame.
+    /// Caches living player NavMesh positions and refreshes them periodically so
+    /// respawned/late players are picked up without searching every frame.
     /// </summary>
-    private void EnsurePlayer()
+    private void EnsureReachablePlayers()
     {
-        if (player != null && Time.time < nextPlayerRecheckTime)
+        if (reachablePlayerPositions.Count > 0 && Time.time < nextPlayerRecheckTime)
         {
             return;
         }
 
         nextPlayerRecheckTime = Time.time + Mathf.Max(0.1f, playerRecheckInterval);
+        reachablePlayerPositions.Clear();
 
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller != null)
+        PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsSortMode.None);
+        foreach (PlayerHealth health in players)
         {
-            player = controller.transform;
+            if (health == null || health.IsDead || health.IsDowned)
+            {
+                continue;
+            }
+
+            if (NavMesh.SamplePosition(health.transform.position, out NavMeshHit playerHit, navSampleRadius, NavMesh.AllAreas))
+            {
+                reachablePlayerPositions.Add(playerHit.position);
+            }
         }
     }
 

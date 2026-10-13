@@ -1,0 +1,1347 @@
+using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Netcode;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+/// <summary>
+/// Small named-message bridge for scene gameplay objects that are not network prefabs
+/// (doors, power, purchases, power-ups, game over). Solo mode keeps using direct calls.
+/// </summary>
+public sealed class NetworkGameplayCoordinator : MonoBehaviour
+{
+    private const string DoorRequestMessage = "SOTD_DOOR_REQUEST";
+    private const string DoorSyncMessage = "SOTD_DOOR_SYNC";
+    private const string PowerRequestMessage = "SOTD_POWER_REQUEST";
+    private const string PowerSyncMessage = "SOTD_POWER_SYNC";
+    private const string PurchaseRequestMessage = "SOTD_PURCHASE_REQUEST";
+    private const string PurchaseGrantMessage = "SOTD_PURCHASE_GRANT";
+    private const string BoxTransformMessage = "SOTD_BOX_TRANSFORM";
+    private const string BoxPrizeStateMessage = "SOTD_BOX_PRIZE_STATE";
+    private const string PerkStateMessage = "SOTD_PERK_STATE";
+    private const string PowerupSpawnMessage = "SOTD_POWERUP_SPAWN";
+    private const string PowerupCollectRequestMessage = "SOTD_POWERUP_COLLECT_REQUEST";
+    private const string PowerupCollectedMessage = "SOTD_POWERUP_COLLECTED";
+    private const string PowerupEffectMessage = "SOTD_POWERUP_EFFECT";
+    private const string GameOverMessage = "SOTD_GAME_OVER";
+    private const string RestartRequestMessage = "SOTD_RESTART_REQUEST";
+    private const string BookCollectRequestMessage = "SOTD_BOOK_REQUEST";
+    private const string BookCollectedMessage = "SOTD_BOOK_COLLECTED";
+    private const string FireAlarmRequestMessage = "SOTD_FIREALARM_REQUEST";
+    private const string FireAlarmActivatedMessage = "SOTD_FIREALARM_ACTIVATED";
+    private const string PauseStateMessage = "SOTD_PAUSE_STATE";
+
+    private enum PurchaseKind : byte
+    {
+        MysteryBox = 1,
+        WallBuy = 2,
+        PackAPunch = 3,
+        Perk = 4,
+        MysteryBoxClaim = 5,
+    }
+
+    private static NetworkGameplayCoordinator instance;
+    private static NetworkManager registeredManager;
+    private static bool registered;
+
+    private int nextPowerupId = 1;
+
+    // Server-authoritative set of collected book keys (secret Pack-a-Punch easter egg).
+    // Dedups collections team-wide so each book counts exactly once. Only meaningful on the
+    // server; cleared on each gameplay scene load so a restarted match starts fresh.
+    private readonly HashSet<string> collectedBookKeys = new HashSet<string>();
+
+    // Server-authoritative set of activated fire alarm keys ("False Alarm / Fire Drill" easter
+    // egg). Dedups activations team-wide so each alarm counts exactly once; the reward is granted
+    // once when the set reaches FireAlarmEasterEgg.TotalAlarms. Cleared on each gameplay scene load.
+    private readonly HashSet<string> activatedFireAlarmKeys = new HashSet<string>();
+    private bool fireAlarmRewarded;
+
+    // Host-authoritative match pause state ("host paused the game for everyone"). Only the server
+    // may change it; it is broadcast to every client and replayed to late joiners. This is pure
+    // sync — the actual freeze (Time.timeScale) is applied by PauseMenuController via HostPauseChanged.
+    private bool hostPaused;
+
+    /// <summary>True when the host has paused the whole match. Applies in networked sessions only.</summary>
+    public static bool IsHostPaused => instance != null && instance.hostPaused;
+
+    /// <summary>Raised on every peer when the host-authoritative pause state changes.</summary>
+    public static event System.Action<bool> HostPauseChanged;
+
+    private static bool NetworkActive =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+
+    private static bool IsServerRole =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer;
+
+    public static bool IsNetworkActive => NetworkActive;
+    public static bool IsServer => IsServerRole;
+    public static double SharedTime => NetworkActive && NetworkManager.Singleton != null
+        ? NetworkManager.Singleton.ServerTime.Time
+        : Time.unscaledTime;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void Bootstrap()
+    {
+        Ensure();
+    }
+
+    public static NetworkGameplayCoordinator Ensure()
+    {
+        if (instance != null)
+        {
+            instance.TryRegisterMessages();
+            return instance;
+        }
+
+        GameObject go = new GameObject("Network Gameplay Coordinator");
+        DontDestroyOnLoad(go);
+        instance = go.AddComponent<NetworkGameplayCoordinator>();
+        instance.TryRegisterMessages();
+        return instance;
+    }
+
+    private void Awake()
+    {
+        if (instance != null && instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
+        instance = this;
+        DontDestroyOnLoad(gameObject);
+        SceneManager.sceneLoaded += HandleSceneLoaded;
+    }
+
+    private void OnDestroy()
+    {
+        SceneManager.sceneLoaded -= HandleSceneLoaded;
+        if (instance == this)
+        {
+            instance = null;
+        }
+        UnregisterMessages();
+    }
+
+    private void Update()
+    {
+        TryRegisterMessages();
+    }
+
+    private void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        TryRegisterMessages();
+
+        // Fresh match / fresh scene: forget which books were collected so a restarted run's
+        // books are collectable again (books are re-created by the reloaded scene).
+        if (scene.name == "SchoolOfTheDead")
+        {
+            collectedBookKeys.Clear();
+
+            // Fresh match: forget which fire alarms were pulled and re-arm the reward so a
+            // restarted run's Fire Drill egg starts from 0/5 again.
+            activatedFireAlarmKeys.Clear();
+            fireAlarmRewarded = false;
+
+            // A freshly (re)loaded match starts unpaused.
+            if (hostPaused)
+            {
+                hostPaused = false;
+                HostPauseChanged?.Invoke(false);
+            }
+        }
+    }
+
+    private void TryRegisterMessages()
+    {
+        if (!NetworkActive || NetworkManager.Singleton.CustomMessagingManager == null)
+        {
+            return;
+        }
+
+        if (registered && registeredManager == NetworkManager.Singleton)
+        {
+            return;
+        }
+
+        UnregisterMessages();
+        CustomMessagingManager messaging = NetworkManager.Singleton.CustomMessagingManager;
+        messaging.RegisterNamedMessageHandler(DoorRequestMessage, ReceiveDoorRequest);
+        messaging.RegisterNamedMessageHandler(DoorSyncMessage, ReceiveDoorSync);
+        messaging.RegisterNamedMessageHandler(PowerRequestMessage, ReceivePowerRequest);
+        messaging.RegisterNamedMessageHandler(PowerSyncMessage, ReceivePowerSync);
+        messaging.RegisterNamedMessageHandler(PurchaseRequestMessage, ReceivePurchaseRequest);
+        messaging.RegisterNamedMessageHandler(PurchaseGrantMessage, ReceivePurchaseGrant);
+        messaging.RegisterNamedMessageHandler(BoxTransformMessage, ReceiveBoxTransform);
+        messaging.RegisterNamedMessageHandler(BoxPrizeStateMessage, ReceiveBoxPrizeState);
+        messaging.RegisterNamedMessageHandler(PerkStateMessage, ReceivePerkState);
+        messaging.RegisterNamedMessageHandler(PowerupSpawnMessage, ReceivePowerupSpawn);
+        messaging.RegisterNamedMessageHandler(PowerupCollectRequestMessage, ReceivePowerupCollectRequest);
+        messaging.RegisterNamedMessageHandler(PowerupCollectedMessage, ReceivePowerupCollected);
+        messaging.RegisterNamedMessageHandler(PowerupEffectMessage, ReceivePowerupEffect);
+        messaging.RegisterNamedMessageHandler(GameOverMessage, ReceiveGameOver);
+        messaging.RegisterNamedMessageHandler(RestartRequestMessage, ReceiveRestartRequest);
+        messaging.RegisterNamedMessageHandler(BookCollectRequestMessage, ReceiveBookCollectRequest);
+        messaging.RegisterNamedMessageHandler(BookCollectedMessage, ReceiveBookCollected);
+        messaging.RegisterNamedMessageHandler(FireAlarmRequestMessage, ReceiveFireAlarmRequest);
+        messaging.RegisterNamedMessageHandler(FireAlarmActivatedMessage, ReceiveFireAlarmActivated);
+        messaging.RegisterNamedMessageHandler(PauseStateMessage, ReceivePauseState);
+        registered = true;
+        registeredManager = NetworkManager.Singleton;
+    }
+
+    private static void UnregisterMessages()
+    {
+        if (!registered || registeredManager == null || registeredManager.CustomMessagingManager == null)
+        {
+            registered = false;
+            registeredManager = null;
+            return;
+        }
+
+        CustomMessagingManager messaging = registeredManager.CustomMessagingManager;
+        messaging.UnregisterNamedMessageHandler(DoorRequestMessage);
+        messaging.UnregisterNamedMessageHandler(DoorSyncMessage);
+        messaging.UnregisterNamedMessageHandler(PowerRequestMessage);
+        messaging.UnregisterNamedMessageHandler(PowerSyncMessage);
+        messaging.UnregisterNamedMessageHandler(PurchaseRequestMessage);
+        messaging.UnregisterNamedMessageHandler(PurchaseGrantMessage);
+        messaging.UnregisterNamedMessageHandler(BoxTransformMessage);
+        messaging.UnregisterNamedMessageHandler(BoxPrizeStateMessage);
+        messaging.UnregisterNamedMessageHandler(PerkStateMessage);
+        messaging.UnregisterNamedMessageHandler(PowerupSpawnMessage);
+        messaging.UnregisterNamedMessageHandler(PowerupCollectRequestMessage);
+        messaging.UnregisterNamedMessageHandler(PowerupCollectedMessage);
+        messaging.UnregisterNamedMessageHandler(PowerupEffectMessage);
+        messaging.UnregisterNamedMessageHandler(GameOverMessage);
+        messaging.UnregisterNamedMessageHandler(RestartRequestMessage);
+        messaging.UnregisterNamedMessageHandler(BookCollectRequestMessage);
+        messaging.UnregisterNamedMessageHandler(BookCollectedMessage);
+        messaging.UnregisterNamedMessageHandler(FireAlarmRequestMessage);
+        messaging.UnregisterNamedMessageHandler(FireAlarmActivatedMessage);
+        messaging.UnregisterNamedMessageHandler(PauseStateMessage);
+        registered = false;
+        registeredManager = null;
+    }
+
+    public static void RequestDoorOpen(Door door)
+    {
+        if (door == null)
+        {
+            return;
+        }
+
+        Ensure();
+        if (!NetworkActive)
+        {
+            door.TryOpenOffline();
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            instance.ServerTryOpenDoor(NetworkManager.Singleton.LocalClientId, door.NetworkKey);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, door.NetworkKey);
+        SendToServer(DoorRequestMessage, writer);
+    }
+
+    private void ReceiveDoorRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+
+        string key = ReadString(reader);
+        ServerTryOpenDoor(senderId, key);
+    }
+
+    private void ServerTryOpenDoor(ulong senderClientId, string key)
+    {
+        if (!Door.TryFind(key, out Door door) || door.IsOpen)
+        {
+            return;
+        }
+
+        int cost = Mathf.Max(0, door.Cost);
+        if (cost > 0 && PlayerPoints.Instance != null && !PlayerPoints.Instance.TrySpend(senderClientId, cost))
+        {
+            Debug.Log("[Door] Client " + senderClientId + " could not afford door '" + key + "'.");
+            return;
+        }
+
+        door.OpenFromNetwork();
+        int reward = Mathf.RoundToInt(cost / 10f);
+        if (reward > 0)
+        {
+            PlayerPoints.Instance?.AddPoints(senderClientId, reward);
+        }
+        BroadcastDoorOpen(key);
+    }
+
+    public static void BroadcastDoorOpen(string key)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, key);
+        writer.WriteValueSafe(true);
+        SendToAll(DoorSyncMessage, writer);
+    }
+
+    private void ReceiveDoorSync(ulong senderId, FastBufferReader reader)
+    {
+        string key = ReadString(reader);
+        reader.ReadValueSafe(out bool open);
+        if (open && Door.TryFind(key, out Door door))
+        {
+            door.OpenFromNetwork();
+        }
+    }
+
+    public static void RequestPowerOn(PowerSwitch powerSwitch)
+    {
+        if (powerSwitch == null)
+        {
+            return;
+        }
+
+        Ensure();
+        if (!NetworkActive)
+        {
+            powerSwitch.TryTurnOnOffline();
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            instance.ServerTryPowerOn(NetworkManager.Singleton.LocalClientId, powerSwitch.NetworkKey);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, powerSwitch.NetworkKey);
+        SendToServer(PowerRequestMessage, writer);
+    }
+
+    private void ReceivePowerRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+
+        ServerTryPowerOn(senderId, ReadString(reader));
+    }
+
+    private void ServerTryPowerOn(ulong senderClientId, string key)
+    {
+        if (PowerState.IsOn)
+        {
+            SendPowerToClient(senderClientId);
+            return;
+        }
+
+        if (!InteractableBase.TryFind(key, out PowerSwitch powerSwitch))
+        {
+            return;
+        }
+
+        int cost = Mathf.Max(0, powerSwitch.cost);
+        if (cost > 0 && PlayerPoints.Instance != null && !PlayerPoints.Instance.TrySpend(senderClientId, cost))
+        {
+            return;
+        }
+
+        PowerState.ApplyNetworkState(true);
+        BroadcastPower();
+        Debug.Log("[PowerSwitch] Power is now ON by client " + senderClientId + ".");
+    }
+
+    public static void BroadcastPower()
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(bool), Allocator.Temp);
+        writer.WriteValueSafe(PowerState.IsOn);
+        SendToAll(PowerSyncMessage, writer);
+    }
+
+    private void SendPowerToClient(ulong clientId)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(bool), Allocator.Temp);
+        writer.WriteValueSafe(PowerState.IsOn);
+        SendToClient(PowerSyncMessage, clientId, writer);
+    }
+
+    private void ReceivePowerSync(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out bool isOn);
+        PowerState.ApplyNetworkState(isOn);
+    }
+
+    public static void RequestMysteryBox(MysteryBox box)
+    {
+        RequestPurchase(PurchaseKind.MysteryBox, box != null ? box.NetworkKey : string.Empty, 0);
+    }
+
+    public static void RequestMysteryBoxClaim(MysteryBox box)
+    {
+        RequestPurchase(PurchaseKind.MysteryBoxClaim, box != null ? box.NetworkKey : string.Empty, 0);
+    }
+
+    public static void RequestWallBuy(WallBuy wallBuy, bool ownsWeapon)
+    {
+        RequestPurchase(PurchaseKind.WallBuy, wallBuy != null ? wallBuy.NetworkKey : string.Empty, ownsWeapon ? 1 : 0);
+    }
+
+    public static void RequestPackAPunch(PackAPunchMachine machine)
+    {
+        RequestPurchase(PurchaseKind.PackAPunch, machine != null ? machine.NetworkKey : string.Empty, 0);
+    }
+
+    public static void RequestPerk(PerkMachine machine)
+    {
+        RequestPurchase(PurchaseKind.Perk, machine != null ? machine.NetworkKey : string.Empty, 0);
+    }
+
+    private static void RequestPurchase(PurchaseKind kind, string key, int aux)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            return;
+        }
+
+        Ensure();
+        if (!NetworkActive)
+        {
+            ApplyLocalPurchase(kind, key, aux);
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            instance.ServerTryPurchase(NetworkManager.Singleton.LocalClientId, kind, key, aux);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        writer.WriteValueSafe((byte)kind);
+        WriteString(writer, key);
+        writer.WriteValueSafe(aux);
+        SendToServer(PurchaseRequestMessage, writer);
+    }
+
+    private void ReceivePurchaseRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+
+        reader.ReadValueSafe(out byte kindValue);
+        string key = ReadString(reader);
+        reader.ReadValueSafe(out int aux);
+        ServerTryPurchase(senderId, (PurchaseKind)kindValue, key, aux);
+    }
+
+    private void ServerTryPurchase(ulong senderClientId, PurchaseKind kind, string key, int aux)
+    {
+        switch (kind)
+        {
+            case PurchaseKind.MysteryBox:
+                ServerTryMysteryBox(senderClientId, key);
+                break;
+            case PurchaseKind.WallBuy:
+                ServerTryWallBuy(senderClientId, key, aux != 0);
+                break;
+            case PurchaseKind.PackAPunch:
+                ServerTryPackAPunch(senderClientId, key);
+                break;
+            case PurchaseKind.Perk:
+                ServerTryPerk(senderClientId, key);
+                break;
+            case PurchaseKind.MysteryBoxClaim:
+                ServerTryMysteryBoxClaim(senderClientId, key);
+                break;
+        }
+    }
+
+    private void ServerTryMysteryBox(ulong senderClientId, string key)
+    {
+        if (!InteractableBase.TryFind(key, out MysteryBox box) ||
+            (box.requirePower && !PowerState.IsOn))
+        {
+            return;
+        }
+
+        if (box.ClearPendingPrizeIfExpired())
+        {
+            BroadcastBoxPrizeState(box);
+        }
+        // Block a new spin while a weapon prize OR a Teddy result is still resolving (no charge).
+        if (box.IsResolvingPrize || !TrySpend(senderClientId, box.cost))
+        {
+            return;
+        }
+
+        if (box.RollTeddy())
+        {
+            // Teddy: everyone plays the roll + "BOX MOVING" result; the box relocates only AFTER
+            // it finishes, driven server-side in MysteryBox.Update -> RelocateMysteryBoxAndClear.
+            box.BeginPendingTeddy(senderClientId);
+            BroadcastBoxPrizeState(box);
+            return;
+        }
+
+        int weaponIndex = box.RollWeaponIndex();
+        if (weaponIndex >= 0)
+        {
+            bool localBuyer = senderClientId == NetworkManager.Singleton.LocalClientId;
+            box.BeginPendingPrize(weaponIndex, senderClientId, localBuyer);
+            BroadcastBoxPrizeState(box);
+        }
+    }
+
+    private void ServerTryMysteryBoxClaim(ulong senderClientId, string key)
+    {
+        if (!InteractableBase.TryFind(key, out MysteryBox box))
+        {
+            return;
+        }
+
+        if (box.TryClaimPendingPrize(senderClientId, out int weaponIndex, out bool expired))
+        {
+            BroadcastBoxPrizeState(box);
+            SendPurchaseGrant(senderClientId, PurchaseKind.MysteryBox, key, weaponIndex);
+        }
+        else if (expired)
+        {
+            BroadcastBoxPrizeState(box);
+        }
+    }
+
+    private void ServerTryWallBuy(ulong senderClientId, string key, bool ownsWeapon)
+    {
+        if (!InteractableBase.TryFind(key, out WallBuy wallBuy))
+        {
+            return;
+        }
+
+        // PRICING NOTE: `ownsWeapon` is the buyer's report of its OWN current inventory. That
+        // is the only accurate source: weapon slots are capped, so buying a new gun REPLACES
+        // an owned one, and only the owning client sees that. A server-side "owned weapons"
+        // set was tried here and broke purchases: it could never observe replacements, so it
+        // would price a buy as an "ammo refill" for a gun the player no longer had — the
+        // refill no-opped and the points simply vanished. Trusting the buyer's own inventory
+        // report is safe for co-op PvE (worst case a player refunds themselves a cheaper
+        // price); the spend itself stays server-authoritative.
+        int price = ownsWeapon ? wallBuy.ammoCost : wallBuy.buyCost;
+        if (!TrySpend(senderClientId, price))
+        {
+            return;
+        }
+
+        SendPurchaseGrant(senderClientId, PurchaseKind.WallBuy, key, ownsWeapon ? 1 : 0);
+    }
+
+    private void ServerTryPackAPunch(ulong senderClientId, string key)
+    {
+        if (!InteractableBase.TryFind(key, out PackAPunchMachine machine) ||
+            (machine.requirePower && !PowerState.IsOn) ||
+            !TrySpend(senderClientId, machine.cost))
+        {
+            return;
+        }
+
+        SendPurchaseGrant(senderClientId, PurchaseKind.PackAPunch, key, 0);
+    }
+
+    private void ServerTryPerk(ulong senderClientId, string key)
+    {
+        if (!PerkMachine.TryFind(key, out PerkMachine machine) ||
+            !PowerState.IsOn ||
+            PerkManager.ClientHasPerk(senderClientId, machine.perk) ||
+            !TrySpend(senderClientId, machine.cost))
+        {
+            return;
+        }
+
+        PerkManager.ServerGrantClientPerk(senderClientId, machine.perk);
+        ApplyServerPerkEffect(senderClientId, machine.perk);
+        SendPurchaseGrant(senderClientId, PurchaseKind.Perk, key, (int)machine.perk);
+        BroadcastPerkState(senderClientId, machine.perk, true);
+    }
+
+    // Charge a SPECIFIC client (per-player economy). Free (cost <= 0) or no economy
+    // present both succeed.
+    private static bool TrySpend(ulong clientId, int cost)
+    {
+        return cost <= 0 || PlayerPoints.Instance == null || PlayerPoints.Instance.TrySpend(clientId, cost);
+    }
+
+    private static void ApplyLocalPurchase(PurchaseKind kind, string key, int aux)
+    {
+        switch (kind)
+        {
+            case PurchaseKind.MysteryBox:
+                if (InteractableBase.TryFind(key, out MysteryBox box))
+                {
+                    box.ApplyMysteryResult(aux);
+                }
+                break;
+            case PurchaseKind.WallBuy:
+                if (InteractableBase.TryFind(key, out WallBuy wallBuy))
+                {
+                    wallBuy.ApplyPurchaseResult(aux != 0);
+                }
+                break;
+            case PurchaseKind.PackAPunch:
+                LocalPlayer.Weapon?.UpgradeCurrentWeapon();
+                break;
+            case PurchaseKind.Perk:
+                PerkManager.Instance?.TryGrant((PerkType)aux);
+                break;
+        }
+    }
+
+    private void SendPurchaseGrant(ulong clientId, PurchaseKind kind, string key, int aux)
+    {
+        if (NetworkActive && IsServerRole && clientId != NetworkManager.Singleton.LocalClientId)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+            writer.WriteValueSafe((byte)kind);
+            WriteString(writer, key);
+            writer.WriteValueSafe(aux);
+            SendToClient(PurchaseGrantMessage, clientId, writer);
+            return;
+        }
+
+        ApplyLocalPurchase(kind, key, aux);
+    }
+
+    private void ReceivePurchaseGrant(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out byte kindValue);
+        string key = ReadString(reader);
+        reader.ReadValueSafe(out int aux);
+        ApplyLocalPurchase((PurchaseKind)kindValue, key, aux);
+    }
+
+    public static void BroadcastBoxTransform(MysteryBox box)
+    {
+        if (box == null || !NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(1024, Allocator.Temp);
+        WriteString(writer, box.NetworkKey);
+        writer.WriteValueSafe(box.transform.position);
+        writer.WriteValueSafe(box.transform.rotation);
+        SendToAll(BoxTransformMessage, writer);
+    }
+
+    private void ReceiveBoxTransform(ulong senderId, FastBufferReader reader)
+    {
+        string key = ReadString(reader);
+        reader.ReadValueSafe(out Vector3 position);
+        reader.ReadValueSafe(out Quaternion rotation);
+        if (InteractableBase.TryFind(key, out MysteryBox box))
+        {
+            box.ApplyNetworkTransform(position, rotation);
+        }
+    }
+
+    public static void ExpireMysteryBoxPrize(MysteryBox box)
+    {
+        if (box == null || !NetworkActive || !IsServerRole || !box.ClearPendingPrizeIfExpired())
+        {
+            return;
+        }
+
+        BroadcastBoxPrizeState(box);
+    }
+
+    // Server-authoritative Teddy resolution: once the "BOX MOVING" result finishes, relocate the
+    // box ONCE and broadcast its new transform + the cleared pending state to all clients.
+    public static void RelocateMysteryBoxAndClear(MysteryBox box)
+    {
+        if (box == null || !NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        box.RelocateBox();
+        BroadcastBoxTransform(box);
+        if (box.ClearPendingPrizeIfExpired())
+        {
+            BroadcastBoxPrizeState(box);
+        }
+    }
+
+    private static void BroadcastBoxPrizeState(MysteryBox box)
+    {
+        if (box == null || !NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(1024, Allocator.Temp);
+        WriteBoxPrizeState(writer, box);
+        SendToAll(BoxPrizeStateMessage, writer);
+    }
+
+    private static void SendBoxPrizeStateToClient(MysteryBox box, ulong clientId)
+    {
+        using FastBufferWriter writer = new FastBufferWriter(1024, Allocator.Temp);
+        WriteBoxPrizeState(writer, box);
+        SendToClient(BoxPrizeStateMessage, clientId, writer);
+    }
+
+    private static void WriteBoxPrizeState(FastBufferWriter writer, MysteryBox box)
+    {
+        WriteString(writer, box.NetworkKey);
+        writer.WriteValueSafe(box.PendingWeaponIndex);
+        writer.WriteValueSafe(box.PendingBuyerClientId);
+        writer.WriteValueSafe(box.PendingRevealEndsAt);
+        writer.WriteValueSafe(box.PendingOwnerEndsAt);
+        writer.WriteValueSafe(box.PendingExpiresAt);
+    }
+
+    private void ReceiveBoxPrizeState(ulong senderId, FastBufferReader reader)
+    {
+        string key = ReadString(reader);
+        reader.ReadValueSafe(out int weaponIndex);
+        reader.ReadValueSafe(out ulong buyerClientId);
+        reader.ReadValueSafe(out double revealEndsAt);
+        reader.ReadValueSafe(out double ownerEndsAt);
+        reader.ReadValueSafe(out double expiresAt);
+        if (InteractableBase.TryFind(key, out MysteryBox box))
+        {
+            bool localBuyer = NetworkManager.Singleton != null &&
+                buyerClientId == NetworkManager.Singleton.LocalClientId;
+            box.ApplyPendingPrizeState(
+                weaponIndex,
+                buyerClientId,
+                revealEndsAt,
+                ownerEndsAt,
+                expiresAt,
+                localBuyer);
+        }
+    }
+
+    private static void ApplyServerPerkEffect(ulong clientId, PerkType perk)
+    {
+        if (NetworkManager.Singleton == null ||
+            !NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out NetworkClient client) ||
+            client.PlayerObject == null)
+        {
+            return;
+        }
+
+        GameObject player = client.PlayerObject.gameObject;
+        switch (perk)
+        {
+            case PerkType.VitalBoost:
+                PlayerHealth health = player.GetComponent<PlayerHealth>();
+                PerkManager manager = PerkManager.Instance;
+                health?.SetMaxHealth(manager != null ? manager.juggernogMaxHealth : 250, true);
+                break;
+        }
+    }
+
+    public static void SendPerkStateToClient(ulong clientId)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<ulong, HashSet<PerkType>> pair in PerkManager.ServerPerks)
+        {
+            foreach (PerkType perk in pair.Value)
+            {
+                SendPerkState(clientId, pair.Key, perk, true);
+            }
+        }
+    }
+
+    private static void BroadcastPerkState(ulong ownerClientId, PerkType perk, bool hasPerk)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+        using FastBufferWriter writer = BuildPerkStateWriter(ownerClientId, perk, hasPerk);
+        SendToAll(PerkStateMessage, writer);
+    }
+
+    private static void SendPerkState(ulong targetClientId, ulong ownerClientId, PerkType perk, bool hasPerk)
+    {
+        using FastBufferWriter writer = BuildPerkStateWriter(ownerClientId, perk, hasPerk);
+        SendToClient(PerkStateMessage, targetClientId, writer);
+    }
+
+    private static FastBufferWriter BuildPerkStateWriter(ulong ownerClientId, PerkType perk, bool hasPerk)
+    {
+        FastBufferWriter writer = new FastBufferWriter(sizeof(ulong) + sizeof(int) + sizeof(bool), Allocator.Temp);
+        writer.WriteValueSafe(ownerClientId);
+        writer.WriteValueSafe((int)perk);
+        writer.WriteValueSafe(hasPerk);
+        return writer;
+    }
+
+    private void ReceivePerkState(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out ulong ownerClientId);
+        reader.ReadValueSafe(out int perkValue);
+        reader.ReadValueSafe(out bool hasPerk);
+        PerkManager.ApplyNetworkPerkState(ownerClientId, (PerkType)perkValue, hasPerk);
+    }
+
+    public static int AllocatePowerupId()
+    {
+        Ensure();
+        return instance.nextPowerupId++;
+    }
+
+    public static void BroadcastPowerupSpawn(Powerup powerup)
+    {
+        if (powerup == null || !NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        SendPowerupSpawnToAll(powerup);
+    }
+
+    private static void SendPowerupSpawnToAll(Powerup powerup)
+    {
+        using FastBufferWriter writer = BuildPowerupSpawnWriter(powerup);
+        SendToAll(PowerupSpawnMessage, writer);
+    }
+
+    private static void SendPowerupSpawnToClient(ulong clientId, Powerup powerup)
+    {
+        using FastBufferWriter writer = BuildPowerupSpawnWriter(powerup);
+        SendToClient(PowerupSpawnMessage, clientId, writer);
+    }
+
+    private static FastBufferWriter BuildPowerupSpawnWriter(Powerup powerup)
+    {
+        FastBufferWriter writer = new FastBufferWriter(64, Allocator.Temp);
+        writer.WriteValueSafe(powerup.NetworkId);
+        writer.WriteValueSafe((int)powerup.type);
+        writer.WriteValueSafe(powerup.transform.position);
+        writer.WriteValueSafe(powerup.RemainingLifetime);
+        return writer;
+    }
+
+    private void ReceivePowerupSpawn(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out int id);
+        reader.ReadValueSafe(out int typeValue);
+        reader.ReadValueSafe(out Vector3 position);
+        reader.ReadValueSafe(out float lifetime);
+        if (Powerup.TryFind(id, out _))
+        {
+            return;
+        }
+        Powerup.Spawn((PowerupType)typeValue, position, lifetime, id, true);
+    }
+
+    public static void RequestPowerupCollect(Powerup powerup)
+    {
+        if (powerup == null)
+        {
+            return;
+        }
+
+        Ensure();
+        if (!NetworkActive)
+        {
+            powerup.CollectOffline();
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            instance.ServerTryCollectPowerup(NetworkManager.Singleton.LocalClientId, powerup.NetworkId);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int), Allocator.Temp);
+        writer.WriteValueSafe(powerup.NetworkId);
+        SendToServer(PowerupCollectRequestMessage, writer);
+    }
+
+    private void ReceivePowerupCollectRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+        reader.ReadValueSafe(out int id);
+        ServerTryCollectPowerup(senderId, id);
+    }
+
+    private void ServerTryCollectPowerup(ulong senderClientId, int id)
+    {
+        if (!Powerup.TryFind(id, out Powerup powerup))
+        {
+            return;
+        }
+
+        if (NetworkManager.Singleton != null &&
+            NetworkManager.Singleton.ConnectedClients.TryGetValue(senderClientId, out NetworkClient client) &&
+            client.PlayerObject != null)
+        {
+            float distance = Vector3.Distance(client.PlayerObject.transform.position, powerup.transform.position);
+            if (distance > powerup.collectRange + 1.5f)
+            {
+                return;
+            }
+        }
+
+        PowerupType type = powerup.type;
+        PowerupManager.Instance?.Apply(type, senderClientId);
+        BroadcastPowerupCollected(id);
+        Destroy(powerup.gameObject);
+    }
+
+    public static void BroadcastPowerupCollected(int id)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int), Allocator.Temp);
+        writer.WriteValueSafe(id);
+        SendToAll(PowerupCollectedMessage, writer);
+    }
+
+    private void ReceivePowerupCollected(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out int id);
+        if (Powerup.TryFind(id, out Powerup powerup))
+        {
+            Destroy(powerup.gameObject);
+        }
+    }
+
+    public static void BroadcastPowerupEffect(PowerupType type, float remaining)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        PowerupManager.ApplyNetworkEffect(type, remaining);
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int) + sizeof(float), Allocator.Temp);
+        writer.WriteValueSafe((int)type);
+        writer.WriteValueSafe(remaining);
+        SendToAll(PowerupEffectMessage, writer);
+    }
+
+    public static void SendPowerupEffectToClient(ulong clientId, PowerupType type, float remaining)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int) + sizeof(float), Allocator.Temp);
+        writer.WriteValueSafe((int)type);
+        writer.WriteValueSafe(remaining);
+        SendToClient(PowerupEffectMessage, clientId, writer);
+    }
+
+    private void ReceivePowerupEffect(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out int typeValue);
+        reader.ReadValueSafe(out float remaining);
+        PowerupManager.ApplyNetworkEffect((PowerupType)typeValue, remaining);
+    }
+
+    public static void BroadcastGameOver(int round, int score, int kills)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            GameOverController.ShowLocalGameOver(round, score, kills, false);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(int) * 3, Allocator.Temp);
+        writer.WriteValueSafe(round);
+        writer.WriteValueSafe(score);
+        writer.WriteValueSafe(kills);
+        SendToAll(GameOverMessage, writer);
+        GameOverController.ShowLocalGameOver(round, score, kills, true);
+    }
+
+    private void ReceiveGameOver(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out int round);
+        reader.ReadValueSafe(out int score);
+        reader.ReadValueSafe(out int kills);
+        GameOverController.ShowLocalGameOver(round, score, kills, true);
+    }
+
+    public static void SendGameplaySnapshotToClient(ulong clientId)
+    {
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        Ensure();
+        instance.SendPowerToClient(clientId);
+        foreach (Door door in Door.AllDoors)
+        {
+            if (door != null && door.IsOpen)
+            {
+                using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+                WriteString(writer, door.NetworkKey);
+                writer.WriteValueSafe(true);
+                SendToClient(DoorSyncMessage, clientId, writer);
+            }
+        }
+        foreach (MysteryBox box in InteractableBase.FindAll<MysteryBox>())
+        {
+            if (box == null)
+            {
+                continue;
+            }
+            using FastBufferWriter writer = new FastBufferWriter(1024, Allocator.Temp);
+            WriteString(writer, box.NetworkKey);
+            writer.WriteValueSafe(box.transform.position);
+            writer.WriteValueSafe(box.transform.rotation);
+            SendToClient(BoxTransformMessage, clientId, writer);
+            if (box.HasPendingPrize)
+            {
+                SendBoxPrizeStateToClient(box, clientId);
+            }
+        }
+        foreach (Powerup powerup in Powerup.ActiveNetworkedPowerups)
+        {
+            if (powerup != null)
+            {
+                SendPowerupSpawnToClient(clientId, powerup);
+            }
+        }
+        PowerupManager.SendActiveEffectsToClient(clientId);
+        SendPerkStateToClient(clientId);
+
+        // Books already collected by the team: hide them and advance the joiner's progress.
+        foreach (string bookKey in instance.collectedBookKeys)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+            WriteString(writer, bookKey);
+            SendToClient(BookCollectedMessage, clientId, writer);
+        }
+
+        // Fire alarms already pulled by the team: mark them activated on the joiner so its alarms
+        // match the shared Fire Drill progress (the reward itself was already granted server-side).
+        foreach (string alarmKey in instance.activatedFireAlarmKeys)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+            WriteString(writer, alarmKey);
+            SendToClient(FireAlarmActivatedMessage, clientId, writer);
+        }
+
+        // If the host has the match paused, tell the joining client so it freezes + shows the overlay.
+        if (instance.hostPaused)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(8, Allocator.Temp);
+            writer.WriteValueSafe(true);
+            SendToClient(PauseStateMessage, clientId, writer);
+        }
+    }
+
+    // --- Secret book pickup (team-wide easter egg progress) --------------
+
+    /// <summary>
+    /// Collect a secret book. TEAM-WIDE and server-authoritative: the server counts each
+    /// book key exactly once and tells every peer to hide that book and advance its local
+    /// <see cref="SecretBookManager"/>, so progress is shared instead of per-player. Solo
+    /// (not networked) applies the collection directly.
+    /// </summary>
+    public static void RequestBookCollect(BookPickup book)
+    {
+        if (book == null)
+        {
+            return;
+        }
+
+        Ensure();
+        if (!NetworkActive)
+        {
+            book.ApplyCollected();
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            instance.ServerTryCollectBook(book.NetworkKey);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, book.NetworkKey);
+        SendToServer(BookCollectRequestMessage, writer);
+    }
+
+    private void ReceiveBookCollectRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+        ServerTryCollectBook(ReadString(reader));
+    }
+
+    private void ServerTryCollectBook(string key)
+    {
+        // First collection of this book for the whole team wins; later ones are ignored.
+        if (string.IsNullOrEmpty(key) || !collectedBookKeys.Add(key))
+        {
+            return;
+        }
+
+        // Apply on the host directly, then tell the remote clients (SendToAll does not loop
+        // back to the server, mirroring the door / power-up collection paths).
+        ApplyBookCollected(key);
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, key);
+        SendToAll(BookCollectedMessage, writer);
+    }
+
+    private void ReceiveBookCollected(ulong senderId, FastBufferReader reader)
+    {
+        ApplyBookCollected(ReadString(reader));
+    }
+
+    private static void ApplyBookCollected(string key)
+    {
+        if (BookPickup.TryFind(key, out BookPickup book))
+        {
+            book.ApplyCollected();
+        }
+    }
+
+    // --- Fire alarm activation ("False Alarm / Fire Drill" team-wide egg) -
+
+    /// <summary>
+    /// Activate a fire alarm. TEAM-WIDE and server-authoritative: the server counts each alarm
+    /// key exactly once, tells every peer to mark that alarm activated, and — when all alarms are
+    /// pulled — awards <see cref="FireAlarmEasterEgg.RewardPoints"/> to every player exactly once.
+    /// Solo (not networked) applies the activation directly.
+    /// </summary>
+    public static void RequestFireAlarmActivate(FireAlarmInteractable alarm)
+    {
+        if (alarm == null)
+        {
+            return;
+        }
+
+        Ensure();
+        if (!NetworkActive)
+        {
+            instance.ServerTryActivateFireAlarm(alarm.AlarmKey);
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            instance.ServerTryActivateFireAlarm(alarm.AlarmKey);
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+        WriteString(writer, alarm.AlarmKey);
+        SendToServer(FireAlarmRequestMessage, writer);
+    }
+
+    private void ReceiveFireAlarmRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+        ServerTryActivateFireAlarm(ReadString(reader));
+    }
+
+    private void ServerTryActivateFireAlarm(string key)
+    {
+        // First activation of this alarm for the whole team wins; later ones are ignored.
+        if (string.IsNullOrEmpty(key) || !activatedFireAlarmKeys.Add(key))
+        {
+            return;
+        }
+
+        // Mark it on the host directly, then tell the remote clients (SendToAll does not loop back
+        // to the server, mirroring the book / door collection paths). Skips the send in solo.
+        ApplyFireAlarmActivated(key);
+        if (NetworkActive)
+        {
+            using FastBufferWriter writer = new FastBufferWriter(512, Allocator.Temp);
+            WriteString(writer, key);
+            SendToAll(FireAlarmActivatedMessage, writer);
+        }
+
+        int count = activatedFireAlarmKeys.Count;
+        FireAlarmEasterEgg.LogProgress(count);
+
+        if (count >= FireAlarmEasterEgg.TotalAlarms && !fireAlarmRewarded)
+        {
+            fireAlarmRewarded = true;
+            FireAlarmEasterEgg.AwardCompletion();
+        }
+    }
+
+    private void ReceiveFireAlarmActivated(ulong senderId, FastBufferReader reader)
+    {
+        ApplyFireAlarmActivated(ReadString(reader));
+    }
+
+    private static void ApplyFireAlarmActivated(string key)
+    {
+        if (FireAlarmInteractable.TryFind(key, out FireAlarmInteractable alarm))
+        {
+            alarm.ApplyActivated();
+        }
+        FireAlarmEasterEgg.LogAlarmActivated();
+    }
+
+    // --- Host-authoritative match pause -------------------------------------
+
+    /// <summary>
+    /// Host/server only: set whether the whole match is paused and tell every client. Clients that
+    /// call this are ignored (they cannot pause the match). The state is applied on the host here
+    /// and echoed to clients via <see cref="PauseStateMessage"/>; both raise <see cref="HostPauseChanged"/>.
+    /// </summary>
+    public static void SetHostPause(bool paused)
+    {
+        Ensure();
+        if (!NetworkActive || !IsServerRole)
+        {
+            return;
+        }
+
+        instance.ApplyPauseState(paused);
+
+        using FastBufferWriter writer = new FastBufferWriter(8, Allocator.Temp);
+        writer.WriteValueSafe(paused);
+        SendToAll(PauseStateMessage, writer);
+    }
+
+    private void ReceivePauseState(ulong senderId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out bool paused);
+        ApplyPauseState(paused);
+    }
+
+    private void ApplyPauseState(bool paused)
+    {
+        if (hostPaused == paused)
+        {
+            return; // idempotent
+        }
+        hostPaused = paused;
+        HostPauseChanged?.Invoke(paused);
+    }
+
+    // --- Match restart (from the game-over screen) -----------------------
+
+    /// <summary>
+    /// Restart the match. On the server this reloads the gameplay scene through NGO so
+    /// every client follows and all players respawn fresh; on a client it asks the
+    /// server to do so. Solo callers reload the scene directly instead.
+    /// </summary>
+    public static void RequestRestartMatch()
+    {
+        Ensure();
+        if (!NetworkActive)
+        {
+            return;
+        }
+
+        if (IsServerRole)
+        {
+            MultiplayerSessionController.Instance?.RestartMatch();
+            return;
+        }
+
+        using FastBufferWriter writer = new FastBufferWriter(sizeof(byte), Allocator.Temp);
+        writer.WriteValueSafe((byte)1);
+        SendToServer(RestartRequestMessage, writer);
+    }
+
+    private void ReceiveRestartRequest(ulong senderId, FastBufferReader reader)
+    {
+        if (!IsServerRole)
+        {
+            return;
+        }
+
+        // Any surviving client may ask to restart once the team has wiped.
+        MultiplayerSessionController.Instance?.RestartMatch();
+    }
+
+    private static void SendToServer(string message, FastBufferWriter writer)
+    {
+        NetworkManager.Singleton.CustomMessagingManager.SendNamedMessage(
+            message,
+            NetworkManager.ServerClientId,
+            writer,
+            NetworkDelivery.ReliableSequenced);
+    }
+
+    private static void SendToAll(string message, FastBufferWriter writer)
+    {
+        NetworkManager.Singleton.CustomMessagingManager.SendNamedMessageToAll(
+            message,
+            writer,
+            NetworkDelivery.ReliableSequenced);
+    }
+
+    private static void SendToClient(string message, ulong clientId, FastBufferWriter writer)
+    {
+        NetworkManager.Singleton.CustomMessagingManager.SendNamedMessage(
+            message,
+            clientId,
+            writer,
+            NetworkDelivery.ReliableSequenced);
+    }
+
+    private static void WriteString(FastBufferWriter writer, string value)
+    {
+        FixedString512Bytes fixedValue = value ?? string.Empty;
+        writer.WriteValueSafe(fixedValue);
+    }
+
+    private static string ReadString(FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out FixedString512Bytes value);
+        return value.ToString();
+    }
+}

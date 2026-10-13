@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -16,6 +17,8 @@ using UnityEngine;
 /// </summary>
 public class PerkMachine : MonoBehaviour
 {
+    private static readonly Dictionary<string, PerkMachine> Registry = new Dictionary<string, PerkMachine>();
+
     [Header("Perk")]
     [Tooltip("Which perk this machine sells.")]
     public PerkType perk = PerkType.VitalBoost;
@@ -31,6 +34,34 @@ public class PerkMachine : MonoBehaviour
     private Transform player;
     private bool playerInRange;
     private float nextPromptTime;
+    private string networkKey;
+
+    public string NetworkKey
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(networkKey))
+            {
+                networkKey = BuildNetworkKey(transform);
+            }
+            return networkKey;
+        }
+    }
+
+    private void OnEnable()
+    {
+        Registry[NetworkKey] = this;
+    }
+
+    private void OnDisable()
+    {
+        if (!string.IsNullOrEmpty(networkKey) &&
+            Registry.TryGetValue(networkKey, out PerkMachine registered) &&
+            registered == this)
+        {
+            Registry.Remove(networkKey);
+        }
+    }
 
     private void Start()
     {
@@ -39,18 +70,20 @@ public class PerkMachine : MonoBehaviour
 
     private void Update()
     {
+        // Always track the LOCAL player. In multiplayer the local player spawns/registers
+        // AFTER this machine's first Update, so re-resolving each frame prevents latching
+        // onto a stale/remote transform (or Camera.main) — which would leave the prompt
+        // never showing and the machine impossible to use.
+        FindPlayer();
         if (player == null)
         {
-            FindPlayer();
-            if (player == null)
-            {
-                playerInRange = false;
-                return;
-            }
+            playerInRange = false;
+            return;
         }
 
-        float distance = Vector3.Distance(transform.position, player.position);
-        playerInRange = distance <= interactionRange;
+        // Horizontal distance + vertical tolerance so the machine's elevated pivot doesn't
+        // push the floor-standing player out of range (see InteractableBase.InRange).
+        playerInRange = InteractableBase.InRange(transform.position, player.position, interactionRange);
         if (!playerInRange)
         {
             return;
@@ -72,7 +105,14 @@ public class PerkMachine : MonoBehaviour
 
         if (Input.GetKeyDown(interactKey))
         {
-            TryBuy();
+            if (NetworkGameplayCoordinator.IsNetworkActive)
+            {
+                NetworkGameplayCoordinator.RequestPerk(this);
+            }
+            else
+            {
+                TryBuy();
+            }
         }
     }
 
@@ -116,6 +156,8 @@ public class PerkMachine : MonoBehaviour
         }
     }
 
+    private GUIStyle promptStyle;
+
     private void OnGUI()
     {
         if (!playerInRange)
@@ -140,12 +182,16 @@ public class PerkMachine : MonoBehaviour
             textColor = owned ? new Color(0.7f, 0.95f, 0.7f, 1f) : new Color(0.96f, 0.93f, 0.86f, 1f);
         }
 
-        GUIStyle style = new GUIStyle(GUI.skin.label)
+        if (promptStyle == null)
         {
-            fontSize = 22,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-        };
+            promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
+        }
+        GUIStyle style = promptStyle;
 
         float w = 460f;
         float h = 34f;
@@ -162,11 +208,11 @@ public class PerkMachine : MonoBehaviour
 
     private void FindPlayer()
     {
-        // Prefer the CharacterController player (project convention, mirrors Door).
-        CharacterController controller = FindFirstObjectByType<CharacterController>();
-        if (controller != null)
+        // Prefer the LOCAL player so each client interacts with its own player.
+        Transform local = LocalPlayer.Transform;
+        if (local != null)
         {
-            player = controller.transform;
+            player = local;
             return;
         }
 
@@ -180,5 +226,27 @@ public class PerkMachine : MonoBehaviour
     {
         Gizmos.color = PerkManager.PerkColor(perk);
         Gizmos.DrawWireSphere(transform.position, interactionRange);
+    }
+
+    public static bool TryFind(string key, out PerkMachine machine)
+    {
+        return Registry.TryGetValue(key, out machine);
+    }
+
+    private static string BuildNetworkKey(Transform target)
+    {
+        if (target == null)
+        {
+            return string.Empty;
+        }
+
+        string key = target.name;
+        Transform parent = target.parent;
+        while (parent != null)
+        {
+            key = parent.name + "/" + key;
+            parent = parent.parent;
+        }
+        return key;
     }
 }

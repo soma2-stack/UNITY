@@ -1,3 +1,4 @@
+// ✅ INTERACTABLES AUDIT FIXES
 using UnityEngine;
 
 /// <summary>
@@ -33,7 +34,7 @@ public class Teleporter : MonoBehaviour
     [Tooltip("Optional pad that sends the player back. Used to suppress instant re-teleport on arrival.")]
     public Teleporter linkedReturn;
 
-    [Header("Placeholder For Future Buy System (default 0 = free)")]
+    [Header("Buy Cost")]
     [Tooltip("Optional point cost. If > 0 and PlayerPoints exists, points are spent before teleporting. Defaults to free.")]
     public int cost = 0;
 
@@ -41,32 +42,57 @@ public class Teleporter : MonoBehaviour
     [Tooltip("Show a small on-screen prompt while the player is in range.")]
     public bool showPrompt = true;
 
-    private Transform player;
-    private CharacterController playerController;
-    private float nextPromptTime;
+    private Transform[] players;
+    private CharacterController[] playerControllers;
+    private Transform nearestPlayer;
+    private CharacterController nearestController;
     private float readyTime;
     private bool playerInRange;
+    private GUIStyle promptStyle;
 
     private void Start()
     {
-        FindPlayer();
+        FindPlayers();
     }
 
     private void Update()
     {
-        if (player == null)
+        if (players == null || players.Length == 0)
         {
-            FindPlayer();
-            if (player == null)
+            FindPlayers();
+            if (players == null || players.Length == 0)
             {
                 playerInRange = false;
+                nearestPlayer = null;
+                nearestController = null;
                 return;
             }
         }
 
-        float distance = Vector3.Distance(transform.position, player.position);
-        playerInRange = distance <= interactionRange;
+        // Co-op aware: find the closest player within range (and its controller).
+        // TODO: in full co-op, each player needs individual interact input — for now nearest player triggers
+        nearestPlayer = null;
+        nearestController = null;
+        float bestDistance = float.MaxValue;
+        for (int i = 0; i < players.Length; i++)
+        {
+            Transform p = players[i];
+            if (p == null)
+            {
+                continue;
+            }
+            float distance = Vector3.Distance(transform.position, p.position);
+            if (distance <= interactionRange && distance < bestDistance)
+            {
+                bestDistance = distance;
+                nearestPlayer = p;
+                nearestController = (playerControllers != null && i < playerControllers.Length)
+                    ? playerControllers[i]
+                    : null;
+            }
+        }
 
+        playerInRange = nearestPlayer != null;
         if (!playerInRange)
         {
             return;
@@ -75,13 +101,6 @@ public class Teleporter : MonoBehaviour
         if (Time.time < readyTime)
         {
             return;
-        }
-
-        // Throttled console prompt so it does not spam.
-        if (Time.time >= nextPromptTime)
-        {
-            Debug.Log("Press " + interactKey + " to teleport");
-            nextPromptTime = Time.time + 1.5f;
         }
 
         if (Input.GetKeyDown(interactKey))
@@ -102,10 +121,7 @@ public class Teleporter : MonoBehaviour
             return;
         }
 
-        // Optional cost. Only enforced if a positive cost is set AND a points
-        // system is present, otherwise teleporting is free. Resolved via
-        // reflection so this script compiles whether or not a PlayerPoints type
-        // (public static PlayerPoints Instance; bool TrySpend(int)) exists.
+        // PlayerPoints.Instance is null-safe; if no economy exists the teleport is free.
         if (cost > 0 && !TrySpendPoints(cost))
         {
             Debug.Log("Not enough points to teleport (need " + cost + ").");
@@ -135,36 +151,36 @@ public class Teleporter : MonoBehaviour
     }
 
     /// <summary>
-    /// Moves the player to the target transform in a CharacterController-safe way:
-    /// disable the controller, set position/rotation, then re-enable it. Setting
+    /// Moves the nearest player to the target transform in a CharacterController-safe
+    /// way: disable the controller, set position/rotation, then re-enable it. Setting
     /// position while the controller is enabled would be fought by its own movement.
     /// </summary>
     private void TeleportPlayerTo(Transform target)
     {
-        if (player == null || target == null)
+        if (nearestPlayer == null || target == null)
         {
             return;
         }
 
         bool controllerWasEnabled = false;
-        if (playerController != null)
+        if (nearestController != null)
         {
-            controllerWasEnabled = playerController.enabled;
-            playerController.enabled = false;
+            controllerWasEnabled = nearestController.enabled;
+            nearestController.enabled = false;
         }
 
-        player.position = target.position;
+        nearestPlayer.position = target.position;
         if (matchDestinationRotation)
         {
             // Only yaw the body; pitch is owned by the child camera.
-            Vector3 euler = player.eulerAngles;
+            Vector3 euler = nearestPlayer.eulerAngles;
             euler.y = target.eulerAngles.y;
-            player.eulerAngles = euler;
+            nearestPlayer.eulerAngles = euler;
         }
 
-        if (playerController != null)
+        if (nearestController != null)
         {
-            playerController.enabled = controllerWasEnabled;
+            nearestController.enabled = controllerWasEnabled;
         }
     }
 
@@ -175,6 +191,7 @@ public class Teleporter : MonoBehaviour
     /// </summary>
     private static bool TrySpendPoints(int amount)
     {
+        // PlayerPoints.Instance is null-safe; if no economy exists the teleport is free.
         if (PlayerPoints.Instance == null)
         {
             return true; // No economy present: teleport is free.
@@ -183,20 +200,42 @@ public class Teleporter : MonoBehaviour
         return PlayerPoints.Instance.TrySpend(amount);
     }
 
-    private void FindPlayer()
+    private void FindPlayers()
     {
-        // The player is a GameObject with a CharacterController and a child camera.
-        playerController = FindFirstObjectByType<CharacterController>();
-        if (playerController != null)
+        // Co-op aware: gather EVERY CharacterController player (and its transform) so
+        // any player can use the pad. The arrays stay index-aligned.
+        CharacterController[] controllers = FindObjectsByType<CharacterController>(FindObjectsSortMode.None);
+        if (controllers != null && controllers.Length > 0)
         {
-            player = playerController.transform;
+            playerControllers = controllers;
+            players = new Transform[controllers.Length];
+            for (int i = 0; i < controllers.Length; i++)
+            {
+                players[i] = controllers[i] != null ? controllers[i].transform : null;
+            }
             return;
         }
 
         // Fallback so the pad still works if no CharacterController is present.
         if (Camera.main != null)
         {
-            player = Camera.main.transform;
+            players = new[] { Camera.main.transform };
+            playerControllers = new CharacterController[] { null };
+        }
+    }
+
+    // Lazily build the prompt style once (mirrors Door.EnsureStyles) so OnGUI
+    // doesn't allocate a new GUIStyle every frame the player is in range.
+    private void EnsureStyles()
+    {
+        if (promptStyle == null)
+        {
+            promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
         }
     }
 
@@ -207,10 +246,33 @@ public class Teleporter : MonoBehaviour
             return;
         }
 
-        const float width = 260f;
-        const float height = 26f;
-        Rect rect = new Rect((Screen.width - width) * 0.5f, Screen.height * 0.75f, width, height);
-        GUI.Label(rect, "Press " + interactKey + " to teleport");
+        EnsureStyles();
+
+        string label = cost > 0 ? $"Press E   Teleport   [{cost}]" : "Press E   Teleport";
+        GUIStyle style = promptStyle;
+
+        float w = 360f;
+        float h = 34f;
+        Rect rect = new Rect((Screen.width - w) * 0.5f, Screen.height * 0.62f, w, h);
+
+        // Drop shadow then the bright label for readability over any background.
+        Color prev = GUI.color;
+        GUI.color = new Color(0f, 0f, 0f, 0.85f);
+        GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), label, style);
+        GUI.color = new Color(0.96f, 0.93f, 0.86f, 1f);
+        GUI.Label(rect, label, style);
+
+        // Can't afford it: a red "NEED MORE POINTS" warning beneath the prompt.
+        if (cost > 0 && PlayerPoints.Instance != null && !PlayerPoints.Instance.CanAfford(cost))
+        {
+            Rect warn = new Rect(rect.x, rect.y + h, w, 28f);
+            GUI.color = new Color(0f, 0f, 0f, 0.85f);
+            GUI.Label(new Rect(warn.x + 2f, warn.y + 2f, warn.width, warn.height), "NEED MORE POINTS", style);
+            GUI.color = new Color(0.95f, 0.25f, 0.25f, 1f);
+            GUI.Label(warn, "NEED MORE POINTS", style);
+        }
+
+        GUI.color = prev;
     }
 
     private void OnDrawGizmosSelected()

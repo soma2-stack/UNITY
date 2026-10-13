@@ -28,6 +28,17 @@ public class PerkManager : MonoBehaviour
 {
     public static PerkManager Instance { get; private set; }
 
+    /// <summary>
+    /// Display-only kill switch for the bottom-center perk icon row drawn in <see cref="OnGUI"/>.
+    /// Set by <see cref="SchoolOfTheDeadHud"/> so the perk row is shown ONCE (by the Canvas HUD).
+    /// Perk ownership and effects are unaffected — this only hides the legacy IMGUI drawing.
+    /// </summary>
+    public static bool SuppressHud;
+
+    private static readonly Dictionary<ulong, HashSet<PerkType>> serverPerksByClient = new Dictionary<ulong, HashSet<PerkType>>();
+
+    public static IReadOnlyDictionary<ulong, HashSet<PerkType>> ServerPerks => serverPerksByClient;
+
     [Header("Juggernog")]
     [Tooltip("Maximum health the player is raised to when Juggernog is bought.")]
     public int juggernogMaxHealth = 250;
@@ -48,6 +59,13 @@ public class PerkManager : MonoBehaviour
     [Tooltip("Solo mode: Quick Revive is protected from the random perk loss on revive " +
              "(it drives the solo self-revive). Turn off for co-op so any perk can be lost.")]
     public bool SoloMode = true;
+
+    [Header("Perk Icons (assign in Inspector)")]
+    [Tooltip("Custom icon textures shown in the bottom HUD strip. " +
+             "Slots: [0] VitalBoost, [1] ClipKick, [2] RapidRuin, " +
+             "[3] RescueRush, [4] SprintSurge, [5] ArmoryAmp. " +
+             "Leave a slot empty to fall back to the colored square.")]
+    public Texture2D[] perkIcons = new Texture2D[6];
 
     [Header("Limits")]
     [Tooltip("Max simultaneous perks (classic base Zombies = 4). Set 0 for unlimited.")]
@@ -172,19 +190,53 @@ public class PerkManager : MonoBehaviour
         return true;
     }
 
+    public static void ServerGrantClientPerk(ulong clientId, PerkType perk)
+    {
+        if (!serverPerksByClient.TryGetValue(clientId, out HashSet<PerkType> perks))
+        {
+            perks = new HashSet<PerkType>();
+            serverPerksByClient[clientId] = perks;
+        }
+        perks.Add(perk);
+    }
+
+    public static void ApplyNetworkPerkState(ulong clientId, PerkType perk, bool hasPerk)
+    {
+        if (!serverPerksByClient.TryGetValue(clientId, out HashSet<PerkType> perks))
+        {
+            perks = new HashSet<PerkType>();
+            serverPerksByClient[clientId] = perks;
+        }
+
+        if (hasPerk)
+        {
+            perks.Add(perk);
+        }
+        else
+        {
+            perks.Remove(perk);
+        }
+    }
+
+    public static bool ClientHasPerk(ulong clientId, PerkType perk)
+    {
+        return serverPerksByClient.TryGetValue(clientId, out HashSet<PerkType> perks) &&
+               perks.Contains(perk);
+    }
+
     private void ResolvePlayer()
     {
         if (playerHealth == null)
         {
-            playerHealth = FindAnyObjectByType<PlayerHealth>();
+            playerHealth = LocalPlayer.Health;
         }
         if (weaponController == null)
         {
-            weaponController = FindAnyObjectByType<WeaponController>();
+            weaponController = LocalPlayer.Weapon;
         }
         if (playerMovement == null)
         {
-            playerMovement = FindAnyObjectByType<PlayerMovement>();
+            playerMovement = LocalPlayer.Movement;
         }
     }
 
@@ -226,6 +278,13 @@ public class PerkManager : MonoBehaviour
             case PerkType.RescueRush:
                 // No stat to set here - PlayerHealth queries HasPerk(QuickRevive)
                 // each frame while downed to allow a solo self-revive.
+                ReviveInteraction revive = LocalPlayer.Transform != null
+                    ? LocalPlayer.Transform.GetComponent<ReviveInteraction>()
+                    : null;
+                if (revive != null)
+                {
+                    revive.reviveDuration = Mathf.Max(1f, revive.reviveDuration * 0.5f);
+                }
                 break;
 
             case PerkType.ArmoryAmp:
@@ -238,10 +297,10 @@ public class PerkManager : MonoBehaviour
     }
 
     /// <summary>
-    /// CoD Zombies: when the player is revived they lose one random perk. Removes a
-    /// random owned perk and reverts its gameplay effect. In <see cref="SoloMode"/>
-    /// Quick Revive is protected (it drives the solo self-revive) - if it is the only
-    /// perk owned, nothing is lost. Fires <see cref="OnPerksChanged"/> on removal.
+    /// CoD Zombies: when the player goes DOWN they lose one random perk. Removes a random
+    /// owned perk and reverts its gameplay effect. In <see cref="SoloMode"/> Quick Revive is
+    /// protected (it drives the solo self-revive) - if it is the only perk owned, nothing is
+    /// lost. Fires <see cref="OnPerksChanged"/> on removal.
     /// </summary>
     public void LoseRandomPerk()
     {
@@ -269,7 +328,7 @@ public class PerkManager : MonoBehaviour
         PerkType lost = pool[UnityEngine.Random.Range(0, pool.Count)];
         ownedPerks.Remove(lost);
         RevertEffect(lost);
-        Debug.Log("[PerkManager] Lost perk on revive: " + lost);
+        Debug.Log("[PerkManager] Lost perk on down: " + lost);
         OnPerksChanged?.Invoke();
     }
 
@@ -310,6 +369,13 @@ public class PerkManager : MonoBehaviour
 
             case PerkType.RescueRush:
                 // No stat to revert.
+                ReviveInteraction revive = LocalPlayer.Transform != null
+                    ? LocalPlayer.Transform.GetComponent<ReviveInteraction>()
+                    : null;
+                if (revive != null)
+                {
+                    revive.reviveDuration = 4f;
+                }
                 break;
 
             case PerkType.ArmoryAmp:
@@ -326,9 +392,24 @@ public class PerkManager : MonoBehaviour
 
     private GUIStyle perkLabelStyle;
 
+    private Texture2D GetPerkIcon(PerkType perk)
+    {
+        if (perkIcons == null) return null;
+        switch (perk)
+        {
+            case PerkType.VitalBoost:  return perkIcons.Length > 0 ? perkIcons[0] : null;
+            case PerkType.ClipKick:    return perkIcons.Length > 1 ? perkIcons[1] : null;
+            case PerkType.RapidRuin:   return perkIcons.Length > 2 ? perkIcons[2] : null;
+            case PerkType.RescueRush:  return perkIcons.Length > 3 ? perkIcons[3] : null;
+            case PerkType.SprintSurge: return perkIcons.Length > 4 ? perkIcons[4] : null;
+            case PerkType.ArmoryAmp:   return perkIcons.Length > 5 ? perkIcons[5] : null;
+            default: return null;
+        }
+    }
+
     private void OnGUI()
     {
-        if (ownedPerks.Count == 0)
+        if (SuppressHud || ownedPerks.Count == 0)
         {
             return;
         }
@@ -365,8 +446,10 @@ public class PerkManager : MonoBehaviour
             float x = startX + i * (boxSize + gap);
 
             Color prev = GUI.color;
-            GUI.color = PerkColor(perk);
-            GUI.DrawTexture(new Rect(x, y, boxSize, boxSize), Texture2D.whiteTexture);
+            Texture2D icon = GetPerkIcon(perk);
+            Texture2D tex  = icon != null ? icon : Texture2D.whiteTexture;
+            GUI.color      = icon != null ? Color.white : PerkColor(perk);
+            GUI.DrawTexture(new Rect(x, y, boxSize, boxSize), tex);
             GUI.color = prev;
 
             GUI.Label(new Rect(x - gap, y + boxSize, boxSize + gap * 2f, labelH), PerkAbbreviation(perk), perkLabelStyle);

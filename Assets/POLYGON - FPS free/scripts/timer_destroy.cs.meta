@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: e8d8b74bec981af4f81412956fe7ee24
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 167864
+  packageName: POLYGON - FPS SAMPLE
+  packageVersion: 1.0
+  assetPath: Assets/POLYGON - FPS free/scripts/timer_destroy.cs
+  uploadId: 373762

@@ -16,7 +16,14 @@ public static class PowerState
     /// <summary>Turn the power on (idempotent). Called by the Power Switch.</summary>
     public static void TurnOn()
     {
-        IsOn = true;
+        ApplyNetworkState(true);
+        NetworkGameplayCoordinator.BroadcastPower();
+    }
+
+    /// <summary>Apply the authoritative power state pushed by the server.</summary>
+    public static void ApplyNetworkState(bool isOn)
+    {
+        IsOn = isOn;
     }
 
     /// <summary>Reset the power back to off (used on scene (re)load).</summary>

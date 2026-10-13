@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e663b1e66870fb64ab8ef16d7db232a6
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 152072
+  packageName: Globe
+  packageVersion: 1.0
+  assetPath: Assets/Viverna_Assets/DemoScene/Materials/Background.mat
+  uploadId: 324718

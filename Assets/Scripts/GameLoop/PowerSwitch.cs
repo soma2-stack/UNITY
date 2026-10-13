@@ -24,6 +24,11 @@ public class PowerSwitch : InteractableBase
 
     protected override void OnInteract()
     {
+        NetworkGameplayCoordinator.RequestPowerOn(this);
+    }
+
+    public void TryTurnOnOffline()
+    {
         if (PowerState.IsOn)
         {
             return;
