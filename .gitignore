@@ -108,3 +108,7 @@ InitTestScene*.unity*
 
 # Claude Code agent worktrees (local harness artifacts)
 .claude/worktrees/
+
+# School of the Dead detail pass: Blender workspace and scratch captures stay local
+/BlenderWork/
+/Captures/DetailPass/Scratch/

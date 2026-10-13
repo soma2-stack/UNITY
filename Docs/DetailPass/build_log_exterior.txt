@@ -1,0 +1,6 @@
+parking_lot: props=84 rejected=8 lights=4
+courtyard: props=13 rejected=5
+courtyard_east: props=10 rejected=2
+courtyard_west: props=7 rejected=14
+staff_entrance_alley: props=18 rejected=8
+staff_entrance_alley_north: props=17 rejected=15
